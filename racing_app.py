@@ -535,8 +535,12 @@ def update_user_profile(user_id: str, data: Dict) -> bool:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
+        # 注意：表名是 user_settings_racing
         url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
         response = requests.patch(url, headers=headers, json=data)
+        print(f"update_user_profile - URL: {url}")
+        print(f"update_user_profile - 状态码: {response.status_code}")
+        print(f"update_user_profile - 响应: {response.text}")
         return response.status_code in [200, 204]
     except Exception as e:
         print(f"更新用户资料失败: {e}")
@@ -548,18 +552,24 @@ def get_remaining_trials(user_id: str) -> int:
     if profile.get("subscription_tier") == "pro":
         return -1  # -1表示无限
     return profile.get("free_trials_remaining", 0)
-
+#----------------
 def consume_free_trial(user_id: str) -> bool:
     """消耗一次免费次数"""
+    print(f"consume_free_trial 收到的 user_id: {user_id}")
+    
     profile = get_user_profile(user_id)
+    print(f"获取到的 profile: {profile}")
     
     if profile.get("subscription_tier") == "pro":
         return True
     
     remaining = profile.get("free_trials_remaining", 0)
+    print(f"剩余次数: {remaining}")
+    
     if remaining > 0:
         new_remaining = remaining - 1
         success = update_user_profile(user_id, {"free_trials_remaining": new_remaining})
+        print(f"更新结果: {success}")
         return success
     else:
         st.session_state.show_paywall = True
@@ -1217,11 +1227,19 @@ def render_horse_rating_table(df: pd.DataFrame):
 # ==================== 主页函数（替换原有的render_home） ====================
 
 def render_home():
-    """主页：数据概览 + 智能投注 + 回测（直接显示，不通过导航）"""
+    """主页：数据概览 + 智能投注 + 回测"""
+    
+    # ==================== 页面标题 ====================
+    st.markdown("""
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h1>🐎 香港賽馬AI分析系統</h1>
+        <p style="color: #666; font-size: 1.1rem;">基於AI技術，智能預測馬匹勝率，優化投注策略</p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # ==================== 模块1：数据概览 ====================
     st.markdown("## 📊 數據概覽")
-    
+     
     # 获取统计数据
     try:
         headers = get_supabase_headers(use_secret=True)
