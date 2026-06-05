@@ -413,7 +413,7 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
             "Content-Type": "application/json"
         }
         
-        check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+        check_url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
         check_response = requests.get(check_url, headers=user_headers)
         
         print(f"查询 user_settings 状态码: {check_response.status_code}")
@@ -443,7 +443,7 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
                 "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
             }
             
-            insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+            insert_url = f"{SUPABASE_URL}/rest/v1/user_settings_racing"
             insert_response = requests.post(insert_url, headers=insert_headers, json=settings_data)
             
             print(f"创建 user_settings 状态码: {insert_response.status_code}")
@@ -493,7 +493,7 @@ def get_user_profile(user_id: str) -> Dict:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+        url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
         response = requests.get(url, headers=headers)
         
         if response.status_code == 200 and response.json():
@@ -535,7 +535,7 @@ def update_user_profile(user_id: str, data: Dict) -> bool:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+        url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
         response = requests.patch(url, headers=headers, json=data)
         return response.status_code in [200, 204]
     except Exception as e:
@@ -713,7 +713,7 @@ def get_all_users() -> List[Dict]:
     """获取所有用户列表（从 racing.user_settings 读取）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?order=created_at.desc"
+        url = f"{SUPABASE_URL}/rest/v1/user_settings_racing"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             users = response.json()
