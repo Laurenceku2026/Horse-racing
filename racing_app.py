@@ -1035,13 +1035,13 @@ def render_sidebar():
             st.markdown("---")
         
         # 页面导航
-        st.markdown("### 📍 導航")
-        page = st.radio(
-            "選擇頁面",
-            options=["🏠 主頁", "🎯 智能投注", "📊 回測"],
-            key="nav_radio",
-            label_visibility="collapsed"
-        )
+      #  st.markdown("### 📍 導航")
+      #  page = st.radio(
+      #      "選擇頁面",
+      #      options=["🏠 主頁", "🎯 智能投注", "📊 回測"],
+      #      key="nav_radio",
+      #      label_visibility="collapsed"
+      #  )
         
         if page == "🏠 主頁":
             st.session_state.current_page = "home"
@@ -1231,27 +1231,10 @@ def render_horse_rating_table(df: pd.DataFrame):
 # ==================== 主页函数（替换原有的render_home） ====================
 
 def render_home():
-    """主页：数据概览 + 全马评分榜"""
-    st.markdown("## 🏠 主頁")
+    """主页：数据概览 + 智能投注 + 回测（直接显示，不通过导航）"""
     
-    # 获取用户信息
-    if st.session_state.authenticated and not st.session_state.admin_mode:
-        profile = get_user_profile(st.session_state.user_id)
-        tier = profile.get("subscription_tier", "free")
-        remaining = profile.get("free_trials_remaining", 0)
-        
-        st.markdown(f"""
-        <div style="background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
-            <strong>👤 當前用戶:</strong> {st.session_state.user_email}<br>
-            <strong>📋 訂閱等級:</strong> {"💎 專業版" if tier == "pro" else "🔒 免費版"}<br>
-            <strong>🎫 剩餘免費次數:</strong> {"∞" if tier == "pro" else remaining}
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown("---")
-    
-    # ==================== 数据概览 ====================
-    st.markdown("### 📊 數據概覽")
+    # ==================== 模块1：数据概览 ====================
+    st.markdown("## 📊 數據概覽")
     
     # 获取统计数据
     try:
@@ -1299,11 +1282,7 @@ def render_home():
         with col4:
             st.metric("🏋️ 練馬師總數", "0")
     
-    st.markdown("---")
-    
-    # ==================== 手动更新按钮 ====================
-    st.markdown("### 🔄 數據更新")
-    
+    # 手动更新按钮
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         update_btn = st.button("🔄 手動更新所有數據", type="primary", use_container_width=True)
@@ -1313,16 +1292,24 @@ def render_home():
             st.warning("免費次數已用完，請升級到專業版")
         else:
             with st.spinner("正在從HKJC API獲取最新數據..."):
-                # 获取今日日期
                 today = datetime.now().strftime("%Y-%m-%d")
                 result = update_all_data_for_date(today)
-                
                 if result["total"] > 0:
                     st.success(f"✅ 更新完成！成功 {result['success']} 場，失敗 {result['failed']} 場")
                 else:
                     st.info("今日暫無賽事，無需更新")
     
     st.markdown("---")
+    
+    # ==================== 模块2：智能投注 ====================
+    # 调用智能投注（不显示独立标题）
+    render_smart_betting(show_title=False)
+    
+    st.markdown("---")
+    
+    # ==================== 模块3：回测 ====================
+    # 调用回测（不显示独立标题）
+    render_backtest_page(show_title=False)
     
     # ==================== 全马基础评分榜 ====================
     st.markdown("### 🐎 全馬基礎評分榜")
@@ -1468,9 +1455,11 @@ def get_top_horses_by_probability(runners: List[Dict], limit: int = 3) -> List[D
 
 # ==================== 智能投注主页面 ====================
 
-def render_smart_betting():
+def render_smart_betting(show_title: bool = True):
     """智能投注页面：单场分析 + 全天优化"""
-    st.markdown("## 🎯 智能投注")
+    if show_title:
+        st.markdown("## 🎯 智能投注")
+    # ... 其余代码不变
     
     # ==================== 用户设置区域 ====================
     with st.expander("⚙️ 投注設置", expanded=True):
@@ -2087,9 +2076,11 @@ def run_full_day_backtest(race_date: str, user_weights: Dict) -> Dict:
 
 # ==================== 回测页面 ====================
 
-def render_backtest_page():
+def render_backtest_page(show_title: bool = True):
     """回测页面：单场回测 + 全天回测"""
-    st.markdown("## 📊 回測")
+    if show_title:
+        st.markdown("## 📊 回測")
+    # ... 其余代码不变
     
     # 获取用户权重
     user_weights = {
