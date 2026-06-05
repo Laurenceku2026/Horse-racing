@@ -382,7 +382,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
         return False, f"註冊失敗: {str(e)}", None
 #--------------
 def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """用户登录 - 最终修复版"""
+    """用户登录 - 最终修正版"""
     try:
         # 1. Auth 登录
         url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
@@ -406,16 +406,15 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
         
         print(f"用户ID: {user_id}")
         
-        # 2. 直接使用 service_role 密钥查询 user_settings（不通过 get_supabase_headers）
-        # 这是关键修复：直接构造 headers，确保使用正确的密钥
-        direct_headers = {
-            "apikey": SUPABASE_KEY,  # SUPABASE_STOCK_SECRET_KEY
-            "Authorization": f"Bearer {SUPABASE_KEY}",
+        # 2. 使用用户的 access_token 查询 user_settings（关键！）
+        user_headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {access_token}",  # 使用用户的 token
             "Content-Type": "application/json"
         }
         
         check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
-        check_response = requests.get(check_url, headers=direct_headers)
+        check_response = requests.get(check_url, headers=user_headers)
         
         print(f"查询 user_settings 状态码: {check_response.status_code}")
         print(f"查询结果: {check_response.text}")
@@ -438,7 +437,7 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
             }
             
             insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
-            insert_response = requests.post(insert_url, headers=direct_headers, json=settings_data)
+            insert_response = requests.post(insert_url, headers=user_headers, json=settings_data)
             
             print(f"创建 user_settings 状态码: {insert_response.status_code}")
             print(f"创建结果: {insert_response.text}")
@@ -462,7 +461,7 @@ def sign_out():
     st.session_state.token_expiry = 0
     st.session_state.admin_mode = False
     st.rerun()
-
+#---------
 def get_user_profile(user_id: str) -> Dict:
     """获取用户资料"""
     if not user_id or user_id == "admin":
@@ -474,11 +473,19 @@ def get_user_profile(user_id: str) -> Dict:
             "weights_race": DEFAULT_WEIGHTS["race"],
             "weights_odds": DEFAULT_WEIGHTS["odds"],
             "temperature": DEFAULT_WEIGHTS["temperature"],
-            "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
+            "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"],
+            "risk_preference": "standard",
+            "default_bankroll": 1000
         }
     
     try:
-        headers = get_supabase_headers(use_secret=True)
+        # 使用用户的 access_token
+        access_token = st.session_state.get("access_token", "")
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
         url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
         response = requests.get(url, headers=headers)
         
@@ -511,11 +518,16 @@ def get_user_profile(user_id: str) -> Dict:
         "risk_preference": "standard",
         "default_bankroll": 1000
     }
-
+#-------------
 def update_user_profile(user_id: str, data: Dict) -> bool:
     """更新用户资料"""
     try:
-        headers = get_supabase_headers(use_secret=True)
+        access_token = st.session_state.get("access_token", "")
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
         url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
         response = requests.patch(url, headers=headers, json=data)
         return response.status_code in [200, 204]
