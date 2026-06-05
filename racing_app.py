@@ -317,7 +317,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
             user_id = resp_data.get("user", {}).get("id")
             
             if user_id:
-                # 创建racing.user_settings记录
+                # 创建 racing.user_settings 记录
                 settings_data = {
                     "user_id": user_id,
                     "email": email,
@@ -336,19 +336,52 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                 if insert_response.status_code in [200, 201]:
                     return True, "註冊成功！請登入", user_id
                 else:
+                    # 即使 user_settings 创建失败，也允许登录（后续会自动创建）
                     print(f"创建user_settings失败: {insert_response.text}")
                     return True, "註冊成功！請登入", user_id
             return True, "註冊成功！請登入", user_id
         else:
             error = response.json()
             if "User already registered" in str(error):
+                # 用户已存在，尝试为其创建 racing.user_settings 记录
+                # 先通过邮箱查找用户
+                admin_url = f"{SUPABASE_URL}/auth/v1/admin/users"
+                admin_headers = get_supabase_headers(use_secret=True)
+                admin_response = requests.get(admin_url, headers=admin_headers)
+                
+                if admin_response.status_code == 200:
+                    users = admin_response.json().get("users", [])
+                    for user in users:
+                        if user.get("email") == email:
+                            user_id = user.get("id")
+                            # 检查是否已有 racing.user_settings 记录
+                            check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+                            check_response = requests.get(check_url, headers=admin_headers)
+                            
+                            if check_response.status_code == 200 and not check_response.json():
+                                # 没有记录，创建
+                                settings_data = {
+                                    "user_id": user_id,
+                                    "email": email,
+                                    "subscription_tier": "free",
+                                    "free_trials_remaining": FREE_TRIAL_LIMIT,
+                                    "weights_basic": DEFAULT_WEIGHTS["basic"],
+                                    "weights_race": DEFAULT_WEIGHTS["race"],
+                                    "weights_odds": DEFAULT_WEIGHTS["odds"],
+                                    "temperature": DEFAULT_WEIGHTS["temperature"],
+                                    "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
+                                }
+                                insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+                                requests.post(insert_url, headers=admin_headers, json=settings_data)
+                            
+                            return True, "該郵箱已在系統中，請直接登入", user_id
                 return False, "該電郵已註冊，請直接登入", None
             return False, f"註冊失敗: {error.get('msg', '未知錯誤')}", None
     except Exception as e:
         return False, f"註冊失敗: {str(e)}", None
-
-def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Optional[str], Optional[str]]:
-    """用户登录 - 验证racing.user_settings中是否有记录"""
+#--------------
+def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """用户登录 - 验证racing.user_settings中是否有记录，没有则自动创建"""
     try:
         url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
         headers = {
@@ -365,17 +398,34 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
             access_token = resp_data.get("access_token")
             refresh_token = resp_data.get("refresh_token")
             
-            # 检查racing.user_settings中是否有该用户记录
-            check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+            # 检查 racing.user_settings 中是否有该用户记录
             headers_secret = get_supabase_headers(use_secret=True)
+            check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
             check_response = requests.get(check_url, headers=headers_secret)
             
             if check_response.status_code == 200 and check_response.json():
                 # 有记录，允许登录
                 return True, "登入成功", user_id, user_email, access_token, refresh_token
             else:
-                # 没有记录，不允许登录
-                return False, t()["not_registered_for_racing"], None, None, None, None
+                # 没有记录，自动创建
+                settings_data = {
+                    "user_id": user_id,
+                    "email": user_email,
+                    "subscription_tier": "free",
+                    "free_trials_remaining": FREE_TRIAL_LIMIT,
+                    "weights_basic": DEFAULT_WEIGHTS["basic"],
+                    "weights_race": DEFAULT_WEIGHTS["race"],
+                    "weights_odds": DEFAULT_WEIGHTS["odds"],
+                    "temperature": DEFAULT_WEIGHTS["temperature"],
+                    "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
+                }
+                insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+                insert_response = requests.post(insert_url, headers=headers_secret, json=settings_data)
+                
+                if insert_response.status_code in [200, 201]:
+                    return True, "登入成功", user_id, user_email, access_token, refresh_token
+                else:
+                    return False, "創建用戶設置失敗，請聯絡管理員", None, None, None, None
         else:
             return False, t()["login_failed"], None, None, None, None
     except Exception as e:
@@ -618,15 +668,23 @@ def show_paywall():
 def check_admin_login(username: str, password: str) -> bool:
     """验证管理员登录"""
     return username == ADMIN_USERNAME and password == ADMIN_PASSWORD
-
+#---------------
 def get_all_users() -> List[Dict]:
-    """获取所有用户列表"""
+    """获取所有用户列表（从 racing.user_settings 读取）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?order=created_at.desc"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            return response.json()
+            users = response.json()
+            # 确保每个用户都有基本字段
+            for user in users:
+                if 'subscription_tier' not in user:
+                    user['subscription_tier'] = 'free'
+                if 'free_trials_remaining' not in user:
+                    user['free_trials_remaining'] = FREE_TRIAL_LIMIT
+            return users
+        print(f"获取用户列表失败: {response.status_code} - {response.text}")
         return []
     except Exception as e:
         print(f"获取用户列表失败: {e}")
@@ -791,9 +849,37 @@ def render_admin_panel():
     
     # 用户列表
     st.markdown(f"### 👥 {t()['user_list']}")
-    df_users = pd.DataFrame(users)
-    display_columns = ["email", "subscription_tier", "free_trials_remaining", "subscription_expires_at"]
-    st.dataframe(df_users[display_columns], use_container_width=True, hide_index=True)
+    
+    if users:
+        # 准备显示数据
+        display_users = []
+        for u in users:
+            # 安全获取字段值
+            email = u.get('email', '未知')
+            subscription_tier = u.get('subscription_tier', 'free')
+            free_trials_remaining = u.get('free_trials_remaining', FREE_TRIAL_LIMIT)
+            subscription_expires_at = u.get('subscription_expires_at', '')
+            created_at = u.get('created_at', '')
+            
+            # 格式化日期
+            if subscription_expires_at:
+                subscription_expires_at = subscription_expires_at[:10] if len(subscription_expires_at) > 10 else subscription_expires_at
+            if created_at:
+                created_at = created_at[:10] if len(created_at) > 10 else created_at
+            
+            display_users.append({
+                "電郵": email,
+                "訂閱等級": "專業版" if subscription_tier == "pro" else "免費版",
+                "剩餘次數": free_trials_remaining,
+                "到期時間": subscription_expires_at if subscription_expires_at else "-",
+                "註冊時間": created_at if created_at else "-"
+            })
+        
+        df_users = pd.DataFrame(display_users)
+        st.dataframe(df_users, use_container_width=True, hide_index=True)
+        st.caption(f"共 {len(users)} 位用戶")
+    else:
+        st.info("暫無用戶數據")
     
     st.markdown("---")
     
