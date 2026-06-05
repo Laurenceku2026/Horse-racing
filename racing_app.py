@@ -237,7 +237,7 @@ def init_session_state():
         "show_paywall": False,
         "payment_url": None,
         "payment_type": None,
-        "current_page": "home",  # home / smart_betting / backtest
+        # 删除 current_page，因为不再需要页面路由
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -1034,23 +1034,9 @@ def render_sidebar():
             
             st.markdown("---")
         
-        # 页面导航
-      #  st.markdown("### 📍 導航")
-      #  page = st.radio(
-      #      "選擇頁面",
-      #      options=["🏠 主頁", "🎯 智能投注", "📊 回測"],
-      #      key="nav_radio",
-      #      label_visibility="collapsed"
-      #  )
-        
-        if page == "🏠 主頁":
-            st.session_state.current_page = "home"
-        elif page == "🎯 智能投注":
-            st.session_state.current_page = "smart_betting"
-        elif page == "📊 回測":
-            st.session_state.current_page = "backtest"
-        
-        st.markdown("---")
+        # 删除导航菜单（这段已删除）
+        # st.markdown("### 📍 導航")
+        # page = st.radio(...)
         
         with st.expander(t()["about_header"], expanded=True):
             st.markdown(t()["about_text"])
@@ -2281,17 +2267,8 @@ def main():
         show_paywall()
         return
     
-    # 已登录，根据导航显示对应页面
-    current_page = st.session_state.get("current_page", "home")
-    
-    if current_page == "home":
-        render_home()
-    elif current_page == "smart_betting":
-        render_smart_betting()
-    elif current_page == "backtest":
-        render_backtest_page()
-    else:
-        render_home()
+    # 已登录，直接显示主页（包含所有模块：数据概览 + 智能投注 + 回测）
+    render_home()
 
 # ============================================================
 # 第2次代码：评分引擎 + 数据模型
