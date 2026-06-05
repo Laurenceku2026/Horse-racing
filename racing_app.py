@@ -406,10 +406,10 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
         
         print(f"用户ID: {user_id}")
         
-        # 2. 使用用户的 access_token 查询 user_settings（关键！）
+        # 2. 使用用户的 access_token 查询 user_settings
         user_headers = {
             "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {access_token}",  # 使用用户的 token
+            "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
         
@@ -420,10 +420,17 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
         print(f"查询结果: {check_response.text}")
         
         if check_response.status_code == 200 and check_response.json():
-            # 有记录，登录成功
             return True, "登入成功", user_id, user_email, access_token, refresh_token
         else:
             # 没有记录，尝试自动创建
+            # 注意：POST 请求需要添加 Prefer 头
+            insert_headers = {
+                "apikey": SUPABASE_ANON_KEY,
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation"  # 关键！
+            }
+            
             settings_data = {
                 "user_id": user_id,
                 "email": user_email,
@@ -437,7 +444,7 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
             }
             
             insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
-            insert_response = requests.post(insert_url, headers=user_headers, json=settings_data)
+            insert_response = requests.post(insert_url, headers=insert_headers, json=settings_data)
             
             print(f"创建 user_settings 状态码: {insert_response.status_code}")
             print(f"创建结果: {insert_response.text}")
