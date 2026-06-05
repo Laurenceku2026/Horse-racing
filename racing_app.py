@@ -257,10 +257,11 @@ def init_supabase() -> Optional[Client]:
     return None
 
 supabase = init_supabase()
-
-def get_supabase_headers(access_token: str = None, use_secret: bool = True):
+#---------------
+def get_supabase_headers(use_secret=False, access_token=None):
     """获取Supabase API请求头"""
     if use_secret:
+        # 直接使用 SUPABASE_KEY（service_role 密钥）
         return {
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -381,8 +382,9 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
         return False, f"註冊失敗: {str(e)}", None
 #--------------
 def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """用户登录 - 验证racing.user_settings中是否有记录，没有则自动创建"""
+    """用户登录 - 最终修复版"""
     try:
+        # 1. Auth 登录
         url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
         headers = {
             "apikey": SUPABASE_ANON_KEY,
@@ -391,44 +393,63 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
         data = {"email": email, "password": password}
         response = requests.post(url, headers=headers, json=data)
         
-        if response.status_code == 200:
-            resp_data = response.json()
-            user_id = resp_data.get("user", {}).get("id")
-            user_email = resp_data.get("user", {}).get("email")
-            access_token = resp_data.get("access_token")
-            refresh_token = resp_data.get("refresh_token")
+        print(f"Auth 状态码: {response.status_code}")
+        
+        if response.status_code != 200:
+            return False, "電郵或密碼錯誤", None, None, None, None
+        
+        resp_data = response.json()
+        user_id = resp_data.get("user", {}).get("id")
+        user_email = resp_data.get("user", {}).get("email")
+        access_token = resp_data.get("access_token")
+        refresh_token = resp_data.get("refresh_token")
+        
+        print(f"用户ID: {user_id}")
+        
+        # 2. 直接使用 service_role 密钥查询 user_settings（不通过 get_supabase_headers）
+        # 这是关键修复：直接构造 headers，确保使用正确的密钥
+        direct_headers = {
+            "apikey": SUPABASE_KEY,  # SUPABASE_STOCK_SECRET_KEY
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+        check_response = requests.get(check_url, headers=direct_headers)
+        
+        print(f"查询 user_settings 状态码: {check_response.status_code}")
+        print(f"查询结果: {check_response.text}")
+        
+        if check_response.status_code == 200 and check_response.json():
+            # 有记录，登录成功
+            return True, "登入成功", user_id, user_email, access_token, refresh_token
+        else:
+            # 没有记录，尝试自动创建
+            settings_data = {
+                "user_id": user_id,
+                "email": user_email,
+                "subscription_tier": "free",
+                "free_trials_remaining": FREE_TRIAL_LIMIT,
+                "weights_basic": DEFAULT_WEIGHTS["basic"],
+                "weights_race": DEFAULT_WEIGHTS["race"],
+                "weights_odds": DEFAULT_WEIGHTS["odds"],
+                "temperature": DEFAULT_WEIGHTS["temperature"],
+                "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
+            }
             
-            # 检查 racing.user_settings 中是否有该用户记录
-            headers_secret = get_supabase_headers(use_secret=True)
-            check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
-            check_response = requests.get(check_url, headers=headers_secret)
+            insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+            insert_response = requests.post(insert_url, headers=direct_headers, json=settings_data)
             
-            if check_response.status_code == 200 and check_response.json():
-                # 有记录，允许登录
+            print(f"创建 user_settings 状态码: {insert_response.status_code}")
+            print(f"创建结果: {insert_response.text}")
+            
+            if insert_response.status_code in [200, 201]:
                 return True, "登入成功", user_id, user_email, access_token, refresh_token
             else:
-                # 没有记录，自动创建
-                settings_data = {
-                    "user_id": user_id,
-                    "email": user_email,
-                    "subscription_tier": "free",
-                    "free_trials_remaining": FREE_TRIAL_LIMIT,
-                    "weights_basic": DEFAULT_WEIGHTS["basic"],
-                    "weights_race": DEFAULT_WEIGHTS["race"],
-                    "weights_odds": DEFAULT_WEIGHTS["odds"],
-                    "temperature": DEFAULT_WEIGHTS["temperature"],
-                    "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
-                }
-                insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
-                insert_response = requests.post(insert_url, headers=headers_secret, json=settings_data)
+                return False, f"創建用戶設置失敗: {insert_response.text}", None, None, None, None
                 
-                if insert_response.status_code in [200, 201]:
-                    return True, "登入成功", user_id, user_email, access_token, refresh_token
-                else:
-                    return False, "創建用戶設置失敗，請聯絡管理員", None, None, None, None
-        else:
-            return False, t()["login_failed"], None, None, None, None
     except Exception as e:
+        print(f"登录异常: {e}")
         return False, f"登入失敗: {str(e)}", None, None, None, None
 
 def sign_out():
