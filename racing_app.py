@@ -2853,27 +2853,53 @@ def fetch_race_data_from_api(race_date: str, venue: str, race_no: int) -> Option
         print(f"API请求异常: {e}")
         return None
 
-
+#----------
 def update_all_data_for_date(race_date: str) -> Dict:
-    """更新指定日期的所有赛事数据"""
+    """更新指定日期的所有赛事数据（Node.js API 优先，降级到爬虫）"""
     result = {"success": 0, "failed": 0, "total": 0}
+    
+    # 获取该日期的所有赛事
     try:
         headers = get_supabase_headers(use_secret=True)
         url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=eq.{race_date}"
         response = requests.get(url, headers=headers)
+        
         if response.status_code == 200:
             races = response.json()
             result["total"] = len(races)
+            
             for race in races:
-                api_data = fetch_race_data_from_api(
-                    race_date,
-                    race.get("venue"),
-                    race.get("race_no")
-                )
-                if api_data:
-                    result["success"] += 1
-                else:
-                    result["failed"] += 1
+                # 尝试从 Node.js API 获取数据
+                api_success = False
+                try:
+                    API_BASE_URL = st.secrets.get("HKJC_API_URL", "http://localhost:3000/api")
+                    sync_url = f"{API_BASE_URL}/sync/race"
+                    sync_response = requests.post(sync_url, json={
+                        "date": race_date,
+                        "venue": race.get("venue"),
+                        "raceNo": race.get("race_no")
+                    }, timeout=30)
+                    
+                    if sync_response.status_code == 200:
+                        api_success = True
+                        result["success"] += 1
+                except Exception as e:
+                    print(f"Node.js API 调用失败: {e}")
+                
+                # 降级到 Python 爬虫
+                if not api_success:
+                    try:
+                        from hkjc_scraper import get_race_results, save_to_supabase
+                        results = get_race_results(race_date, race.get("venue"), race.get("race_no"))
+                        if results:
+                            save_to_supabase(race, results)
+                            result["success"] += 1
+                        else:
+                            result["failed"] += 1
+                    except Exception as e:
+                        print(f"爬虫降级失败: {e}")
+                        result["failed"] += 1
+        
         return result
     except Exception as e:
         print(f"更新数据失败: {e}")
