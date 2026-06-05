@@ -710,9 +710,11 @@ def check_admin_login(username: str, password: str) -> bool:
     return username == ADMIN_USERNAME and password == ADMIN_PASSWORD
 #---------------
 def get_all_users() -> List[Dict]:
-    """获取所有用户列表（从 racing.user_settings 读取）"""
+    """获取当前 App（racing）的用户列表"""
     try:
         headers = get_supabase_headers(use_secret=True)
+        # 只查询 app_id = 'racing' 的用户（如果表有 app_id 字段）
+        # 如果表没有 app_id 字段，则查询所有用户（因为 racing 和 stock 的表已经分开）
         url = f"{SUPABASE_URL}/rest/v1/user_settings_racing"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
