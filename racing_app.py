@@ -1,0 +1,2773 @@
+"""
+香港赛马AI分析系统 - 第1次代码
+模块：基础架构 + 用户管理
+包含：配置、Supabase连接、用户认证、Stripe支付、侧边栏、右上角按钮
+版本：v1.0
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import requests
+import json
+import time
+import hmac
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional
+from supabase import create_client, Client
+
+# ==================== 页面配置 ====================
+st.set_page_config(
+    page_title="香港赛马AI分析系统",
+    page_icon="🐎",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ==================== 自定义CSS ====================
+st.markdown("""
+<style>
+    .main-header {
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .sidebar-user-info {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .stButton button {
+        border-radius: 0.5rem;
+        transition: all 0.2s;
+    }
+    .stDataFrame {
+        font-size: 0.9rem;
+    }
+    .stMetric {
+        text-align: center;
+    }
+    .race-card {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    .signal-S { color: #ff4b4b; font-weight: bold; }
+    .signal-A { color: #ff6b6b; font-weight: bold; }
+    .signal-B { color: #ffaa00; font-weight: bold; }
+    .signal-C { color: #ff8800; font-weight: bold; }
+    .signal-D { color: #888888; font-weight: bold; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==================== 常量定义 ====================
+FREE_TRIAL_LIMIT = 30
+MAX_RECOMMENDED_HORSES = 30
+ADMIN_USERNAME = "Laurence_ku"
+ADMIN_PASSWORD = "Ku_product$2026"
+ADMIN_EMAIL = "Techlife2027@gmail.com"
+SCHEMA_NAME = "racing"  # 独立schema名称
+
+# 默认评分权重
+DEFAULT_WEIGHTS = {
+    "basic": 0.30,
+    "race": 0.40,
+    "odds": 0.30,
+    "temperature": 0.8,
+    "odds_mix_ratio": 0.6
+}
+
+# 信号等级映射
+SIGNAL_LEVELS = {
+    "S": {"min_score": 85, "action": "强烈推荐", "position": "10-15%", "color": "#ff4b4b"},
+    "A": {"min_score": 70, "action": "推荐", "position": "5-10%", "color": "#ff6b6b"},
+    "B": {"min_score": 55, "action": "观望", "position": "0-5%", "color": "#ffaa00"},
+    "C": {"min_score": 40, "action": "回避", "position": "0%", "color": "#ff8800"},
+    "D": {"min_score": 0, "action": "不推荐", "position": "0%", "color": "#888888"}
+}
+
+# 多语言文本（繁体中文 + 英文）
+TEXTS = {
+    "zh": {
+        "app_title": "🐎 香港赛马AI分析系统",
+        "login": "登入",
+        "register": "註冊",
+        "logout": "登出",
+        "email": "電郵",
+        "password": "密碼",
+        "confirm_password": "確認密碼",
+        "login_btn": "登入",
+        "register_btn": "註冊",
+        "back_to_login": "返回登入",
+        "welcome": "歡迎回來",
+        "login_failed": "登入失敗，請檢查電郵和密碼",
+        "register_success": "註冊成功！請登入",
+        "email_exists": "該電郵已註冊，請直接登入",
+        "not_registered_for_racing": "該電郵未註冊賽馬App，請先註冊",
+        "about_header": "📘 關於系統",
+        "about_text": """
+**香港賽馬AI分析系統** 基於AI技術提供：
+
+- 🏇 馬匹評分系統
+- 🎯 智能投注建議
+- 📊 全天優化策略
+- 📈 歷史回測驗證
+- 💡 AI勝率預測
+
+讓AI成為您的賽馬助手。
+""",
+        "contact_header": "📧 聯絡我們",
+        "contact_email": "✉️ 電郵: Techlife2027@gmail.com",
+        "guide_header": "📖 快速指南",
+        "guide_text": """
+1. 點擊[更新數據]獲取最新賽事
+2. 查看馬匹評分榜
+3. 進入智能投注頁生成建議
+4. 運行回測驗證策略
+
+💡 每次更新/生成消耗1次免費次數
+💎 升級專業版後無限使用
+""",
+        "subscription": "訂閱",
+        "free_tier": "免費版",
+        "pro_tier": "專業版",
+        "remaining": "剩餘次數",
+        "unlimited": "無限",
+        "upgrade": "升級專業版",
+        "monthly": "月付 $29/月",
+        "quarterly": "季付 $79/季",
+        "save_info": "季付更划算",
+        "chinese": "中文",
+        "english": "English",
+        "admin_panel": "管理員面板",
+        "total_users": "總用戶數",
+        "pro_users": "專業版用戶",
+        "free_users": "免費版用戶",
+        "user_list": "用戶列表"
+    },
+    "en": {
+        "app_title": "🐎 HK Horse Racing AI System",
+        "login": "Login",
+        "register": "Register",
+        "logout": "Logout",
+        "email": "Email",
+        "password": "Password",
+        "confirm_password": "Confirm Password",
+        "login_btn": "Login",
+        "register_btn": "Register",
+        "back_to_login": "Back to Login",
+        "welcome": "Welcome back",
+        "login_failed": "Login failed. Please check your email and password.",
+        "register_success": "Registration successful! Please login.",
+        "email_exists": "Email already registered. Please login.",
+        "not_registered_for_racing": "This email is not registered for Racing App. Please sign up first.",
+        "about_header": "📘 About System",
+        "about_text": """
+**HK Horse Racing AI System** powered by AI:
+
+- 🏇 Horse Rating System
+- 🎯 Smart Betting Recommendations
+- 📊 Full-day Optimization
+- 📈 Historical Backtesting
+- 💡 AI Win Probability
+
+Let AI be your racing assistant.
+""",
+        "contact_header": "📧 Contact Us",
+        "contact_email": "✉️ Email: Techlife2027@gmail.com",
+        "guide_header": "📖 Quick Guide",
+        "guide_text": """
+1. Click [Refresh] for latest races
+2. Check horse ratings
+3. Go to Smart Betting for recommendations
+4. Run backtest to validate strategies
+
+💡 Each refresh uses 1 free trial
+💎 Upgrade to Pro for unlimited access
+""",
+        "subscription": "Subscription",
+        "free_tier": "Free",
+        "pro_tier": "Pro",
+        "remaining": "Remaining",
+        "unlimited": "Unlimited",
+        "upgrade": "Upgrade to Pro",
+        "monthly": "Monthly $29/mo",
+        "quarterly": "Quarterly $79/quarter",
+        "save_info": "Save with quarterly",
+        "chinese": "中文",
+        "english": "English",
+        "admin_panel": "Admin Panel",
+        "total_users": "Total Users",
+        "pro_users": "Pro Users",
+        "free_users": "Free Users",
+        "user_list": "User List"
+    }
+}
+
+def t():
+    """获取当前语言文本"""
+    lang = st.session_state.get("lang", "zh")
+    return TEXTS[lang]
+
+# ==================== Supabase配置 ====================
+SUPABASE_URL = st.secrets.get("SUPABASE_STOCK_URL", "")
+SUPABASE_KEY = st.secrets.get("SUPABASE_STOCK_SECRET_KEY", "")
+SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_STOCK_ANON_KEY", "")
+
+# ==================== Stripe配置 ====================
+STRIPE_SECRET_KEY = st.secrets.get("STRIPE_SECRET_KEY", "")
+STRIPE_PRICE_MONTHLY = st.secrets.get("STRIPE_PRICE_MONTHLY", "price_1TeohqRtFEp2E97kgAACxQl0")
+STRIPE_PRICE_QUARTERLY = st.secrets.get("STRIPE_PRICE_QUARTERLY", "price_1TeokmRtFEp2E97kmHvf2YXe")
+
+# ==================== 初始化Session State ====================
+def init_session_state():
+    """初始化所有session state变量"""
+    defaults = {
+        "lang": "zh",
+        "authenticated": False,
+        "user_id": None,
+        "user_email": None,
+        "access_token": None,
+        "refresh_token": None,
+        "token_expiry": 0,
+        "admin_mode": False,
+        "show_admin_login": False,
+        "show_register": False,
+        "show_paywall": False,
+        "payment_url": None,
+        "payment_type": None,
+        "current_page": "home",  # home / smart_betting / backtest
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# ==================== Supabase连接 ====================
+@st.cache_resource
+def init_supabase() -> Optional[Client]:
+    """初始化Supabase连接"""
+    try:
+        if SUPABASE_URL and SUPABASE_KEY:
+            return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"Supabase初始化失败: {e}")
+    return None
+
+supabase = init_supabase()
+
+def get_supabase_headers(access_token: str = None, use_secret: bool = True):
+    """获取Supabase API请求头"""
+    if use_secret:
+        return {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+    elif access_token:
+        return {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+    else:
+        return {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+            "Content-Type": "application/json"
+        }
+
+def supabase_request(method: str, table: str, data=None, params=None, access_token=None):
+    """通用的Supabase REST API请求"""
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    headers = get_supabase_headers(access_token, use_secret=(access_token is None))
+    
+    if params:
+        url += f"?{params}"
+    
+    if method == "GET":
+        response = requests.get(url, headers=headers)
+    elif method == "POST":
+        response = requests.post(url, headers=headers, json=data)
+    elif method == "PATCH":
+        response = requests.patch(url, headers=headers, json=data)
+    elif method == "DELETE":
+        response = requests.delete(url, headers=headers)
+    else:
+        raise ValueError(f"Unsupported method: {method}")
+    
+    return response
+
+# ==================== 用户认证函数 ====================
+def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
+    """用户注册 - 创建Auth用户 + racing.user_settings记录"""
+    try:
+        url = f"{SUPABASE_URL}/auth/v1/signup"
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Content-Type": "application/json"
+        }
+        data = {"email": email, "password": password}
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code == 200:
+            resp_data = response.json()
+            user_id = resp_data.get("user", {}).get("id")
+            
+            if user_id:
+                # 创建racing.user_settings记录
+                settings_data = {
+                    "user_id": user_id,
+                    "email": email,
+                    "subscription_tier": "free",
+                    "free_trials_remaining": FREE_TRIAL_LIMIT,
+                    "weights_basic": DEFAULT_WEIGHTS["basic"],
+                    "weights_race": DEFAULT_WEIGHTS["race"],
+                    "weights_odds": DEFAULT_WEIGHTS["odds"],
+                    "temperature": DEFAULT_WEIGHTS["temperature"],
+                    "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
+                }
+                headers_secret = get_supabase_headers(use_secret=True)
+                insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+                insert_response = requests.post(insert_url, headers=headers_secret, json=settings_data)
+                
+                if insert_response.status_code in [200, 201]:
+                    return True, "註冊成功！請登入", user_id
+                else:
+                    print(f"创建user_settings失败: {insert_response.text}")
+                    return True, "註冊成功！請登入", user_id
+            return True, "註冊成功！請登入", user_id
+        else:
+            error = response.json()
+            if "User already registered" in str(error):
+                return False, "該電郵已註冊，請直接登入", None
+            return False, f"註冊失敗: {error.get('msg', '未知錯誤')}", None
+    except Exception as e:
+        return False, f"註冊失敗: {str(e)}", None
+
+def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Optional[str], Optional[str]]:
+    """用户登录 - 验证racing.user_settings中是否有记录"""
+    try:
+        url = f"{SUPABASE_URL}/auth/v1/token?grant_type=password"
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Content-Type": "application/json"
+        }
+        data = {"email": email, "password": password}
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code == 200:
+            resp_data = response.json()
+            user_id = resp_data.get("user", {}).get("id")
+            user_email = resp_data.get("user", {}).get("email")
+            access_token = resp_data.get("access_token")
+            refresh_token = resp_data.get("refresh_token")
+            
+            # 检查racing.user_settings中是否有该用户记录
+            check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+            headers_secret = get_supabase_headers(use_secret=True)
+            check_response = requests.get(check_url, headers=headers_secret)
+            
+            if check_response.status_code == 200 and check_response.json():
+                # 有记录，允许登录
+                return True, "登入成功", user_id, user_email, access_token, refresh_token
+            else:
+                # 没有记录，不允许登录
+                return False, t()["not_registered_for_racing"], None, None, None, None
+        else:
+            return False, t()["login_failed"], None, None, None, None
+    except Exception as e:
+        return False, f"登入失敗: {str(e)}", None, None, None, None
+
+def sign_out():
+    """退出登录"""
+    st.session_state.authenticated = False
+    st.session_state.user_id = None
+    st.session_state.user_email = None
+    st.session_state.access_token = None
+    st.session_state.refresh_token = None
+    st.session_state.token_expiry = 0
+    st.session_state.admin_mode = False
+    st.rerun()
+
+def get_user_profile(user_id: str) -> Dict:
+    """获取用户资料"""
+    if not user_id or user_id == "admin":
+        return {
+            "subscription_tier": "free",
+            "free_trials_remaining": FREE_TRIAL_LIMIT,
+            "subscription_expires_at": None,
+            "weights_basic": DEFAULT_WEIGHTS["basic"],
+            "weights_race": DEFAULT_WEIGHTS["race"],
+            "weights_odds": DEFAULT_WEIGHTS["odds"],
+            "temperature": DEFAULT_WEIGHTS["temperature"],
+            "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
+        }
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200 and response.json():
+            data = response.json()[0]
+            return {
+                "subscription_tier": data.get("subscription_tier", "free"),
+                "free_trials_remaining": data.get("free_trials_remaining", FREE_TRIAL_LIMIT),
+                "subscription_expires_at": data.get("subscription_expires_at"),
+                "weights_basic": data.get("weights_basic", DEFAULT_WEIGHTS["basic"]),
+                "weights_race": data.get("weights_race", DEFAULT_WEIGHTS["race"]),
+                "weights_odds": data.get("weights_odds", DEFAULT_WEIGHTS["odds"]),
+                "temperature": data.get("temperature", DEFAULT_WEIGHTS["temperature"]),
+                "odds_mix_ratio": data.get("odds_mix_ratio", DEFAULT_WEIGHTS["odds_mix_ratio"]),
+                "risk_preference": data.get("risk_preference", "standard"),
+                "default_bankroll": data.get("default_bankroll", 1000)
+            }
+    except Exception as e:
+        print(f"获取用户资料失败: {e}")
+    
+    return {
+        "subscription_tier": "free",
+        "free_trials_remaining": FREE_TRIAL_LIMIT,
+        "subscription_expires_at": None,
+        "weights_basic": DEFAULT_WEIGHTS["basic"],
+        "weights_race": DEFAULT_WEIGHTS["race"],
+        "weights_odds": DEFAULT_WEIGHTS["odds"],
+        "temperature": DEFAULT_WEIGHTS["temperature"],
+        "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"],
+        "risk_preference": "standard",
+        "default_bankroll": 1000
+    }
+
+def update_user_profile(user_id: str, data: Dict) -> bool:
+    """更新用户资料"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+        response = requests.patch(url, headers=headers, json=data)
+        return response.status_code in [200, 204]
+    except Exception as e:
+        print(f"更新用户资料失败: {e}")
+        return False
+
+def get_remaining_trials(user_id: str) -> int:
+    """获取剩余免费次数"""
+    profile = get_user_profile(user_id)
+    if profile.get("subscription_tier") == "pro":
+        return -1  # -1表示无限
+    return profile.get("free_trials_remaining", 0)
+
+def consume_free_trial(user_id: str) -> bool:
+    """消耗一次免费次数"""
+    profile = get_user_profile(user_id)
+    
+    if profile.get("subscription_tier") == "pro":
+        return True
+    
+    remaining = profile.get("free_trials_remaining", 0)
+    if remaining > 0:
+        new_remaining = remaining - 1
+        success = update_user_profile(user_id, {"free_trials_remaining": new_remaining})
+        return success
+    else:
+        st.session_state.show_paywall = True
+        return False
+
+# ==================== Stripe支付 ====================
+def create_checkout_session(user_id: str, user_email: str, price_id: str) -> Tuple[Optional[str], Optional[str]]:
+    """创建Stripe Checkout Session"""
+    if not STRIPE_SECRET_KEY:
+        return None, "Stripe密钥未配置"
+    
+    try:
+        import stripe
+        stripe.api_key = STRIPE_SECRET_KEY
+        
+        base_url = "https://racing-ai.streamlit.app"  # 部署后修改
+        success_url = f"{base_url}?session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{base_url}?canceled=true"
+        
+        session = stripe.checkout.Session.create(
+            customer_email=user_email,
+            payment_method_types=['card'],
+            line_items=[{'price': price_id, 'quantity': 1}],
+            mode='subscription',
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={'user_id': user_id, 'price_id': price_id}
+        )
+        return session.url, None
+    except Exception as e:
+        return None, str(e)
+
+def handle_stripe_callback():
+    """处理Stripe支付成功回调"""
+    query_params = st.query_params
+    
+    if "session_id" in query_params:
+        session_id = query_params["session_id"]
+        try:
+            import stripe
+            stripe.api_key = STRIPE_SECRET_KEY
+            session = stripe.checkout.Session.retrieve(session_id)
+            
+            if session.payment_status == "paid":
+                user_id = session.metadata.get("user_id")
+                if user_id and user_id != "admin":
+                    update_user_profile(user_id, {"subscription_tier": "pro"})
+                    st.success("✅ 支付成功！您已是專業版用戶")
+                    st.balloons()
+                    st.query_params.clear()
+                    st.rerun()
+                else:
+                    st.warning("支付成功，但用戶信息驗證失敗，請聯絡管理員")
+            else:
+                st.info("支付未完成，請完成支付後刷新頁面")
+        except Exception as e:
+            st.error(f"驗證支付狀態失敗: {e}")
+
+def show_paywall():
+    """显示付费墙"""
+    st.markdown("---")
+    st.error("🔒 您的免費使用次數已用完")
+    
+    st.markdown(f"""
+    ### 💎 {t()['upgrade']}
+    
+    | 功能 | 免費版 | 專業版 |
+    |------|--------|--------|
+    | 使用次數 | 30次 | **無限** |
+    | 馬匹評分榜 | ✅ | ✅ |
+    | 智能投注 | ✅ | ✅ |
+    | 全天優化 | ✅ | ✅ |
+    | 歷史回測 | ✅ | ✅ |
+    """)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("💎 月付 $29/月", key="monthly_btn", use_container_width=True):
+            url, error = create_checkout_session(
+                st.session_state.user_id, 
+                st.session_state.user_email, 
+                STRIPE_PRICE_MONTHLY
+            )
+            if url:
+                st.session_state.payment_url = url
+                st.session_state.payment_type = "monthly"
+                st.rerun()
+            else:
+                st.error(f"創建支付會話失敗: {error}")
+        
+        if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "monthly":
+            st.markdown(f'''
+            <a href="{st.session_state.payment_url}" target="_blank" style="
+                display: block;
+                width: 100%;
+                padding: 0.6rem;
+                background-color: #ff4b4b;
+                color: white;
+                text-align: center;
+                text-decoration: none;
+                border-radius: 0.5rem;
+                font-weight: bold;
+                margin-top: 0.5rem;">
+                💳 前往Stripe支付（月付$29）
+            </a>
+            ''', unsafe_allow_html=True)
+    
+    with col2:
+        if st.button("💎 季付 $79/季", key="quarterly_btn", use_container_width=True):
+            url, error = create_checkout_session(
+                st.session_state.user_id, 
+                st.session_state.user_email, 
+                STRIPE_PRICE_QUARTERLY
+            )
+            if url:
+                st.session_state.payment_url = url
+                st.session_state.payment_type = "quarterly"
+                st.rerun()
+            else:
+                st.error(f"創建支付會話失敗: {error}")
+        
+        if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "quarterly":
+            st.markdown(f'''
+            <a href="{st.session_state.payment_url}" target="_blank" style="
+                display: block;
+                width: 100%;
+                padding: 0.6rem;
+                background-color: #ff4b4b;
+                color: white;
+                text-align: center;
+                text-decoration: none;
+                border-radius: 0.5rem;
+                font-weight: bold;
+                margin-top: 0.5rem;">
+                💳 前往Stripe支付（季付$79）
+            </a>
+            ''', unsafe_allow_html=True)
+    
+    if st.button("返回", use_container_width=True):
+        st.session_state.show_paywall = False
+        st.session_state.payment_url = None
+        st.rerun()
+
+# ==================== 管理员函数 ====================
+def check_admin_login(username: str, password: str) -> bool:
+    """验证管理员登录"""
+    return username == ADMIN_USERNAME and password == ADMIN_PASSWORD
+
+def get_all_users() -> List[Dict]:
+    """获取所有用户列表"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"获取用户列表失败: {e}")
+        return []
+
+def admin_reset_user_trials(user_id: str, new_trials: int) -> Tuple[bool, str]:
+    """重置用户免费次数"""
+    try:
+        success = update_user_profile(user_id, {"free_trials_remaining": new_trials})
+        if success:
+            return True, f"已重置免費次數為 {new_trials}"
+        return False, "重置失敗"
+    except Exception as e:
+        return False, f"重置失敗: {str(e)}"
+
+def admin_set_subscription(user_id: str, tier: str, months: int = 1) -> Tuple[bool, str]:
+    """设置用户订阅等级"""
+    try:
+        data = {"subscription_tier": tier}
+        if tier == "pro":
+            expires_at = (datetime.now() + timedelta(days=30 * months)).isoformat()
+            data["subscription_expires_at"] = expires_at
+        else:
+            data["subscription_expires_at"] = None
+        
+        success = update_user_profile(user_id, data)
+        if success:
+            return True, f"用戶訂閱已設置為 {tier}"
+        return False, "設置失敗"
+    except Exception as e:
+        return False, f"設置失敗: {str(e)}"
+
+# ==================== 登录/注册UI ====================
+def render_login_form():
+    """显示登录表单"""
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown(f"<h1 style='text-align: center;'>{t()['app_title']}</h1>", unsafe_allow_html=True)
+        
+        with st.form("login_form", border=True):
+            email = st.text_input(t()["email"], key="login_email")
+            password = st.text_input(t()["password"], type="password", key="login_password")
+            submitted = st.form_submit_button(t()["login_btn"], type="primary", use_container_width=True)
+            
+            if submitted:
+                if not email or not password:
+                    st.warning("請填寫電郵和密碼")
+                else:
+                    with st.spinner("登入中..."):
+                        success, msg, user_id, user_email, access_token, refresh_token = sign_in(email, password)
+                        if success:
+                            st.session_state.authenticated = True
+                            st.session_state.user_id = user_id
+                            st.session_state.user_email = user_email
+                            st.session_state.access_token = access_token
+                            st.session_state.refresh_token = refresh_token
+                            st.session_state.token_expiry = time.time() + 3600
+                            st.session_state.show_paywall = False
+                            st.rerun()
+                        else:
+                            st.error(msg)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(t()["register"], use_container_width=True):
+                st.session_state.show_register = True
+                st.rerun()
+        with col2:
+            if st.button("忘記密碼？", use_container_width=True):
+                st.info(f"請聯絡管理員重置密碼：{ADMIN_EMAIL}")
+
+def render_register_form():
+    """显示注册表单"""
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown(f"<h2 style='text-align: center;'>{t()['register']}</h2>", unsafe_allow_html=True)
+        
+        with st.form("register_form", border=True):
+            email = st.text_input(t()["email"], key="reg_email")
+            password = st.text_input(t()["password"], type="password", key="reg_password")
+            confirm = st.text_input(t()["confirm_password"], type="password", key="reg_confirm")
+            submitted = st.form_submit_button(t()["register_btn"], type="primary", use_container_width=True)
+            
+            if submitted:
+                if not email or not password:
+                    st.warning("請填寫電郵和密碼")
+                elif password != confirm:
+                    st.warning("兩次輸入的密碼不一致")
+                elif len(password) < 6:
+                    st.warning("密碼長度至少6位")
+                else:
+                    with st.spinner("註冊中..."):
+                        success, msg, user_id = sign_up(email, password)
+                        if success:
+                            st.success(msg)
+                            st.session_state.show_register = False
+                            st.rerun()
+                        else:
+                            st.error(msg)
+        
+        if st.button(t()["back_to_login"], use_container_width=True):
+            st.session_state.show_register = False
+            st.rerun()
+
+def render_admin_login_form():
+    """显示管理员登录表单"""
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<h2 style='text-align: center;'>管理員登入</h2>", unsafe_allow_html=True)
+        
+        with st.form("admin_login_form", border=True):
+            username = st.text_input("用戶名", key="admin_username")
+            password = st.text_input("密碼", type="password", key="admin_password")
+            submitted = st.form_submit_button("登入", type="primary", use_container_width=True)
+            
+            if submitted:
+                if check_admin_login(username, password):
+                    st.session_state.admin_previous_user_id = st.session_state.get("user_id")
+                    st.session_state.admin_previous_user_email = st.session_state.get("user_email")
+                    st.session_state.admin_previous_access_token = st.session_state.get("access_token")
+                    st.session_state.admin_previous_refresh_token = st.session_state.get("refresh_token")
+                    
+                    st.session_state.admin_mode = True
+                    st.session_state.show_admin_login = False
+                    st.session_state.authenticated = True
+                    st.session_state.user_id = "admin"
+                    st.session_state.user_email = ADMIN_EMAIL
+                    st.rerun()
+                else:
+                    st.error("用戶名或密碼錯誤")
+        
+        if st.button("返回用戶登入", use_container_width=True):
+            st.session_state.show_admin_login = False
+            st.rerun()
+
+# ==================== 管理员面板 ====================
+def render_admin_panel():
+    """管理员面板"""
+    st.markdown(f"## ⚙️ {t()['admin_panel']}")
+    
+    users = get_all_users()
+    
+    if not users:
+        st.info("暫無用戶數據")
+        if st.button("退出管理員模式", use_container_width=True):
+            admin_sign_out()
+            st.rerun()
+        return
+    
+    # 统计卡片
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(t()["total_users"], len(users))
+    with col2:
+        pro_count = sum(1 for u in users if u.get("subscription_tier") == "pro")
+        st.metric(t()["pro_users"], pro_count)
+    with col3:
+        free_count = len(users) - pro_count
+        st.metric(t()["free_users"], free_count)
+    
+    st.markdown("---")
+    
+    # 用户列表
+    st.markdown(f"### 👥 {t()['user_list']}")
+    df_users = pd.DataFrame(users)
+    display_columns = ["email", "subscription_tier", "free_trials_remaining", "subscription_expires_at"]
+    st.dataframe(df_users[display_columns], use_container_width=True, hide_index=True)
+    
+    st.markdown("---")
+    
+    # 用户管理
+    st.markdown("### 🔧 用戶管理")
+    user_options = [f"{u['email']} ({u['subscription_tier']})" for u in users]
+    selected_user_str = st.selectbox("選擇用戶", user_options, key="admin_select_user")
+    selected_email = selected_user_str.split(" ")[0]
+    selected_user = next((u for u in users if u["email"] == selected_email), None)
+    
+    if selected_user:
+        st.markdown(f"**當前用戶**: {selected_user['email']}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("#### 📝 修改訂閱")
+            new_tier = st.selectbox("訂閱等級", ["free", "pro"], 
+                                    index=0 if selected_user["subscription_tier"] == "free" else 1, key="admin_new_tier")
+            pro_months = 1
+            if new_tier == "pro":
+                pro_months = st.number_input("月數", min_value=1, max_value=12, value=1, key="admin_months")
+            
+            if st.button("更新訂閱", key="admin_update_subscription", use_container_width=True):
+                success, msg = admin_set_subscription(selected_user["user_id"], new_tier, pro_months)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        
+        with col2:
+            st.markdown("#### 🎫 免費次數")
+            new_trials = st.number_input("設置剩餘次數", min_value=0, max_value=100, 
+                                          value=selected_user["free_trials_remaining"], key="admin_new_trials")
+            if st.button("重置次數", key="admin_reset_trials", use_container_width=True):
+                success, msg = admin_reset_user_trials(selected_user["user_id"], new_trials)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+    
+    st.markdown("---")
+    
+    if st.button("退出管理員模式", use_container_width=True):
+        admin_sign_out()
+        st.rerun()
+
+def admin_sign_out():
+    """管理员退出"""
+    prev_user_id = st.session_state.get("admin_previous_user_id")
+    prev_user_email = st.session_state.get("admin_previous_user_email")
+    prev_access_token = st.session_state.get("admin_previous_access_token")
+    prev_refresh_token = st.session_state.get("admin_previous_refresh_token")
+    
+    if prev_user_id and prev_user_email:
+        st.session_state.authenticated = True
+        st.session_state.user_id = prev_user_id
+        st.session_state.user_email = prev_user_email
+        st.session_state.access_token = prev_access_token
+        st.session_state.refresh_token = prev_refresh_token
+        st.session_state.token_expiry = time.time() + 3600
+    else:
+        st.session_state.authenticated = False
+        st.session_state.user_id = None
+        st.session_state.user_email = None
+        st.session_state.access_token = None
+        st.session_state.refresh_token = None
+        st.session_state.token_expiry = 0
+    
+    st.session_state.admin_mode = False
+    st.session_state.admin_previous_user_id = None
+    st.session_state.admin_previous_user_email = None
+    st.session_state.admin_previous_access_token = None
+    st.session_state.admin_previous_refresh_token = None
+    st.rerun()
+
+# ==================== 侧边栏 ====================
+def render_sidebar():
+    """渲染侧边栏"""
+    with st.sidebar:
+        st.markdown(f"## {t()['app_title']}")
+        st.markdown("---")
+        
+        if st.session_state.authenticated and not st.session_state.admin_mode:
+            user_email = st.session_state.user_email
+            username = user_email.split('@')[0] if user_email else user_email
+            user_id = st.session_state.user_id
+            
+            profile = get_user_profile(user_id)
+            
+            tier = profile.get("subscription_tier", "free")
+            remaining = profile.get("free_trials_remaining", 0)
+            
+            tier_display = "💎 專業版" if tier == "pro" else "🔒 免費版"
+            remaining_display = "∞" if remaining == -1 else str(remaining)
+            
+            st.markdown(f"""
+            <div class="sidebar-user-info">
+                <strong>👤 {username}</strong><br>
+                📋 {t()['subscription']}: {tier_display}<br>
+                🎫 {t()['remaining']}: {remaining_display}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if tier == "free":
+                if st.button("💎 " + t()["upgrade"], key="sidebar_upgrade", use_container_width=True):
+                    st.session_state.show_paywall = True
+                    st.rerun()
+            
+            st.markdown("---")
+        
+        # 页面导航
+        st.markdown("### 📍 導航")
+        page = st.radio(
+            "選擇頁面",
+            options=["🏠 主頁", "🎯 智能投注", "📊 回測"],
+            key="nav_radio",
+            label_visibility="collapsed"
+        )
+        
+        if page == "🏠 主頁":
+            st.session_state.current_page = "home"
+        elif page == "🎯 智能投注":
+            st.session_state.current_page = "smart_betting"
+        elif page == "📊 回測":
+            st.session_state.current_page = "backtest"
+        
+        st.markdown("---")
+        
+        with st.expander(t()["about_header"], expanded=True):
+            st.markdown(t()["about_text"])
+        
+        with st.expander(t()["guide_header"], expanded=False):
+            st.markdown(t()["guide_text"])
+        
+        with st.expander(t()["contact_header"], expanded=False):
+            st.markdown(t()["contact_email"])
+        
+        st.markdown("---")
+        st.caption("v1.0 | TechLife")
+        st.caption("數據: HKJC API | 支付: Stripe")
+
+# ==================== 右上角按钮 ====================
+def render_top_buttons():
+    """渲染右上角按钮"""
+    col1, col2, col3, col4, col5 = st.columns([8, 1.2, 1.2, 1.2, 1])
+    
+    with col2:
+        if st.button("中文", key="zh_btn", use_container_width=True):
+            if st.session_state.lang != "zh":
+                st.session_state.lang = "zh"
+                st.rerun()
+    
+    with col3:
+        if st.button("English", key="en_btn", use_container_width=True):
+            if st.session_state.lang != "en":
+                st.session_state.lang = "en"
+                st.rerun()
+    
+    with col4:
+        if st.button("⚙️", key="gear_btn", help="管理員登入", use_container_width=True):
+            st.session_state.show_admin_login = True
+            st.rerun()
+    
+    with col5:
+        if st.session_state.authenticated:
+            if st.session_state.admin_mode:
+                if st.button("👤 返回", key="back_to_user_btn", help="退出管理員模式", use_container_width=True):
+                    admin_sign_out()
+                    st.rerun()
+            else:
+                if st.button("🚪", key="logout_btn", help="退出登入", use_container_width=True):
+                    sign_out()
+                    st.rerun()
+
+# ==================== 占位页面（后续代码填充） ====================
+# ============================================================
+# 第3次代码：主页 + 全马评分榜
+# 包含：数据概览、手动更新按钮、全马基础评分榜
+# 版本：v1.0
+# 说明：替换原有的 render_home() 函数
+# ============================================================
+
+# ==================== 辅助函数：获取所有马匹基础评分 ====================
+
+def get_all_horses_base_score(limit: int = 50) -> pd.DataFrame:
+    """
+    获取所有马匹的基础评分（基于近10场历史数据，与场次无关）
+    返回DataFrame，包含：马名、年龄、性别、胜率、入Q率、入T率、基础评分
+    """
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 获取所有马匹
+        horses_url = f"{SUPABASE_URL}/rest/v1/racing/horses"
+        horses_response = requests.get(horses_url, headers=headers)
+        
+        if horses_response.status_code != 200:
+            return pd.DataFrame()
+        
+        horses = horses_response.json()
+        
+        # 获取所有历史往绩
+        perf_url = f"{SUPABASE_URL}/rest/v1/racing/past_performances"
+        perf_response = requests.get(perf_url, headers=headers)
+        
+        past_performances = {}
+        if perf_response.status_code == 200:
+            for p in perf_response.json():
+                horse_id = p.get('horse_id')
+                if horse_id not in past_performances:
+                    past_performances[horse_id] = []
+                past_performances[horse_id].append(p)
+        
+        results = []
+        for horse in horses[:limit]:
+            horse_id = horse.get('horse_id')
+            name_zh = horse.get('name_zh', '')
+            name_en = horse.get('name_en', '')
+            age = horse.get('age', 0)
+            sex = horse.get('sex', '')
+            
+            # 获取该马匹的往绩
+            performances = past_performances.get(horse_id, [])
+            
+            if not performances:
+                results.append({
+                    "馬名": name_zh if name_zh else name_en,
+                    "年齡": age,
+                    "性別": sex,
+                    "勝率": "0%",
+                    "入Q率": "0%",
+                    "入T率": "0%",
+                    "基礎評分": 0
+                })
+                continue
+            
+            # 计算各项指标
+            win_rate = calculate_win_rate(performances) * 100
+            place_rate = calculate_place_rate(performances) * 100
+            show_rate = calculate_show_rate(performances) * 100
+            
+            # 计算基础评分（使用一个默认路程，因为与场次无关时只需综合能力）
+            # 这里使用最常见的1200米作为基准
+            basic_score = calculate_basic_score(horse_id, 1200, performances)
+            
+            results.append({
+                "馬名": name_zh if name_zh else name_en,
+                "年齡": age,
+                "性別": sex,
+                "勝率": f"{win_rate:.1f}%",
+                "入Q率": f"{place_rate:.1f}%",
+                "入T率": f"{show_rate:.1f}%",
+                "基礎評分": basic_score
+            })
+        
+        # 按基础评分排序
+        results.sort(key=lambda x: x["基礎評分"], reverse=True)
+        return pd.DataFrame(results)
+        
+    except Exception as e:
+        print(f"获取马匹评分失败: {e}")
+        return pd.DataFrame()
+
+
+def render_horse_rating_table(df: pd.DataFrame):
+    """
+    渲染马匹评分表格
+    """
+    if df.empty:
+        st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
+        return
+    
+    # 根据分数设置颜色
+    def color_score(val):
+        if val >= 85:
+            return 'color: #ff4b4b; font-weight: bold'
+        elif val >= 70:
+            return 'color: #ff6b6b; font-weight: bold'
+        elif val >= 55:
+            return 'color: #ffaa00'
+        elif val >= 40:
+            return 'color: #ff8800'
+        else:
+            return 'color: #888888'
+    
+    # 应用样式
+    styled_df = df.style.applymap(color_score, subset=["基礎評分"])
+    
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "馬名": st.column_config.TextColumn("馬名", width="medium"),
+            "年齡": st.column_config.NumberColumn("年齡", width="small"),
+            "性別": st.column_config.TextColumn("性別", width="small"),
+            "勝率": st.column_config.TextColumn("勝率", width="small"),
+            "入Q率": st.column_config.TextColumn("入Q率", width="small"),
+            "入T率": st.column_config.TextColumn("入T率", width="small"),
+            "基礎評分": st.column_config.NumberColumn("基礎評分", width="small", format="%.0f")
+        }
+    )
+
+
+# ==================== 主页函数（替换原有的render_home） ====================
+
+def render_home():
+    """主页：数据概览 + 全马评分榜"""
+    st.markdown("## 🏠 主頁")
+    
+    # 获取用户信息
+    if st.session_state.authenticated and not st.session_state.admin_mode:
+        profile = get_user_profile(st.session_state.user_id)
+        tier = profile.get("subscription_tier", "free")
+        remaining = profile.get("free_trials_remaining", 0)
+        
+        st.markdown(f"""
+        <div style="background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
+            <strong>👤 當前用戶:</strong> {st.session_state.user_email}<br>
+            <strong>📋 訂閱等級:</strong> {"💎 專業版" if tier == "pro" else "🔒 免費版"}<br>
+            <strong>🎫 剩餘免費次數:</strong> {"∞" if tier == "pro" else remaining}
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # ==================== 数据概览 ====================
+    st.markdown("### 📊 數據概覽")
+    
+    # 获取统计数据
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 马匹数量
+        horses_url = f"{SUPABASE_URL}/rest/v1/racing/horses"
+        horses_response = requests.get(horses_url, headers=headers)
+        horse_count = len(horses_response.json()) if horses_response.status_code == 200 else 0
+        
+        # 赛事数量
+        races_url = f"{SUPABASE_URL}/rest/v1/racing/races"
+        races_response = requests.get(races_url, headers=headers)
+        race_count = len(races_response.json()) if races_response.status_code == 200 else 0
+        
+        # 骑师数量
+        jockeys_url = f"{SUPABASE_URL}/rest/v1/racing/jockeys"
+        jockeys_response = requests.get(jockeys_url, headers=headers)
+        jockey_count = len(jockeys_response.json()) if jockeys_response.status_code == 200 else 0
+        
+        # 练马师数量
+        trainers_url = f"{SUPABASE_URL}/rest/v1/racing/trainers"
+        trainers_response = requests.get(trainers_url, headers=headers)
+        trainer_count = len(trainers_response.json()) if trainers_response.status_code == 200 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("🐎 馬匹總數", horse_count)
+        with col2:
+            st.metric("🏆 賽事總數", race_count)
+        with col3:
+            st.metric("🤠 騎師總數", jockey_count)
+        with col4:
+            st.metric("🏋️ 練馬師總數", trainer_count)
+            
+    except Exception as e:
+        st.warning(f"獲取數據統計失敗: {e}")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("🐎 馬匹總數", "0")
+        with col2:
+            st.metric("🏆 賽事總數", "0")
+        with col3:
+            st.metric("🤠 騎師總數", "0")
+        with col4:
+            st.metric("🏋️ 練馬師總數", "0")
+    
+    st.markdown("---")
+    
+    # ==================== 手动更新按钮 ====================
+    st.markdown("### 🔄 數據更新")
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        update_btn = st.button("🔄 手動更新所有數據", type="primary", use_container_width=True)
+    
+    if update_btn:
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在從HKJC API獲取最新數據..."):
+                # 获取今日日期
+                today = datetime.now().strftime("%Y-%m-%d")
+                result = update_all_data_for_date(today)
+                
+                if result["total"] > 0:
+                    st.success(f"✅ 更新完成！成功 {result['success']} 場，失敗 {result['failed']} 場")
+                else:
+                    st.info("今日暫無賽事，無需更新")
+    
+    st.markdown("---")
+    
+    # ==================== 全马基础评分榜 ====================
+    st.markdown("### 🐎 全馬基礎評分榜")
+    st.caption("📌 基於近10場歷史表現計算，與場次無關。分數越高代表整體實力越強。")
+    
+    # 评分数量选择
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        rating_limit = st.selectbox("顯示數量", [20, 30, 50, 100], index=1, key="rating_limit")
+    
+    with st.spinner("正在計算馬匹評分..."):
+        rating_df = get_all_horses_base_score(limit=rating_limit)
+        render_horse_rating_table(rating_df)
+    
+    # ==================== 评分说明 ====================
+    with st.expander("📖 評分系統說明", expanded=False):
+        st.markdown("""
+        ### 基礎評分計算因子（近10場）
+        
+        | 因子 | 權重 | 說明 |
+        |------|------|------|
+        | 勝率 | 35% | 最近10場的獲勝比例 |
+        | 入Q率 | 25% | 最近10場跑入前2名的比例 |
+        | 入T率 | 15% | 最近10場跑入前3名的比例 |
+        | 路程適應性 | 15% | 在類似路程的表現 |
+        | 評分趨勢 | 10% | 官方評分的變化趨勢 |
+        
+        ### 評分等級對照
+        
+        | 等級 | 分數範圍 | 說明 |
+        |------|----------|------|
+        | S | 85-100 | 頂尖馬匹，勝率極高 |
+        | A | 70-84 | 優秀馬匹，爭勝能力強 |
+        | B | 55-69 | 中上馬匹，有競爭力 |
+        | C | 40-54 | 一般馬匹，需要關注 |
+        | D | 0-39 | 表現較弱，建議迴避 |
+        
+        💡 **提示**：基礎評分僅反映馬匹的整體實力。實際投注時，還需考慮檔位、負磅、騎師、場地狀況等場次因素。
+        """)
+    
+    st.markdown("---")
+    st.caption("📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新")
+
+
+# ==================== 第3次代码结束 ====================
+# ============================================================
+# 第4次代码：智能投注 + 全天优化
+# 包含：单场分析、全天投注分配、过关组合、Bankroll管理
+# 版本：v1.0
+# 说明：替换原有的 render_smart_betting() 函数
+# ============================================================
+
+# ==================== 辅助函数：获取赛日所有赛事 ====================
+
+def get_races_by_date(race_date: str) -> List[Dict]:
+    """获取指定日期的所有赛事"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=eq.{race_date}&order=race_no.asc"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"获取赛事列表失败: {e}")
+        return []
+
+
+def get_upcoming_races() -> List[Dict]:
+    """获取未来7天的赛事"""
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=gte.{today}&race_date=lte.{next_week}&order=race_date.asc,race_no.asc"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"获取未来赛事失败: {e}")
+        return []
+
+
+def get_race_runners_with_details(race_id: int) -> List[Dict]:
+    """获取赛事出赛马匹详情（含评分）"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?race_id=eq.{race_id}"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            runners = response.json()
+            
+            # 补充马匹名称
+            for runner in runners:
+                horse_id = runner.get('horse_id')
+                if horse_id:
+                    horse_url = f"{SUPABASE_URL}/rest/v1/racing/horses?horse_id=eq.{horse_id}"
+                    horse_resp = requests.get(horse_url, headers=headers)
+                    if horse_resp.status_code == 200 and horse_resp.json():
+                        horse = horse_resp.json()[0]
+                        runner['horse_name_zh'] = horse.get('name_zh', '')
+                        runner['horse_name_en'] = horse.get('name_en', '')
+            return runners
+        return []
+    except Exception as e:
+        print(f"获取出赛马匹失败: {e}")
+        return []
+
+
+# ==================== 辅助函数：凯利公式计算 ====================
+
+def calculate_kelly_fraction(probability: float, odds: float) -> float:
+    """
+    计算凯利公式建议投注比例
+    f* = (p × b - q) / b
+    其中 b = odds - 1
+    """
+    if odds <= 1 or probability <= 0 or probability >= 1:
+        return 0.0
+    
+    b = odds - 1
+    q = 1 - probability
+    
+    f = (probability * b - q) / b
+    return max(0.0, min(0.25, f))  # 限制最大25%
+
+
+def calculate_expected_value(probability: float, odds: float, stake: float) -> float:
+    """计算期望值"""
+    if odds <= 0:
+        return -stake
+    return probability * (stake * odds) - stake
+
+
+# ==================== 辅助函数：胜率排序 ====================
+
+def get_top_horses_by_probability(runners: List[Dict], limit: int = 3) -> List[Dict]:
+    """按胜率排序，获取前N匹马"""
+    sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
+    return sorted_runners[:limit]
+
+
+# ==================== 智能投注主页面 ====================
+
+def render_smart_betting():
+    """智能投注页面：单场分析 + 全天优化"""
+    st.markdown("## 🎯 智能投注")
+    
+    # ==================== 用户设置区域 ====================
+    with st.expander("⚙️ 投注設置", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # 获取用户默认预算
+            profile = get_user_profile(st.session_state.user_id)
+            default_bankroll = profile.get('default_bankroll', 1000)
+            bankroll = st.number_input(
+                "💰 投注預算 (HKD)",
+                min_value=100,
+                max_value=100000,
+                value=int(default_bankroll),
+                step=100,
+                key="betting_bankroll"
+            )
+        
+        with col2:
+            risk_preference = st.selectbox(
+                "📊 風險偏好",
+                options=["conservative", "standard", "aggressive"],
+                format_func=lambda x: {"conservative": "保守", "standard": "標準", "aggressive": "進取"}.get(x, "標準"),
+                key="risk_preference"
+            )
+            
+            # 风险系数映射
+            risk_multiplier = {
+                "conservative": 0.5,
+                "standard": 0.8,
+                "aggressive": 1.0
+            }.get(risk_preference, 0.8)
+        
+        with col3:
+            # 评分权重显示（只读，可后续扩展为可调）
+            st.markdown("**📐 評分權重**")
+            st.caption("基礎:30% | 場次:40% | 賠率:30%")
+            st.caption("溫度:0.8 | 賠率混合比:0.6")
+    
+    st.markdown("---")
+    
+    # ==================== 选择赛日 ====================
+    st.markdown("### 📅 選擇賽日")
+    
+    upcoming_races = get_upcoming_races()
+    
+    if not upcoming_races:
+        st.info("📌 未來7天暫無賽事，請點擊「更新數據」同步最新賽程")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🔄 更新賽程", use_container_width=True):
+                if consume_free_trial(st.session_state.user_id):
+                    with st.spinner("正在更新賽程..."):
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        result = update_all_data_for_date(today)
+                        if result["total"] > 0:
+                            st.success(f"更新完成！成功 {result['success']} 場")
+                            st.rerun()
+                        else:
+                            st.info("今日暫無賽事")
+                else:
+                    st.warning("免費次數已用完")
+        return
+    
+    # 按日期分组显示
+    dates = sorted(set([r.get('race_date') for r in upcoming_races]))
+    date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
+    
+    selected_date_str = st.selectbox("選擇賽日", date_options, key="selected_race_date")
+    selected_date = selected_date_str.split(" ")[0]
+    
+    # 获取该日期的所有赛事
+    races = get_races_by_date(selected_date)
+    
+    if not races:
+        st.warning("該日期暫無賽事數據")
+        return
+    
+    st.markdown(f"**📋 共 {len(races)} 場賽事**")
+    st.markdown("---")
+    
+    # ==================== 单场分析 ====================
+    st.markdown("### 📊 單場分析")
+    
+    # 选择场次
+    race_options = [f"第{r.get('race_no')}場 - {r.get('distance')}米 ({r.get('venue', 'ST')}) - {r.get('race_class', '')}" for r in races]
+    selected_race_idx = st.selectbox("選擇場次", range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
+    
+    selected_race = races[selected_race_idx]
+    race_id = selected_race.get('race_id')
+    
+    # 获取出赛马匹
+    runners = get_race_runners_with_details(race_id)
+    
+    if not runners:
+        st.warning("暫無出賽馬匹數據")
+        return
+    
+    # 获取用户权重
+    user_weights = {
+        "basic": 0.30,
+        "race": 0.40,
+        "odds": 0.30,
+        "temperature": 0.8,
+        "odds_mix_ratio": 0.6
+    }
+    
+    # 计算评分和胜率
+    with st.spinner("正在計算馬匹勝率..."):
+        scores, probabilities = calculate_all_horses_scores(race_id, runners, user_weights)
+    
+    # 更新runner数据
+    for i, runner in enumerate(runners):
+        if i < len(scores):
+            runner['basic_score'] = scores[i].get('basic_score', 0)
+            runner['race_score'] = scores[i].get('race_score', 0)
+            runner['odds_score'] = scores[i].get('odds_score', 0)
+            runner['overall_score'] = scores[i].get('combined_score', 0)
+            runner['win_probability'] = scores[i].get('win_probability', 0) / 100
+    
+    # 按胜率排序
+    sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
+    
+    # 显示分析结果
+    st.markdown(f"#### 🏇 第{selected_race.get('race_no')}場 分析結果")
+    
+    # 表格显示
+    race_data = []
+    for runner in sorted_runners:
+        horse_name = runner.get('horse_name_zh', runner.get('horse_name_en', ''))
+        draw = runner.get('draw', '-')
+        weight = runner.get('actual_weight', '-')
+        odds_win = runner.get('odds_win', 0)
+        prob = runner.get('win_probability', 0) * 100
+        score = runner.get('overall_score', 0)
+        
+        # 等级
+        if score >= 85:
+            level = "S"
+        elif score >= 70:
+            level = "A"
+        elif score >= 55:
+            level = "B"
+        elif score >= 40:
+            level = "C"
+        else:
+            level = "D"
+        
+        race_data.append({
+            "馬名": horse_name,
+            "檔位": draw,
+            "負磅": weight,
+            "賠率": f"{odds_win:.1f}" if odds_win > 0 else "-",
+            "綜合評分": f"{score:.0f}",
+            "等級": level,
+            "勝率": f"{prob:.1f}%"
+        })
+    
+    st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
+    
+    # 投注建议
+    st.markdown("#### 💡 投注建議")
+    
+    top3 = get_top_horses_by_probability(runners, limit=3)
+    
+    if top3:
+        col1, col2, col3 = st.columns(3)
+        
+        for i, horse in enumerate(top3):
+            prob = horse.get('win_probability', 0) * 100
+            odds = horse.get('odds_win', 0)
+            score = horse.get('overall_score', 0)
+            horse_name = horse.get('horse_name_zh', horse.get('horse_name_en', ''))
+            
+            kelly_fraction = calculate_kelly_fraction(prob / 100, odds)
+            suggested_stake = bankroll * kelly_fraction * risk_multiplier
+            
+            with [col1, col2, col3][i]:
+                st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
+                    <strong>🥇 {horse_name}</strong><br>
+                    勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
+                    評分: {score:.0f}<br>
+                    建議注額: <strong>HK${suggested_stake:.0f}</strong>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # 连赢建议
+        if len(top3) >= 2:
+            st.markdown("---")
+            st.markdown("**🔗 連贏建議 (QIN)**")
+            
+            for i in range(min(2, len(top3))):
+                for j in range(i+1, min(3, len(top3))):
+                    horse1 = top3[i]
+                    horse2 = top3[j]
+                    prob1 = horse1.get('win_probability', 0)
+                    prob2 = horse2.get('win_probability', 0)
+                    joint_prob = prob1 * prob2 * 2  # 近似联合概率
+                    
+                    # 连赢赔率估算（简化：取两匹马赔率乘积的一半）
+                    odds1 = horse1.get('odds_win', 0)
+                    odds2 = horse2.get('odds_win', 0)
+                    qin_odds = (odds1 * odds2) / 2 if odds1 > 0 and odds2 > 0 else 0
+                    
+                    if qin_odds > 0 and joint_prob * qin_odds > 1:
+                        suggested_qin = bankroll * 0.05 * risk_multiplier
+                        st.markdown(f"**{horse1.get('horse_name_zh', '')} + {horse2.get('horse_name_zh', '')}** | 建議注額: HK${suggested_qin:.0f}")
+    
+    st.markdown("---")
+    
+    # ==================== 全天优化投注 ====================
+    st.markdown("### 🌟 全天優化投注")
+    st.caption("基於凱利公式 + 風險管理，自動分配全天投注策略")
+    
+    if st.button("🚀 生成全天投注策略", key="generate_full_day", use_container_width=True, type="primary"):
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在計算全天投注策略..."):
+                all_bets = []
+                total_stake = 0
+                total_expected_value = 0
+                
+                # 遍历所有赛事
+                for race in races:
+                    race_id_tmp = race.get('race_id')
+                    race_runners = get_race_runners_with_details(race_id_tmp)
+                    
+                    if not race_runners:
+                        continue
+                    
+                    # 计算评分
+                    race_scores, race_probs = calculate_all_horses_scores(race_id_tmp, race_runners, user_weights)
+                    
+                    for i, runner in enumerate(race_runners):
+                        if i < len(race_scores):
+                            runner['win_probability'] = race_scores[i].get('win_probability', 0) / 100
+                    
+                    # 获取前三名马
+                    top_horses = get_top_horses_by_probability(race_runners, limit=3)
+                    
+                    for horse in top_horses:
+                        prob = horse.get('win_probability', 0)
+                        odds = horse.get('odds_win', 0)
+                        
+                        if prob <= 0 or odds <= 1:
+                            continue
+                        
+                        kelly_fraction = calculate_kelly_fraction(prob, odds)
+                        if kelly_fraction <= 0:
+                            continue
+                        
+                        stake = bankroll * kelly_fraction * risk_multiplier * 0.3  # 每场分配30%预算
+                        expected_value = calculate_expected_value(prob, odds, stake)
+                        
+                        if stake >= 10:
+                            all_bets.append({
+                                "場次": f"第{race.get('race_no')}場",
+                                "馬匹": horse.get('horse_name_zh', horse.get('horse_name_en', '')),
+                                "賠率": odds,
+                                "勝率": f"{prob*100:.1f}%",
+                                "建議注額": f"HK${stake:.0f}",
+                                "期望值": f"${expected_value:.0f}"
+                            })
+                            total_stake += stake
+                            total_expected_value += expected_value
+                
+                # 显示结果
+                if all_bets:
+                    st.markdown("#### 📋 投注計劃")
+                    st.dataframe(pd.DataFrame(all_bets), use_container_width=True, hide_index=True)
+                    
+                    st.markdown("---")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("💰 總投注額", f"HK${total_stake:.0f}")
+                    with col2:
+                        st.metric("📈 總期望值", f"${total_expected_value:+.0f}")
+                    with col3:
+                        roi = (total_expected_value / total_stake * 100) if total_stake > 0 else 0
+                        st.metric("📊 預期ROI", f"{roi:+.1f}%")
+                    
+                    # 资金分配图表
+                    if len(all_bets) > 1:
+                        bet_df = pd.DataFrame(all_bets)
+                        bet_df['注額'] = bet_df['建議注額'].str.replace('HK$', '').astype(float)
+                        fig = px.pie(bet_df, values='注額', names='場次', title="資金分配")
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("未找到符合條件的投注機會，請調整預算或風險偏好")
+    
+    st.markdown("---")
+    
+    # ==================== 过关组合推荐 ====================
+    st.markdown("### 🔗 過關組合推薦")
+    st.caption("基於各場信心馬匹，推薦2串1、3串1過關組合")
+    
+    if st.button("🎲 生成過關組合", key="generate_parlay", use_container_width=True):
+        with st.spinner("正在計算過關組合..."):
+            confidence_horses = []
+            
+            # 收集所有赛事的信心马
+            for race in races:
+                race_id_tmp = race.get('race_id')
+                race_runners = get_race_runners_with_details(race_id_tmp)
+                
+                if not race_runners:
+                    continue
+                
+                # 计算评分
+                race_scores, race_probs = calculate_all_horses_scores(race_id_tmp, race_runners, user_weights)
+                
+                for i, runner in enumerate(race_runners):
+                    if i < len(race_scores):
+                        runner['win_probability'] = race_scores[i].get('win_probability', 0) / 100
+                
+                # 获取最高胜率马
+                top = max(race_runners, key=lambda x: x.get('win_probability', 0), default=None)
+                if top:
+                    prob = top.get('win_probability', 0)
+                    if prob >= 0.20:  # 胜率大于20%
+                        confidence_horses.append({
+                            "race_no": race.get('race_no'),
+                            "horse_name": top.get('horse_name_zh', top.get('horse_name_en', '')),
+                            "probability": prob,
+                            "odds": top.get('odds_win', 0),
+                            "race_id": race_id_tmp
+                        })
+            
+            # 生成过关组合
+            parlay_results = []
+            
+            # 2串1
+            for i in range(len(confidence_horses)):
+                for j in range(i+1, len(confidence_horses)):
+                    horse1 = confidence_horses[i]
+                    horse2 = confidence_horses[j]
+                    
+                    joint_prob = horse1['probability'] * horse2['probability']
+                    combined_odds = horse1['odds'] * horse2['odds']
+                    
+                    if joint_prob * combined_odds > 1:
+                        suggested_stake = bankroll * 0.05 * risk_multiplier
+                        parlay_results.append({
+                            "組合": "2串1",
+                            "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場",
+                            "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']}",
+                            "組合賠率": f"{combined_odds:.1f}",
+                            "聯合概率": f"{joint_prob*100:.1f}%",
+                            "建議注額": f"HK${suggested_stake:.0f}"
+                        })
+            
+            # 3串1
+            for i in range(len(confidence_horses)):
+                for j in range(i+1, len(confidence_horses)):
+                    for k in range(j+1, len(confidence_horses)):
+                        horse1 = confidence_horses[i]
+                        horse2 = confidence_horses[j]
+                        horse3 = confidence_horses[k]
+                        
+                        joint_prob = horse1['probability'] * horse2['probability'] * horse3['probability']
+                        combined_odds = horse1['odds'] * horse2['odds'] * horse3['odds']
+                        
+                        if joint_prob * combined_odds > 1:
+                            suggested_stake = bankroll * 0.03 * risk_multiplier
+                            parlay_results.append({
+                                "組合": "3串1",
+                                "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場 + 第{horse3['race_no']}場",
+                                "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']} + {horse3['horse_name']}",
+                                "組合賠率": f"{combined_odds:.1f}",
+                                "聯合概率": f"{joint_prob*100:.1f}%",
+                                "建議注額": f"HK${suggested_stake:.0f}"
+                            })
+            
+            if parlay_results:
+                st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
+                
+                total_parlay_stake = sum(float(r['建議注額'].replace('HK$', '')) for r in parlay_results)
+                st.info(f"💰 過關總建議注額: HK${total_parlay_stake:.0f}")
+            else:
+                st.info("暫無符合條件的過關組合")
+    
+    st.markdown("---")
+    
+    # ==================== 投注记录 ====================
+    with st.expander("📋 我的投注記錄", expanded=False):
+        st.info("投注記錄功能將在後續版本中實現")
+    
+    st.markdown("---")
+    st.caption("⚠️ 本建議基於AI模型預測，不保證實際收益。請理性投注，切勿超出預算。")
+
+
+# ==================== 第4次代码结束 ====================
+
+# ============================================================
+# 第5次代码：回测 + 管理员面板
+# 包含：单场回测、全天回测、管理员用户管理
+# 版本：v1.0
+# 说明：替换原有的 render_backtest_page() 函数
+# ============================================================
+
+# ==================== 回测辅助函数 ====================
+
+def get_historical_races(limit: int = 100) -> List[Dict]:
+    """获取历史赛事列表（用于回测）"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_status=eq.RESULT&order=race_date.desc,race_no.asc&limit={limit}"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"获取历史赛事失败: {e}")
+        return []
+
+
+def get_race_without_future_data(race_date: str, race_id: int) -> List[Dict]:
+    """
+    获取赛事数据，但只使用该日期之前的历史数据
+    关键：不能使用 race_date 之后的数据
+    """
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 获取赛事信息
+        race_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_id=eq.{race_id}"
+        race_response = requests.get(race_url, headers=headers)
+        
+        if race_response.status_code != 200 or not race_response.json():
+            return []
+        
+        race = race_response.json()[0]
+        
+        # 获取出赛马匹
+        runners_url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?race_id=eq.{race_id}"
+        runners_response = requests.get(runners_url, headers=headers)
+        
+        if runners_response.status_code != 200:
+            return []
+        
+        runners = runners_response.json()
+        
+        # 为每匹马获取 race_date 之前的历史往绩
+        for runner in runners:
+            horse_id = runner.get('horse_id')
+            if horse_id:
+                perf_url = f"{SUPABASE_URL}/rest/v1/racing/past_performances?horse_id=eq.{horse_id}&race_date=lt.{race_date}&order=race_date.desc&limit=20"
+                perf_response = requests.get(perf_url, headers=headers)
+                if perf_response.status_code == 200:
+                    runner['past_performances'] = perf_response.json()
+                else:
+                    runner['past_performances'] = []
+        
+        return runners
+    except Exception as e:
+        print(f"获取赛事数据失败: {e}")
+        return []
+
+
+def run_backtest_on_race(race_id: int, race_date: str, user_weights: Dict) -> Dict:
+    """
+    对单场赛事进行回测
+    返回: 预测结果 vs 实际结果
+    """
+    try:
+        # 获取赛事数据（不含未来数据）
+        runners = get_race_without_future_data(race_date, race_id)
+        
+        if not runners:
+            return {"success": False, "error": "无法获取赛事数据"}
+        
+        # 获取实际赛果
+        headers = get_supabase_headers(use_secret=True)
+        race_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_id=eq.{race_id}"
+        race_response = requests.get(race_url, headers=headers)
+        actual_race = race_response.json()[0] if race_response.status_code == 200 else None
+        
+        # 找出实际冠军
+        actual_winner = None
+        for runner in runners:
+            if runner.get('finishing_position') == 1:
+                actual_winner = runner
+                break
+        
+        if not actual_winner:
+            return {"success": False, "error": "无实际赛果数据"}
+        
+        # 计算每匹马的胜率（使用用户权重）
+        scores = []
+        for runner in runners:
+            past_performances = runner.get('past_performances', [])
+            
+            # 计算基础评分
+            distance = actual_race.get('distance', 1200) if actual_race else 1200
+            basic_score = calculate_basic_score(runner.get('horse_id'), distance, past_performances)
+            
+            # 计算场次评分（使用排位时的数据）
+            weight_comfort_range = get_horse_weight_comfort_range(runner.get('horse_id'))
+            race_score = calculate_race_score(
+                runner.get('horse_id'),
+                actual_race.get('venue', 'ST'),
+                distance,
+                runner.get('draw'),
+                runner.get('actual_weight'),
+                runner.get('jockey_id'),
+                runner.get('trainer_id'),
+                weight_comfort_range,
+                past_performances
+            )
+            
+            # 赔率评分
+            odds_score = calculate_odds_score(runner.get('odds_win', 10.0))
+            
+            # 综合评分
+            combined = (
+                basic_score * user_weights.get("basic", 0.30) +
+                race_score * user_weights.get("race", 0.40) +
+                odds_score * user_weights.get("odds", 0.30)
+            )
+            
+            scores.append({
+                "runner_id": runner.get('runner_id'),
+                "horse_id": runner.get('horse_id'),
+                "combined_score": combined,
+                "basic_score": basic_score,
+                "race_score": race_score,
+                "odds_score": odds_score,
+                "actual_winner": runner.get('runner_id') == actual_winner.get('runner_id')
+            })
+        
+        # 排序找出预测冠军
+        scores.sort(key=lambda x: x['combined_score'], reverse=True)
+        predicted_winner_id = scores[0]['runner_id'] if scores else None
+        
+        # 判断是否正确
+        is_correct = (predicted_winner_id == actual_winner.get('runner_id'))
+        
+        # 计算前三名命中率
+        predicted_top3_ids = [s['runner_id'] for s in scores[:3]]
+        actual_top3_ids = [r.get('runner_id') for r in runners if r.get('finishing_position', 0) in [1, 2, 3]]
+        top3_hits = len(set(predicted_top3_ids) & set(actual_top3_ids))
+        
+        return {
+            "success": True,
+            "is_correct": is_correct,
+            "top3_hits": top3_hits,
+            "predicted_winner_score": scores[0]['combined_score'] if scores else 0,
+            "actual_winner_name": actual_winner.get('horse_name_zh', actual_winner.get('horse_name_en', '')),
+            "total_runners": len(runners)
+        }
+        
+    except Exception as e:
+        print(f"回测失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def run_full_day_backtest(race_date: str, user_weights: Dict) -> Dict:
+    """
+    对全天赛事进行回测
+    返回: 全天统计结果
+    """
+    try:
+        # 获取该日期的所有赛事
+        headers = get_supabase_headers(use_secret=True)
+        races_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=eq.{race_date}&race_status=eq.RESULT&order=race_no.asc"
+        races_response = requests.get(races_url, headers=headers)
+        
+        if races_response.status_code != 200:
+            return {"success": False, "error": "无法获取赛事列表"}
+        
+        races = races_response.json()
+        
+        results = []
+        correct_predictions = 0
+        total_top3_hits = 0
+        total_runners = 0
+        
+        for race in races:
+            backtest_result = run_backtest_on_race(race.get('race_id'), race_date, user_weights)
+            
+            if backtest_result.get("success"):
+                results.append({
+                    "race_no": race.get('race_no'),
+                    "is_correct": backtest_result.get("is_correct", False),
+                    "top3_hits": backtest_result.get("top3_hits", 0),
+                    "total_runners": backtest_result.get("total_runners", 0)
+                })
+                
+                if backtest_result.get("is_correct"):
+                    correct_predictions += 1
+                total_top3_hits += backtest_result.get("top3_hits", 0)
+                total_runners += backtest_result.get("total_runners", 0)
+        
+        accuracy = (correct_predictions / len(results) * 100) if results else 0
+        top3_accuracy = (total_top3_hits / (len(results) * 3) * 100) if results else 0
+        
+        return {
+            "success": True,
+            "total_races": len(results),
+            "correct_predictions": correct_predictions,
+            "accuracy": round(accuracy, 1),
+            "top3_hits": total_top3_hits,
+            "top3_accuracy": round(top3_accuracy, 1),
+            "results": results
+        }
+        
+    except Exception as e:
+        print(f"全天回测失败: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# ==================== 回测页面 ====================
+
+def render_backtest_page():
+    """回测页面：单场回测 + 全天回测"""
+    st.markdown("## 📊 回測")
+    
+    # 获取用户权重
+    user_weights = {
+        "basic": 0.30,
+        "race": 0.40,
+        "odds": 0.30,
+        "temperature": 0.8,
+        "odds_mix_ratio": 0.6
+    }
+    
+    # ==================== 单场回测 ====================
+    st.markdown("### 🏇 單場回測")
+    st.caption("選擇一場已完成賽事，AI預測 vs 實際結果")
+    
+    # 获取历史赛事
+    historical_races = get_historical_races(limit=50)
+    
+    if not historical_races:
+        st.info("暫無歷史賽事數據，請確保數據庫中有已完成賽事")
+    else:
+        # 选择赛事
+        race_options = []
+        for r in historical_races:
+            race_date = r.get('race_date', '')
+            race_no = r.get('race_no', 0)
+            venue = r.get('venue', '')
+            distance = r.get('distance', 0)
+            race_options.append(f"{race_date} 第{race_no}場 - {venue} {distance}米")
+        
+        selected_idx = st.selectbox("選擇賽事", range(len(race_options)), format_func=lambda x: race_options[x], key="backtest_race_select")
+        selected_race = historical_races[selected_idx]
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            run_single_btn = st.button("▶️ 運行單場回測", use_container_width=True, type="primary")
+        with col2:
+            if st.button("🔄 刷新歷史數據", use_container_width=True):
+                st.rerun()
+        
+        if run_single_btn:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+            else:
+                with st.spinner("正在運行回測..."):
+                    result = run_backtest_on_race(
+                        selected_race.get('race_id'),
+                        selected_race.get('race_date'),
+                        user_weights
+                    )
+                    
+                    if result.get("success"):
+                        st.markdown("---")
+                        st.markdown("#### 📈 回測結果")
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            if result.get("is_correct"):
+                                st.success("✅ 預測正確")
+                            else:
+                                st.error("❌ 預測錯誤")
+                        with col2:
+                            st.metric("總出賽馬匹", result.get("total_runners", 0))
+                        with col3:
+                            st.metric("預測冠軍得分", f"{result.get('predicted_winner_score', 0):.0f}")
+                        
+                        st.info(f"🏆 實際冠軍: {result.get('actual_winner_name', '未知')}")
+                        
+                        # 前三名命中
+                        st.metric("前三名命中數", f"{result.get('top3_hits', 0)}/3")
+                    else:
+                        st.error(f"回測失敗: {result.get('error', '未知錯誤')}")
+    
+    st.markdown("---")
+    
+    # ==================== 全天回测 ====================
+    st.markdown("### 📅 全天回測")
+    st.caption("選擇一個賽日，測試AI對全天賽事的預測準確率")
+    
+    # 获取有多个赛事的日期
+    if historical_races:
+        # 按日期分组
+        dates_with_races = {}
+        for r in historical_races:
+            date = r.get('race_date', '')
+            if date not in dates_with_races:
+                dates_with_races[date] = 0
+            dates_with_races[date] += 1
+        
+        # 筛选有3场以上赛事的日期
+        valid_dates = [d for d, count in dates_with_races.items() if count >= 3]
+        
+        if valid_dates:
+            date_options = [f"{d} ({dates_with_races[d]}場)" for d in valid_dates]
+            selected_date_idx = st.selectbox("選擇賽日", range(len(date_options)), format_func=lambda x: date_options[x], key="backtest_date_select")
+            selected_date = valid_dates[selected_date_idx]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                run_full_btn = st.button("▶️ 運行全天回測", use_container_width=True, type="primary")
+            with col2:
+                st.caption(f"該賽日共 {dates_with_races[selected_date]} 場賽事")
+            
+            if run_full_btn:
+                if not consume_free_trial(st.session_state.user_id):
+                    st.warning("免費次數已用完，請升級到專業版")
+                else:
+                    with st.spinner("正在運行全天回測..."):
+                        full_result = run_full_day_backtest(selected_date, user_weights)
+                        
+                        if full_result.get("success"):
+                            st.markdown("---")
+                            st.markdown(f"#### 📈 全天回測結果 - {selected_date}")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("總場次", full_result.get("total_races", 0))
+                            with col2:
+                                st.metric("預測正確", f"{full_result.get('correct_predictions', 0)}場")
+                            with col3:
+                                accuracy = full_result.get("accuracy", 0)
+                                st.metric("勝出預測準確率", f"{accuracy:.1f}%")
+                            with col4:
+                                top3_acc = full_result.get("top3_accuracy", 0)
+                                st.metric("前三名命中率", f"{top3_acc:.1f}%")
+                            
+                            # 显示每场明细
+                            if full_result.get("results"):
+                                st.markdown("#### 📋 場次明細")
+                                results_df = pd.DataFrame(full_result["results"])
+                                results_df.columns = ["場次", "預測正確", "前三名命中", "總馬匹"]
+                                st.dataframe(results_df, use_container_width=True, hide_index=True)
+                        else:
+                            st.error(f"回測失敗: {full_result.get('error', '未知錯誤')}")
+        else:
+            st.info("暫無足夠的歷史賽事數據（需要至少一個賽日有3場以上賽事）")
+    
+    st.markdown("---")
+    
+    # ==================== 回测说明 ====================
+    with st.expander("📖 回測說明", expanded=False):
+        st.markdown("""
+        ### 回測邏輯
+        
+        **時間旅行原則**：回測時只使用該賽事**之前**的歷史數據，不使用未來數據。
+        
+        **預測方法**：
+        - 基於馬匹在該日期之前的往績計算基礎評分
+        - 基於排位時的檔位、負磅、騎師、練馬師計算場次評分
+        - 基於賽前賠率進行校准
+        - 綜合評分最高的馬匹為AI預測冠軍
+        
+        **評估指標**：
+        - **勝出預測準確率**：AI預測冠軍 = 實際冠軍的比例
+        - **前三名命中率**：AI預測前三名中包含實際前三名的比例
+        
+        **注意事項**：
+        - 回測結果僅供參考，不代表未來表現
+        - 歷史數據越充足，回測結果越可信
+        """)
+    
+    st.markdown("---")
+    st.caption("📌 回測結果基於歷史數據，不構成投資建議")
+
+
+# ==================== 第5次代码结束 ====================
+
+
+# ==================== 主函数 ====================
+def main():
+    """主函数"""
+    # 处理支付回调
+    handle_stripe_callback()
+    
+    # 渲染侧边栏和顶部按钮
+    render_sidebar()
+    render_top_buttons()
+    
+    # 管理员登录
+    if st.session_state.get("show_admin_login", False):
+        render_admin_login_form()
+        return
+    
+    # 管理员模式
+    if st.session_state.get("admin_mode", False):
+        render_admin_panel()
+        return
+    
+    # 未登录
+    if not st.session_state.authenticated:
+        if st.session_state.get("show_register", False):
+            render_register_form()
+        else:
+            render_login_form()
+        return
+    
+    # 付费墙
+    if st.session_state.get("show_paywall", False):
+        show_paywall()
+        return
+    
+    # 已登录，根据导航显示对应页面
+    current_page = st.session_state.get("current_page", "home")
+    
+    if current_page == "home":
+        render_home()
+    elif current_page == "smart_betting":
+        render_smart_betting()
+    elif current_page == "backtest":
+        render_backtest_page()
+    else:
+        render_home()
+
+# ============================================================
+# 第2次代码：评分引擎 + 数据模型
+# 包含：马匹评分函数、Softmax胜率计算、赔率校准、数据库操作
+# 版本：v1.0
+# ============================================================
+
+# ==================== 评分权重常量 ====================
+# 基础评分因子权重（近10场往绩）
+BASIC_SCORE_WEIGHTS = {
+    "win_rate": 0.35,           # 胜率
+    "place_rate": 0.25,         # 入Q率（前2名）
+    "show_rate": 0.15,          # 入T率（前3名）
+    "avg_distance_rating": 0.15, # 平均完成时间评分
+    "rating_trend": 0.10        # 官方评分趋势
+}
+
+# 场次评分因子权重
+RACE_SCORE_WEIGHTS = {
+    "same_course": 0.25,        # 同马场往绩
+    "same_distance": 0.25,      # 同路程往绩
+    "draw_advantage": 0.15,     # 档位优势
+    "weight_advantage": 0.10,   # 负磅优势
+    "jockey_score": 0.15,       # 骑师评分
+    "trainer_score": 0.10       # 练马师评分
+}
+
+# 档位优势分数（内档有利，沙田1000米除外）
+# 默认：档位越小分越高，1档100分，14档20分
+DRAW_SCORE_BASE = {draw: int(100 - (draw - 1) * (80 / 13)) for draw in range(1, 15)}
+
+# 沙田草地1000米直路赛：外档有利
+DRAW_SCORE_STRAIGHT = {draw: int(20 + (draw - 1) * (80 / 13)) for draw in range(1, 15)}
+
+# 负磅舒适区计算参数
+WEIGHT_COMFORT_RANGE = 5  # 舒适区范围 ±5磅
+
+
+# ==================== 辅助函数 ====================
+
+def get_zone(num: int) -> int:
+    """获取号码所在分区（1-7），用于分区热度计算"""
+    return (num - 1) // 7 + 1
+
+
+def get_zone_numbers(zone: int) -> List[int]:
+    """获取指定分区的所有号码"""
+    start = (zone - 1) * 7 + 1
+    end = start + 6
+    return list(range(start, end + 1))
+
+
+def calculate_absence(num: int, draws: List[Dict]) -> int:
+    """计算号码当前遗漏期数"""
+    absence = 0
+    for draw in reversed(draws):
+        if num in draw['numbers']:
+            break
+        absence += 1
+    return absence
+
+
+def get_stock_name_from_tushare(ts_code: str) -> str:
+    """获取股票/指数名称（兼容stock-quant）"""
+    return ts_code
+
+
+def get_stock_daily(ts_code: str, days: int = 120) -> pd.DataFrame:
+    """获取股票日线数据（兼容stock-quant）"""
+    return pd.DataFrame()
+
+
+# ==================== 1. 基础评分函数 ====================
+
+def calculate_win_rate(past_performances: List[Dict], recent_n: int = 10) -> float:
+    """计算最近N场的胜率"""
+    if not past_performances:
+        return 0.0
+    recent = past_performances[-recent_n:] if len(past_performances) >= recent_n else past_performances
+    wins = sum(1 for p in recent if p.get('finishing_position') == 1)
+    return wins / len(recent) if recent else 0.0
+
+
+def calculate_place_rate(past_performances: List[Dict], recent_n: int = 10) -> float:
+    """计算最近N场的入Q率（前2名）"""
+    if not past_performances:
+        return 0.0
+    recent = past_performances[-recent_n:] if len(past_performances) >= recent_n else past_performances
+    places = sum(1 for p in recent if p.get('finishing_position', 0) in [1, 2])
+    return places / len(recent) if recent else 0.0
+
+
+def calculate_show_rate(past_performances: List[Dict], recent_n: int = 10) -> float:
+    """计算最近N场的入T率（前3名）"""
+    if not past_performances:
+        return 0.0
+    recent = past_performances[-recent_n:] if len(past_performances) >= recent_n else past_performances
+    shows = sum(1 for p in recent if p.get('finishing_position', 0) in [1, 2, 3])
+    return shows / len(recent) if recent else 0.0
+
+
+def calculate_rating_trend(past_performances: List[Dict], recent_n: int = 5) -> float:
+    """计算官方评分趋势"""
+    if len(past_performances) < 2:
+        return 0.0
+    recent = past_performances[-recent_n:] if len(past_performances) >= recent_n else past_performances
+    ratings = [p.get('rating', 0) for p in recent if p.get('rating')]
+    if len(ratings) < 2:
+        return 0.0
+    x = list(range(len(ratings)))
+    n = len(x)
+    sum_x = sum(x)
+    sum_y = sum(ratings)
+    sum_xy = sum(x[i] * ratings[i] for i in range(n))
+    sum_x2 = sum(x[i] ** 2 for i in range(n))
+    denominator = n * sum_x2 - sum_x ** 2
+    if denominator == 0:
+        return 0.0
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    return slope
+
+
+def calculate_avg_distance_rating(past_performances: List[Dict], target_distance: int) -> float:
+    """计算在目标路程附近的平均表现评分"""
+    if not past_performances:
+        return 50.0
+    scores = []
+    weights = []
+    for p in past_performances:
+        distance = p.get('distance', 0)
+        if distance == 0:
+            continue
+        distance_diff = abs(distance - target_distance)
+        if distance_diff <= 200:
+            weight = 1.0 - (distance_diff / 200) * 0.5
+        else:
+            weight = 0.3
+        pos = p.get('finishing_position', 0)
+        if pos == 1:
+            score = 100
+        elif pos == 2:
+            score = 85
+        elif pos == 3:
+            score = 70
+        elif 4 <= pos <= 5:
+            score = 55
+        elif 6 <= pos <= 8:
+            score = 40
+        else:
+            score = 25
+        scores.append(score)
+        weights.append(weight)
+    if not scores:
+        return 50.0
+    total_weighted_score = sum(scores[i] * weights[i] for i in range(len(scores)))
+    total_weight = sum(weights)
+    return total_weighted_score / total_weight if total_weight > 0 else 50.0
+
+
+def calculate_basic_score(horse_id: int, target_distance: int, past_performances: List[Dict]) -> float:
+    """计算基础评分（0-100）"""
+    win_rate = calculate_win_rate(past_performances)
+    place_rate = calculate_place_rate(past_performances)
+    show_rate = calculate_show_rate(past_performances)
+    rating_trend = calculate_rating_trend(past_performances)
+    distance_rating = calculate_avg_distance_rating(past_performances, target_distance)
+    win_score = min(win_rate * 100, 100)
+    place_score = min(place_rate * 100, 100)
+    show_score = min(show_rate * 100, 100)
+    trend_score = 50 + rating_trend * 5
+    trend_score = max(0, min(100, trend_score))
+    total_score = (
+        win_score * BASIC_SCORE_WEIGHTS["win_rate"] +
+        place_score * BASIC_SCORE_WEIGHTS["place_rate"] +
+        show_score * BASIC_SCORE_WEIGHTS["show_rate"] +
+        distance_rating * BASIC_SCORE_WEIGHTS["avg_distance_rating"] +
+        trend_score * BASIC_SCORE_WEIGHTS["rating_trend"]
+    )
+    return round(total_score, 2)
+
+
+# ==================== 2. 场次评分函数 ====================
+
+def get_draw_score(draw: int, venue: str, distance: int) -> float:
+    """计算档位优势分数"""
+    if draw is None or draw < 1 or draw > 14:
+        return 50.0
+    if venue == "ST" and distance == 1000:
+        score = DRAW_SCORE_STRAIGHT.get(draw, 50)
+    else:
+        score = DRAW_SCORE_BASE.get(draw, 50)
+    return score
+
+
+def get_weight_advantage_score(actual_weight: int, weight_comfort_range: Tuple[int, int]) -> float:
+    """计算负磅优势分数"""
+    if actual_weight is None:
+        return 50.0
+    comfort_min, comfort_max = weight_comfort_range
+    if comfort_min <= actual_weight <= comfort_max:
+        return 85.0
+    elif actual_weight < comfort_min:
+        diff = comfort_min - actual_weight
+        return max(40, 85 - diff * 3)
+    else:
+        diff = actual_weight - comfort_max
+        return max(30, 85 - diff * 4)
+
+
+def calculate_same_course_score(horse_id: int, venue: str, past_performances: List[Dict]) -> float:
+    """计算同马场往绩评分"""
+    venue_performances = [p for p in past_performances if p.get('venue') == venue]
+    if not venue_performances:
+        return 50.0
+    recent = venue_performances[-3:] if len(venue_performances) >= 3 else venue_performances
+    scores = []
+    for p in recent:
+        pos = p.get('finishing_position', 0)
+        if pos == 1:
+            scores.append(100)
+        elif pos == 2:
+            scores.append(85)
+        elif pos == 3:
+            scores.append(70)
+        elif 4 <= pos <= 5:
+            scores.append(55)
+        else:
+            scores.append(35)
+    if not scores:
+        return 50.0
+    return sum(scores) / len(scores)
+
+
+def calculate_same_distance_score(horse_id: int, distance: int, past_performances: List[Dict]) -> float:
+    """计算同路程往绩评分"""
+    distance_performances = [p for p in past_performances if p.get('distance') == distance]
+    if not distance_performances:
+        return 50.0
+    recent = distance_performances[-3:] if len(distance_performances) >= 3 else distance_performances
+    scores = []
+    for p in recent:
+        pos = p.get('finishing_position', 0)
+        if pos == 1:
+            scores.append(100)
+        elif pos == 2:
+            scores.append(85)
+        elif pos == 3:
+            scores.append(70)
+        elif 4 <= pos <= 5:
+            scores.append(55)
+        else:
+            scores.append(35)
+    if not scores:
+        return 50.0
+    return sum(scores) / len(scores)
+
+
+def calculate_jockey_score(jockey_id: int, recent_n: int = 20) -> float:
+    """计算骑师评分"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/jockeys?jockey_id=eq.{jockey_id}"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200 and response.json():
+            data = response.json()[0]
+            win_rate = data.get('win_rate', 0)
+            return min(win_rate * 100, 100)
+        return 50.0
+    except Exception as e:
+        print(f"获取骑师评分失败: {e}")
+        return 50.0
+
+
+def calculate_trainer_score(trainer_id: int, venue: str) -> float:
+    """计算练马师评分"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/trainers?trainer_id=eq.{trainer_id}"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200 and response.json():
+            data = response.json()[0]
+            win_rate = data.get('win_rate', 0)
+            return min(win_rate * 100, 100)
+        return 50.0
+    except Exception as e:
+        print(f"获取练马师评分失败: {e}")
+        return 50.0
+
+
+def calculate_race_score(
+    horse_id: int,
+    venue: str,
+    distance: int,
+    draw: int,
+    actual_weight: int,
+    jockey_id: int,
+    trainer_id: int,
+    weight_comfort_range: Tuple[int, int],
+    past_performances: List[Dict]
+) -> float:
+    """计算场次评分"""
+    same_course = calculate_same_course_score(horse_id, venue, past_performances)
+    same_distance = calculate_same_distance_score(horse_id, distance, past_performances)
+    draw_score = get_draw_score(draw, venue, distance)
+    weight_score = get_weight_advantage_score(actual_weight, weight_comfort_range)
+    jockey_score = calculate_jockey_score(jockey_id)
+    trainer_score = calculate_trainer_score(trainer_id, venue)
+    total_score = (
+        same_course * RACE_SCORE_WEIGHTS["same_course"] +
+        same_distance * RACE_SCORE_WEIGHTS["same_distance"] +
+        draw_score * RACE_SCORE_WEIGHTS["draw_advantage"] +
+        weight_score * RACE_SCORE_WEIGHTS["weight_advantage"] +
+        jockey_score * RACE_SCORE_WEIGHTS["jockey_score"] +
+        trainer_score * RACE_SCORE_WEIGHTS["trainer_score"]
+    )
+    return round(total_score, 2)
+
+
+# ==================== 3. 赔率校准 ====================
+
+def normalize_odds(odds: float, max_odds: float = 99.0) -> float:
+    """将赔率归一化为0-100的分数"""
+    if odds <= 0 or odds > max_odds:
+        return 50.0
+    normalized = max(0, min(100, 100 * (1 - (odds - 1) / (max_odds - 1))))
+    return normalized
+
+
+def calculate_odds_score(odds_win: float) -> float:
+    """计算赔率校准分"""
+    return normalize_odds(odds_win)
+
+
+# ==================== 4. Softmax胜率计算 ====================
+
+def softmax_probabilities(scores: List[float], temperature: float = 0.8) -> List[float]:
+    """将评分转换为概率"""
+    if not scores:
+        return []
+    max_score = max(scores)
+    exp_scores = [np.exp((s - max_score) / temperature) for s in scores]
+    sum_exp = sum(exp_scores)
+    if sum_exp == 0:
+        return [1.0 / len(scores)] * len(scores)
+    return [e / sum_exp for e in exp_scores]
+
+
+def calculate_win_probabilities(
+    basic_scores: List[float],
+    race_scores: List[float],
+    odds_scores: List[float],
+    weights: Dict,
+    odds_mix_ratio: float = 0.6
+) -> List[float]:
+    """计算最终胜率"""
+    n = len(basic_scores)
+    if n == 0:
+        return []
+    combined_scores = []
+    for i in range(n):
+        combined = (
+            basic_scores[i] * weights.get("basic", 0.30) +
+            race_scores[i] * weights.get("race", 0.40) +
+            odds_scores[i] * weights.get("odds", 0.30)
+        )
+        combined_scores.append(combined)
+    temperature = weights.get("temperature", 0.8)
+    softmax_probs = softmax_probabilities(combined_scores, temperature)
+    odds_probs = [odds_score / 100.0 for odds_score in odds_scores]
+    total_odds = sum(odds_probs)
+    if total_odds > 0:
+        odds_probs = [p / total_odds for p in odds_probs]
+    final_probs = []
+    for i in range(n):
+        final = odds_mix_ratio * softmax_probs[i] + (1 - odds_mix_ratio) * odds_probs[i]
+        final_probs.append(final)
+    total_final = sum(final_probs)
+    if total_final > 0:
+        final_probs = [p / total_final for p in final_probs]
+    return final_probs
+
+
+# ==================== 5. 综合评分函数 ====================
+
+def get_horse_past_performances(horse_id: int, limit: int = 10) -> List[Dict]:
+    """从数据库获取马匹的历史往绩"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/past_performances?horse_id=eq.{horse_id}&order=race_date.desc&limit={limit}"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"获取马匹往绩失败: {e}")
+        return []
+
+
+def get_horse_weight_comfort_range(horse_id: int) -> Tuple[int, int]:
+    """获取马匹的负磅舒适区"""
+    past = get_horse_past_performances(horse_id, limit=20)
+    winning_weights = []
+    for p in past:
+        pos = p.get('finishing_position', 0)
+        weight = p.get('actual_weight', 0)
+        if pos in [1, 2, 3] and weight > 0:
+            winning_weights.append(weight)
+    if len(winning_weights) >= 3:
+        mean_weight = sum(winning_weights) / len(winning_weights)
+        return (int(mean_weight - WEIGHT_COMFORT_RANGE), int(mean_weight + WEIGHT_COMFORT_RANGE))
+    return (118, 128)
+
+
+def calculate_horse_score(
+    horse_id: int,
+    race_id: int,
+    venue: str,
+    distance: int,
+    draw: int,
+    actual_weight: int,
+    jockey_id: int,
+    trainer_id: int,
+    odds_win: float,
+    user_weights: Dict
+) -> Dict:
+    """计算马匹的综合评分"""
+    past_performances = get_horse_past_performances(horse_id)
+    basic_score = calculate_basic_score(horse_id, distance, past_performances)
+    weight_comfort_range = get_horse_weight_comfort_range(horse_id)
+    race_score = calculate_race_score(
+        horse_id, venue, distance, draw, actual_weight,
+        jockey_id, trainer_id, weight_comfort_range, past_performances
+    )
+    odds_score = calculate_odds_score(odds_win)
+    combined_score = (
+        basic_score * user_weights.get("basic", 0.30) +
+        race_score * user_weights.get("race", 0.40) +
+        odds_score * user_weights.get("odds", 0.30)
+    )
+    return {
+        "horse_id": horse_id,
+        "basic_score": round(basic_score, 2),
+        "race_score": round(race_score, 2),
+        "odds_score": round(odds_score, 2),
+        "combined_score": round(combined_score, 2),
+        "weight_comfort_range": weight_comfort_range
+    }
+
+
+def calculate_all_horses_scores(
+    race_id: int,
+    runners: List[Dict],
+    user_weights: Dict
+) -> Tuple[List[Dict], List[float]]:
+    """计算一场赛事所有马匹的评分和胜率"""
+    if not runners:
+        return [], []
+    scores = []
+    basic_scores = []
+    race_scores = []
+    odds_scores = []
+    for runner in runners:
+        result = calculate_horse_score(
+            horse_id=runner.get("horse_id"),
+            race_id=race_id,
+            venue=runner.get("venue", "ST"),
+            distance=runner.get("distance", 1200),
+            draw=runner.get("draw"),
+            actual_weight=runner.get("actual_weight"),
+            jockey_id=runner.get("jockey_id"),
+            trainer_id=runner.get("trainer_id"),
+            odds_win=runner.get("odds_win", 10.0),
+            user_weights=user_weights
+        )
+        scores.append(result)
+        basic_scores.append(result["basic_score"])
+        race_scores.append(result["race_score"])
+        odds_scores.append(result["odds_score"])
+    probabilities = calculate_win_probabilities(
+        basic_scores, race_scores, odds_scores,
+        user_weights, user_weights.get("odds_mix_ratio", 0.6)
+    )
+    for i, prob in enumerate(probabilities):
+        scores[i]["win_probability"] = round(prob * 100, 2)
+    return scores, probabilities
+
+
+# ==================== 6. 数据库写入函数 ====================
+
+def save_race_runners_with_scores(race_id: int, runners_with_scores: List[Dict]) -> bool:
+    """将评分结果保存到数据库"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        for runner in runners_with_scores:
+            data = {
+                "basic_score": runner.get("basic_score"),
+                "race_score": runner.get("race_score"),
+                "odds_score": runner.get("odds_score"),
+                "overall_score": runner.get("combined_score"),
+                "win_probability": runner.get("win_probability", 0) / 100
+            }
+            url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?runner_id=eq.{runner.get('runner_id')}"
+            response = requests.patch(url, headers=headers, json=data)
+            if response.status_code not in [200, 204]:
+                print(f"保存评分失败: {response.text}")
+                return False
+        return True
+    except Exception as e:
+        print(f"保存评分失败: {e}")
+        return False
+
+
+def get_race_runners_from_db(race_id: int) -> List[Dict]:
+    """从数据库获取一场赛事的出赛马匹列表"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?race_id=eq.{race_id}"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"获取出赛马匹失败: {e}")
+        return []
+
+
+def update_race_result(race_id: int, results: List[Dict]) -> bool:
+    """更新赛事结果"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        for result in results:
+            data = {
+                "finishing_position": result.get("finishing_position"),
+                "winning_distance": result.get("winning_distance")
+            }
+            url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?runner_id=eq.{result.get('runner_id')}"
+            response = requests.patch(url, headers=headers, json=data)
+            if response.status_code not in [200, 204]:
+                print(f"更新赛果失败: {response.text}")
+                return False
+        race_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_id=eq.{race_id}"
+        race_response = requests.patch(race_url, headers=headers, json={"race_status": "RESULT"})
+        return race_response.status_code in [200, 204]
+    except Exception as e:
+        print(f"更新赛果失败: {e}")
+        return False
+
+
+# ==================== 7. 数据更新函数 ====================
+
+def fetch_race_data_from_api(race_date: str, venue: str, race_no: int) -> Optional[Dict]:
+    """从Node.js API获取赛事数据"""
+    API_BASE_URL = st.secrets.get("HKJC_API_URL", "http://localhost:3000/api")
+    try:
+        url = f"{API_BASE_URL}/race"
+        params = {"date": race_date, "venue": venue, "race_no": race_no}
+        response = requests.get(url, params=params, timeout=30)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"API请求失败: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"API请求异常: {e}")
+        return None
+
+
+def update_all_data_for_date(race_date: str) -> Dict:
+    """更新指定日期的所有赛事数据"""
+    result = {"success": 0, "failed": 0, "total": 0}
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=eq.{race_date}"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            races = response.json()
+            result["total"] = len(races)
+            for race in races:
+                api_data = fetch_race_data_from_api(
+                    race_date,
+                    race.get("venue"),
+                    race.get("race_no")
+                )
+                if api_data:
+                    result["success"] += 1
+                else:
+                    result["failed"] += 1
+        return result
+    except Exception as e:
+        print(f"更新数据失败: {e}")
+        return {"success": 0, "failed": result.get("total", 0), "total": result.get("total", 0)}
+
+
+# ==================== 第2次代码结束 ====================
+# 注意：没有 if __name__ == "__main__"，因为主入口在第1次代码中
+
+if __name__ == "__main__":
+    main()
