@@ -63,10 +63,10 @@ def get_race_results(date, venue, race_no):
                     'finishing_time': cols[9].text.strip()
                 })
     return results
-
+#------------
 def save_to_supabase(race_data, results):
-    """保存到 Supabase"""
-    # 保存赛事
+    """保存到 Supabase（含马匹、骑师表）"""
+    # 1. 保存赛事主表
     supabase.schema('racing').table('races').upsert({
         'race_date': race_data['date'],
         'venue': race_data['venue'],
@@ -74,8 +74,21 @@ def save_to_supabase(race_data, results):
         'race_status': 'RESULT'
     }).execute()
     
-    # 保存结果
+    # 2. 保存结果（同时保存马匹、骑师）
     for result in results:
+        # 2.1 保存马匹（如果不存在）
+        if result.get('horse_name'):
+            supabase.schema('racing').table('horses').upsert({
+                'name_en': result['horse_name']
+            }, on_conflict='name_en').execute()
+        
+        # 2.2 保存骑师（如果不存在）
+        if result.get('jockey'):
+            supabase.schema('racing').table('jockeys').upsert({
+                'name_en': result['jockey']
+            }, on_conflict='name_en').execute()
+        
+        # 2.3 保存出赛记录
         supabase.schema('racing').table('race_runners').upsert({
             'race_date': race_data['date'],
             'venue': race_data['venue'],
@@ -84,7 +97,8 @@ def save_to_supabase(race_data, results):
             'finishing_position': result['position'],
             'draw': result['draw'],
             'actual_weight': result['actual_weight'],
-            'odds_win': result['odds']
+            'odds_win': result['odds'],
+            'jockey_name': result.get('jockey')
         }).execute()
 
 if __name__ == '__main__':
