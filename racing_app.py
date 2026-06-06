@@ -1391,18 +1391,18 @@ def render_home():
 
 # ==================== 辅助函数：获取赛日所有赛事 ====================
 
-def get_races_by_date(race_date: str) -> List[Dict]:
-    """获取指定日期的所有赛事"""
-    try:
-        headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race_date}&order=race_no.asc"
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        return []
-    except Exception as e:
-        print(f"获取赛事列表失败: {e}")
-        return []
+    def get_races_by_date(race_date: str) -> List[Dict]:
+        """获取指定日期的所有赛事"""
+        try:
+            headers = get_supabase_headers(use_secret=True)
+            url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race_date}&order=race_no.asc"
+            response = requests.get(url, headers=headers)
+            if response.status_code == 200:
+                return response.json()
+            return []
+        except Exception as e:
+            print(f"获取赛事列表失败: {e}")
+            return []
 
 #------------
 def get_upcoming_races() -> List[Dict]:
@@ -1420,26 +1420,17 @@ def get_upcoming_races() -> List[Dict]:
         print(f"获取未来赛事失败: {e}")
         return []
 
-
-def get_race_runners_with_details(race_id: int) -> List[Dict]:
+#-------------------------
+def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
     """获取赛事出赛马匹详情（含评分）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/race_runners?race_id=eq.{race_id}"
+        # 使用 race_date, venue, race_no 查询
+        url = f"{SUPABASE_URL}/rest/v1/race_runners?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             runners = response.json()
-            
-            # 补充马匹名称
-            for runner in runners:
-                horse_id = runner.get('horse_id')
-                if horse_id:
-                    horse_url = f"{SUPABASE_URL}/rest/v1/horses?horse_id=eq.{horse_id}"
-                    horse_resp = requests.get(horse_url, headers=headers)
-                    if horse_resp.status_code == 200 and horse_resp.json():
-                        horse = horse_resp.json()[0]
-                        runner['horse_name_zh'] = horse.get('name_zh', '')
-                        runner['horse_name_en'] = horse.get('name_en', '')
+            # 注意：runners 中已经有 horse_name 和 jockey_name，不需要再补充
             return runners
         return []
     except Exception as e:
@@ -1529,17 +1520,8 @@ def render_smart_betting(show_title: bool = True):
     
     # ==================== 选择赛日 ====================
     st.markdown("### 📅 選擇賽日")
-    # 调试
-    st.write("DEBUG: 正在获取赛事数据...")
-    upcoming_races = get_upcoming_races()
-    st.write(f"DEBUG: 获取到 {len(upcoming_races)} 条赛事记录")
-    
-    if upcoming_races:
-        st.write(f"DEBUG: 第一条记录示例: {upcoming_races[0]}")
-    
-    if not upcoming_races:
-        st.info("📌 未來7天暫無賽事，請點擊「更新數據」同步最新賽程")
-        # ... 后续代码
+
+    # ... 后续代码
     upcoming_races = get_upcoming_races()
     
     if not upcoming_races:
@@ -1589,7 +1571,11 @@ def render_smart_betting(show_title: bool = True):
     race_id = selected_race.get('race_id')
     
     # 获取出赛马匹
-    runners = get_race_runners_with_details(race_id)
+    runners = get_race_runners_with_details(
+        selected_race.get('race_date'),
+        selected_race.get('venue'),
+        selected_race.get('race_no')
+    )
     
     if not runners:
         st.warning("暫無出賽馬匹數據")
