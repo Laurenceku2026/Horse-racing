@@ -1183,7 +1183,7 @@ def get_all_horses_base_score(limit: int = 50) -> pd.DataFrame:
         print(f"获取马匹评分失败: {e}")
         return pd.DataFrame()
 
-
+#------------
 def render_horse_rating_table(df: pd.DataFrame):
     """
     渲染马匹评分表格
@@ -1205,8 +1205,8 @@ def render_horse_rating_table(df: pd.DataFrame):
         else:
             return 'color: #888888'
     
-    # 应用样式
-    styled_df = df.style.applymap(color_score, subset=["基礎評分"])
+    # 应用样式（使用 map 而不是 applymap）
+    styled_df = df.style.map(color_score, subset=["基礎評分"])
     
     st.dataframe(
         styled_df,
