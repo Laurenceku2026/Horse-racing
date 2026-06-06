@@ -1975,49 +1975,49 @@ def render_smart_betting(show_title: bool = True):
         
     # ==================== 用户设置区域 ====================
     with st.expander("⚙️ 投注設置", expanded=True):
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        # 获取用户默认预算
-        profile = get_user_profile(st.session_state.user_id)
-        default_bankroll = profile.get('default_bankroll', 1000)
-        bankroll = st.number_input(
-            "💰 投注預算 (HKD)",
-            min_value=100,
-            max_value=100000,
-            value=int(default_bankroll),
-            step=100,
-            key="betting_bankroll"
-        )
-    
-    with col2:
-        risk_preference = st.selectbox(
-            "📊 風險偏好",
-            options=["conservative", "standard", "aggressive"],
-            format_func=lambda x: {"conservative": "保守", "standard": "標準", "aggressive": "進取"}.get(x, "標準"),
-            key="risk_preference"
-        )
+        col1, col2, col3, col4 = st.columns(4)
         
-        # 风险系数映射
-        risk_multiplier = {
-            "conservative": 0.5,
-            "standard": 0.8,
-            "aggressive": 1.0
-        }.get(risk_preference, 0.8)
-    
-    with col3:
-        model_choice = st.selectbox(
-            "🤖 AI 模型",
-            options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
-            index=0,
-            key="ml_model_choice",
-            help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
-        )
-    
-    with col4:
-        st.markdown("**📐 評分權重**")
-        st.caption("基礎:30% | 場次:40% | 賠率:30%")
-        st.caption("溫度:0.8 | 賠率混合比:0.6")
+        with col1:
+            # 获取用户默认预算
+            profile = get_user_profile(st.session_state.user_id)
+            default_bankroll = profile.get('default_bankroll', 1000)
+            bankroll = st.number_input(
+                "💰 投注預算 (HKD)",
+                min_value=100,
+                max_value=100000,
+                value=int(default_bankroll),
+                step=100,
+                key="betting_bankroll"
+            )
+        
+        with col2:
+            risk_preference = st.selectbox(
+                "📊 風險偏好",
+                options=["conservative", "standard", "aggressive"],
+                format_func=lambda x: {"conservative": "保守", "standard": "標準", "aggressive": "進取"}.get(x, "標準"),
+                key="risk_preference"
+            )
+            
+            # 风险系数映射
+            risk_multiplier = {
+                "conservative": 0.5,
+                "standard": 0.8,
+                "aggressive": 1.0
+            }.get(risk_preference, 0.8)
+        
+        with col3:
+            model_choice = st.selectbox(
+                "🤖 AI 模型",
+                options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
+                index=0,
+                key="ml_model_choice",
+                help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
+            )
+        
+        with col4:
+            st.markdown("**📐 評分權重**")
+            st.caption("基礎:30% | 場次:40% | 賠率:30%")
+            st.caption("溫度:0.8 | 賠率混合比:0.6")
     
     st.markdown("---")
     
