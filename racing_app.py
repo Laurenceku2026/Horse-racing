@@ -1317,11 +1317,9 @@ def render_top_buttons():
 # ============================================================
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
-
-def get_all_horses_base_score(limit: int = 50) -> pd.DataFrame:
+def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
     """
     获取所有马匹的基础评分（基于近10场历史数据，与场次无关）
-    返回DataFrame，包含：马名、年龄、性别、胜率、入Q率、入T率、基础评分
     """
     try:
         headers = get_supabase_headers(use_secret=True)
@@ -1335,32 +1333,34 @@ def get_all_horses_base_score(limit: int = 50) -> pd.DataFrame:
         
         horses = horses_response.json()
         
-        # 获取所有历史往绩
-        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances"
+        # 获取所有历史往绩（按马名分组）
+        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?order=race_date.desc&limit=10000"
         perf_response = requests.get(perf_url, headers=headers)
         
-        past_performances = {}
+        # 按马名分组
+        from collections import defaultdict
+        past_performances_by_name = defaultdict(list)
+        
         if perf_response.status_code == 200:
             for p in perf_response.json():
-                horse_id = p.get('horse_id')
-                if horse_id not in past_performances:
-                    past_performances[horse_id] = []
-                past_performances[horse_id].append(p)
+                horse_name = p.get('horse_name')
+                if horse_name:
+                    past_performances_by_name[horse_name].append(p)
         
         results = []
         for horse in horses[:limit]:
-            horse_id = horse.get('horse_id')
             name_zh = horse.get('name_zh', '')
             name_en = horse.get('name_en', '')
             age = horse.get('age', 0)
             sex = horse.get('sex', '')
             
-            # 获取该马匹的往绩
-            performances = past_performances.get(horse_id, [])
+            # 使用马名匹配
+            horse_name = name_zh if name_zh else name_en
+            performances = past_performances_by_name.get(horse_name, [])
             
             if not performances:
                 results.append({
-                    "馬名": name_zh if name_zh else name_en,
+                    "馬名": horse_name,
                     "年齡": age,
                     "性別": sex,
                     "勝率": "0%",
@@ -1371,22 +1371,26 @@ def get_all_horses_base_score(limit: int = 50) -> pd.DataFrame:
                 continue
             
             # 计算各项指标
-            win_rate = calculate_win_rate(performances) * 100
-            place_rate = calculate_place_rate(performances) * 100
-            show_rate = calculate_show_rate(performances) * 100
+            total = len(performances)
+            wins = sum(1 for p in performances if p.get('position') == 1)
+            places = sum(1 for p in performances if p.get('position') in [1, 2])
+            shows = sum(1 for p in performances if p.get('position') in [1, 2, 3])
             
-            # 计算基础评分（使用一个默认路程，因为与场次无关时只需综合能力）
-            # 这里使用最常见的1200米作为基准
-            basic_score = calculate_basic_score(horse_id, 1200, performances)
+            win_rate = wins / total * 100
+            place_rate = places / total * 100
+            show_rate = shows / total * 100
+            
+            # 基础评分（胜率50% + 入Q率30% + 入T率20%）
+            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
             
             results.append({
-                "馬名": name_zh if name_zh else name_en,
+                "馬名": horse_name,
                 "年齡": age,
                 "性別": sex,
                 "勝率": f"{win_rate:.1f}%",
                 "入Q率": f"{place_rate:.1f}%",
                 "入T率": f"{show_rate:.1f}%",
-                "基礎評分": basic_score
+                "基礎評分": round(basic_score, 2)
             })
         
         # 按基础评分排序
