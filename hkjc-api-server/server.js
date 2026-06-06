@@ -38,28 +38,30 @@ app.get('/api/meetings', async (req, res) => {
 app.post('/api/sync/race', async (req, res) => {
     const { date, venue, raceNo } = req.body;
     
-    console.log(`开始同步: ${date} ${venue} 第${raceNo}场`);
+    console.log(`[开始同步] ${date} ${venue} 第${raceNo}场`);
     
     try {
-        // 1. 从 HKJC API 获取完整的赛事信息（包含 runners 详情）
-        // 根据官方文档，getRaceWithDateAndVenueCode 返回包含 runners 数组的完整数据
-        // runners 数组中包含：horseNo, horseName, draw, actualWeight, rating, jockey 等
+        // 1. 从 HKJC API 获取完整的赛事信息
         const raceDetails = await horseAPI.getRaceWithDateAndVenueCode(date, venue, parseInt(raceNo));
         
         if (!raceDetails) {
+            console.error(`[错误] 未找到赛事数据: ${date} ${venue} ${raceNo}`);
             return res.json({ success: false, error: '未找到赛事数据' });
         }
+        
+        console.log(`[API返回] 赛事详情: distance=${raceDetails.distance}, runners=${raceDetails.runners?.length}`);
         
         // 2. 获取赔率
         let oddsData = null;
         try {
             oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(date, venue, parseInt(raceNo), ['WIN', 'PLA', 'QIN']);
         } catch (oddsErr) {
-            console.log('获取赔率失败，继续同步其他数据:', oddsErr.message);
+            console.log('获取赔率失败，继续同步:', oddsErr.message);
         }
         
         // ========== 3. 保存 races 主表 ==========
-        const { error: raceError } = await supabase
+        console.log(`[保存赛事] race_date=${date}, venue=${venue}, race_no=${raceNo}`);
+        const { error: raceError, data: raceData } = await supabase
             .schema('racing')
             .from('races')
             .upsert({
@@ -73,19 +75,23 @@ app.post('/api/sync/race', async (req, res) => {
                 total_runners: raceDetails.runners?.length || 0,
                 race_status: 'RUNNERS',
                 updated_at: new Date().toISOString()
-            }, { onConflict: 'race_date,venue,race_no' });
+            }, { onConflict: 'race_date,venue,race_no' })
+            .select();
         
         if (raceError) {
-            console.error('保存赛事失败:', raceError);
+            console.error(`[保存赛事失败] ${JSON.stringify(raceError)}`);
+        } else {
+            console.log(`[保存赛事成功] ${JSON.stringify(raceData)}`);
         }
         
-        // ========== 4. 遍历 runners 保存马匹、骑师、出赛记录 ==========
+        // ========== 4. 遍历 runners ==========
         const runners = raceDetails.runners || [];
+        console.log(`[处理 runners] 共 ${runners.length} 匹马`);
         
         for (const runner of runners) {
             // 4.1 保存马匹 (horses 表)
             if (runner.horseName) {
-                await supabase
+                const { error: horseError } = await supabase
                     .schema('racing')
                     .from('horses')
                     .upsert({
@@ -94,17 +100,25 @@ app.post('/api/sync/race', async (req, res) => {
                         age: runner.age || null,
                         sex: runner.sex || null
                     }, { onConflict: 'name_en' });
+                
+                if (horseError) {
+                    console.error(`[保存马匹失败] ${runner.horseName}: ${JSON.stringify(horseError)}`);
+                }
             }
             
             // 4.2 保存骑师 (jockeys 表)
             if (runner.jockey) {
-                await supabase
+                const { error: jockeyError } = await supabase
                     .schema('racing')
                     .from('jockeys')
                     .upsert({
                         name_en: runner.jockey,
                         name_zh: runner.jockeyZh || ''
                     }, { onConflict: 'name_en' });
+                
+                if (jockeyError) {
+                    console.error(`[保存骑师失败] ${runner.jockey}: ${JSON.stringify(jockeyError)}`);
+                }
             }
             
             // 4.3 获取该马的赔率
@@ -115,7 +129,7 @@ app.post('/api/sync/race', async (req, res) => {
             }
             
             // 4.4 保存出赛记录 (race_runners 表)
-            await supabase
+            const { error: runnerError } = await supabase
                 .schema('racing')
                 .from('race_runners')
                 .upsert({
@@ -130,9 +144,13 @@ app.post('/api/sync/race', async (req, res) => {
                     jockey_name: runner.jockey,
                     odds_win: winOdds
                 }, { onConflict: 'race_date,race_no,venue,horse_no' });
+            
+            if (runnerError) {
+                console.error(`[保存出赛记录失败] ${runner.horseName}: ${JSON.stringify(runnerError)}`);
+            }
         }
         
-        console.log(`同步完成: ${date} ${venue} 第${raceNo}场, ${runners.length} 匹马`);
+        console.log(`[同步完成] ${date} ${venue} 第${raceNo}场, ${runners.length} 匹马`);
         res.json({ 
             success: true, 
             message: `同步成功: ${date} ${venue} 第${raceNo}场`,
@@ -140,7 +158,7 @@ app.post('/api/sync/race', async (req, res) => {
         });
         
     } catch (error) {
-        console.error('同步失败:', error);
+        console.error(`[同步异常] ${error.message}`, error.stack);
         res.status(500).json({ success: false, error: error.message });
     }
 });
