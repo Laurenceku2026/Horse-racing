@@ -1668,33 +1668,33 @@ def render_smart_betting(show_title: bool = True):
     top3 = get_top_horses_by_probability(runners, limit=3)
     
     if top3:
-    col1, col2, col3 = st.columns(3)
-    
-    for i, horse in enumerate(top3):
-        prob = horse.get('win_probability', 0) * 100
-        odds_raw = horse.get('odds_win')
+        col1, col2, col3 = st.columns(3)
         
-        # 安全转换赔率
-        try:
-            odds = float(odds_raw) if odds_raw else 0
-        except (ValueError, TypeError):
-            odds = 0
-        
-        score = horse.get('overall_score', 0)
-        horse_name = horse.get('horse_name_zh', horse.get('horse_name_en', ''))
-        
-        kelly_fraction = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
-        suggested_stake = bankroll * kelly_fraction * risk_multiplier
-        
-        with [col1, col2, col3][i]:
-            st.markdown(f"""
-            <div style="background-color: #f8f9fa; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
-                <strong>🥇 {horse_name}</strong><br>
-                勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
-                評分: {score:.0f}<br>
-                建議注額: <strong>HK${suggested_stake:.0f}</strong>
-            </div>
-            """, unsafe_allow_html=True)
+        for i, horse in enumerate(top3):
+            prob = horse.get('win_probability', 0) * 100
+            odds_raw = horse.get('odds_win')
+            
+            # 安全转换赔率
+            try:
+                odds = float(odds_raw) if odds_raw else 0
+            except (ValueError, TypeError):
+                odds = 0
+            
+            score = horse.get('overall_score', 0)
+            horse_name = horse.get('horse_name_zh', horse.get('horse_name_en', ''))
+            
+            kelly_fraction = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
+            suggested_stake = bankroll * kelly_fraction * risk_multiplier
+            
+            with [col1, col2, col3][i]:
+                st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
+                    <strong>🥇 {horse_name}</strong><br>
+                    勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
+                    評分: {score:.0f}<br>
+                    建議注額: <strong>HK${suggested_stake:.0f}</strong>
+                </div>
+                """, unsafe_allow_html=True)
         
         # 连赢建议
         if len(top3) >= 2:
