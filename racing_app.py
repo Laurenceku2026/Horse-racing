@@ -918,40 +918,15 @@ def render_admin_panel():
         
         # 可编辑表格
         with st.form(key="data_editor_form"):
+            #--------------
             edited_df = st.data_editor(
                 df,
                 use_container_width=True,
                 height=500,
                 num_rows="dynamic",
-                key="racing_data_editor",
-                column_config={
-                    "id": st.column_config.NumberColumn("ID", disabled=True),
-                    "race_date": st.column_config.DateColumn("赛事日期", required=True),
-                    "venue": st.column_config.TextColumn("场地", required=True),
-                    "race_no": st.column_config.NumberColumn("场次", required=True),
-                    "position": st.column_config.NumberColumn("名次"),
-                    "horse_no": st.column_config.TextColumn("马号"),
-                    "horse_name": st.column_config.TextColumn("马名"),
-                    "horse_id": st.column_config.TextColumn("马匹编号"),
-                    "jockey": st.column_config.TextColumn("骑师"),
-                    "trainer": st.column_config.TextColumn("练马师"),
-                    "actual_weight": st.column_config.NumberColumn("实际负磅"),
-                    "body_weight": st.column_config.NumberColumn("排位体重"),
-                    "draw": st.column_config.NumberColumn("档位"),
-                    "lbw_raw": st.column_config.TextColumn("头马距离"),
-                    "running_position": st.column_config.TextColumn("沿途走位"),
-                    "finish_time": st.column_config.TextColumn("完成时间"),
-                    "finish_seconds": st.column_config.NumberColumn("完成秒数"),
-                    "odds": st.column_config.NumberColumn("赔率"),
-                    "closing_profile": st.column_config.TextColumn("冲刺分类"),
-                    "incident": st.column_config.TextColumn("竞赛事件", width="large"),
-                    "race_class": st.column_config.TextColumn("班次"),
-                    "distance": st.column_config.NumberColumn("路程"),
-                    "going": st.column_config.TextColumn("场地状况"),
-                    "sectional_times": st.column_config.TextColumn("分段时间"),
-                }
+                key="racing_data_editor"
             )
-            
+            #----------------end
             col_save1, col_save2, col_spacer = st.columns([1, 1, 3])
             
             with col_save1:
