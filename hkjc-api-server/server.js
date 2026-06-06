@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Supabase 客户端（默认使用 public schema）
+// Supabase 客户端
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -41,7 +41,6 @@ app.post('/api/sync/race', async (req, res) => {
     console.log(`[开始同步] ${date} ${venue} 第${raceNo}场`);
     
     try {
-        // 1. 获取赛事详情
         const raceDetails = await horseAPI.getRaceWithDateAndVenueCode(date, venue, parseInt(raceNo));
         
         if (!raceDetails) {
@@ -50,7 +49,7 @@ app.post('/api/sync/race', async (req, res) => {
         
         console.log(`[API返回] 距离=${raceDetails.distance}, 马匹数=${raceDetails.runners?.length}`);
         
-        // 2. 获取赔率
+        // 获取赔率
         let oddsData = null;
         try {
             oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(date, venue, parseInt(raceNo), ['WIN']);
@@ -84,64 +83,70 @@ app.post('/api/sync/race', async (req, res) => {
         const runners = raceDetails.runners || [];
         
         for (const runner of runners) {
-            // 🔧 调试：打印 runner 的原始结构（只打印第一匹马）
-            if (runners.indexOf(runner) === 0) {
-                console.log('runner 数据结构示例:', JSON.stringify(runner, null, 2));
-            }
+            // 根据实际 API 返回结构提取字段
+            const horseName = runner.name_en || runner.horseName || 'Unknown';
+            const horseNameZh = runner.name_ch || '';
+            const horseNo = parseInt(runner.no) || 0;
+            const draw = parseInt(runner.barrierDrawNumber) || 0;
+            const actualWeight = parseInt(runner.handicapWeight) || 0;
+            const rating = parseInt(runner.internationalRating) || 0;
             
-            // 4.1 获取马名（尝试多个可能的字段名）
-            const horseName = runner.horseName || runner.name || runner.horse_name || 'Unknown';
-            
-            // 4.2 获取骑师名（可能是一个对象，需要提取 name_en）
-            let jockeyName = null;
-            let jockeyNameZh = null;
+            // 骑师信息
+            let jockeyName = '';
+            let jockeyNameZh = '';
             if (runner.jockey) {
-                if (typeof runner.jockey === 'object') {
-                    jockeyName = runner.jockey.name_en || runner.jockey.name || runner.jockey.name_ch;
-                    jockeyNameZh = runner.jockey.name_ch || null;
-                } else {
-                    jockeyName = runner.jockey;
-                }
+                jockeyName = runner.jockey.name_en || '';
+                jockeyNameZh = runner.jockey.name_ch || '';
             }
             
-            // 4.3 保存马匹
-            if (horseName && horseName !== 'Unknown') {
-                const { error: horseError } = await supabase
-                    .from('horses')
-                    .upsert({
-                        name_en: horseName,
-                        name_zh: runner.horseNameZh || null,
-                        age: runner.age || null,
-                        sex: runner.sex || null
-                    }, { onConflict: 'name_en' });
-                
-                if (horseError) {
-                    console.error(`保存马匹失败 ${horseName}:`, horseError);
-                }
+            // 练马师信息
+            let trainerName = '';
+            let trainerNameZh = '';
+            if (runner.trainer) {
+                trainerName = runner.trainer.name_en || '';
+                trainerNameZh = runner.trainer.name_ch || '';
             }
             
-            // 4.4 保存骑师
-            if (jockeyName) {
-                const { error: jockeyError } = await supabase
-                    .from('jockeys')
-                    .upsert({
-                        name_en: jockeyName,
-                        name_zh: jockeyNameZh || null
-                    }, { onConflict: 'name_en' });
-                
-                if (jockeyError) {
-                    console.error(`保存骑师失败 ${jockeyName}:`, jockeyError);
-                }
-            }
-            
-            // 4.5 获取赔率
+            // 获取赔率
             let winOdds = null;
             if (oddsData && oddsData.WIN) {
-                const horseOdds = oddsData.WIN.find(o => o.horseNo === runner.horseNo);
+                const horseOdds = oddsData.WIN.find(o => o.horseNo === horseNo);
                 if (horseOdds) winOdds = horseOdds.odds;
             }
             
-            // 4.6 保存出赛记录
+            // 保存马匹
+            if (horseName && horseName !== 'Unknown') {
+                await supabase
+                    .from('horses')
+                    .upsert({
+                        name_en: horseName,
+                        name_zh: horseNameZh,
+                        age: null,
+                        sex: null
+                    }, { onConflict: 'name_en' });
+            }
+            
+            // 保存骑师
+            if (jockeyName) {
+                await supabase
+                    .from('jockeys')
+                    .upsert({
+                        name_en: jockeyName,
+                        name_zh: jockeyNameZh
+                    }, { onConflict: 'name_en' });
+            }
+            
+            // 保存练马师
+            if (trainerName) {
+                await supabase
+                    .from('trainers')
+                    .upsert({
+                        name_en: trainerName,
+                        name_zh: trainerNameZh
+                    }, { onConflict: 'name_en' });
+            }
+            
+            // 保存出赛记录
             const { error: runnerError } = await supabase
                 .from('race_runners')
                 .upsert({
@@ -149,18 +154,17 @@ app.post('/api/sync/race', async (req, res) => {
                     race_no: parseInt(raceNo),
                     venue: venue,
                     horse_name: horseName,
-                    horse_no: runner.horseNo || runner.number,
-                    draw: runner.draw,
-                    actual_weight: runner.actualWeight,
-                    rating: runner.rating,
+                    horse_no: horseNo,
+                    draw: draw,
+                    actual_weight: actualWeight,
+                    rating: rating,
                     jockey_name: jockeyName,
+                    trainer_name: trainerName,
                     odds_win: winOdds
                 }, { onConflict: 'race_date,venue,race_no,horse_no' });
             
             if (runnerError) {
                 console.error('保存出赛记录失败:', runnerError);
-            } else {
-                console.log(`保存出赛记录成功: ${horseName}`);
             }
         }
         
