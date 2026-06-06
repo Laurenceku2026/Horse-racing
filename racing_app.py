@@ -2886,7 +2886,7 @@ def fetch_race_data_from_api(race_date: str, venue: str, race_no: int) -> Option
         return None
 
 #----------
-def update_all_data_for_date(race_date: str) -> Dict:
+def update_all_data_for_date(race_date: str, show_progress: bool = True) -> Dict:
     """更新指定日期的所有赛事数据 - 直接从 API 获取并同步"""
     result = {"success": 0, "failed": 0, "total": 0}
     
@@ -2894,15 +2894,20 @@ def update_all_data_for_date(race_date: str) -> Dict:
         API_BASE_URL = st.secrets.get("HKJC_API_URL", "")
         
         if not API_BASE_URL:
+            if show_progress:
+                st.error("API地址未配置")
             return {"success": 0, "failed": 0, "total": 0, "error": "API地址未配置"}
         
         # 1. 直接从 API 获取该日期的赛事列表
         meetings_url = f"{API_BASE_URL}/meetings"
-        st.info(f"正在调用 API: {meetings_url}")
+        if show_progress:
+            st.info(f"正在调用 API: {meetings_url}")
         meetings_response = requests.get(meetings_url, timeout=30)
         
         if meetings_response.status_code != 200:
-            return {"success": 0, "failed": 0, "total": 0, "error": f"API返回错误: {meetings_response.status_code}"}
+            if show_progress:
+                st.error(f"API返回错误: {meetings_response.status_code}")
+            return result
         
         meetings_data = meetings_response.json()
         meetings = meetings_data.get("data", [])
@@ -2915,17 +2920,20 @@ def update_all_data_for_date(race_date: str) -> Dict:
                 break
         
         if not target_meeting:
-            return {"success": 0, "failed": 0, "total": 0, "error": f"未找到 {race_date} 的赛事"}
+            if show_progress:
+                st.info(f"{race_date} 暫無賽事")
+            return result
         
         # 3. 从 races 数组获取赛事数量和列表
         races_list = target_meeting.get("races", [])
-        total_races = len(races_list)
-        result["total"] = total_races
+        result["total"] = len(races_list)
         
-        if total_races == 0:
-            return {"success": 0, "failed": 0, "total": 0, "error": f"{race_date} 没有赛事"}
+        if result["total"] == 0:
+            if show_progress:
+                st.info(f"{race_date} 没有赛事")
+            return result
         
-        # 4. 获取场地代码（注意字段名是 venueCode）
+        # 4. 获取场地代码
         venue = target_meeting.get("venueCode", "ST")
         
         # 5. 逐场同步
@@ -2941,14 +2949,22 @@ def update_all_data_for_date(race_date: str) -> Dict:
                 
                 if sync_response.status_code == 200 and sync_response.json().get("success"):
                     result["success"] += 1
-                    st.success(f"✅ 第{race_no}场同步成功")
+                    if show_progress:
+                        st.success(f"✅ 第{race_no}场同步成功")
                 else:
                     result["failed"] += 1
-                    st.warning(f"❌ 第{race_no}场同步失败: {sync_response.text}")
+                    if show_progress:
+                        st.warning(f"❌ 第{race_no}场同步失败")
             except Exception as e:
                 result["failed"] += 1
-                st.error(f"❌ 第{race_no}场异常: {e}")
+                if show_progress:
+                    st.error(f"❌ 第{race_no}场异常: {e}")
         
+        return result
+        
+    except Exception as e:
+        if show_progress:
+            st.error(f"更新数据失败: {e}")
         return result
         
     except Exception as e:
@@ -2967,14 +2983,15 @@ def sync_future_races(days: int = 14) -> Dict:
         sync_date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
         status_text.text(f"正在同步 {sync_date}...")
         
-        result = update_all_data_for_date(sync_date, show_progress=False)  # 不显示内部进度
+        # 传入 show_progress=False
+        result = update_all_data_for_date(sync_date, show_progress=False)
         results["success"] += result.get("success", 0)
         results["failed"] += result.get("failed", 0)
         results["total"] += result.get("total", 0)
         
         # 更新进度条
         progress_bar.progress((i + 1) / days)
-        time.sleep(0.5)  # 避免请求过快
+        time.sleep(0.5)
     
     progress_bar.empty()
     status_text.empty()
