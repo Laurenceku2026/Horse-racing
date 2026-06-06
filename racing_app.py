@@ -1486,8 +1486,7 @@ def render_smart_betting(show_title: bool = True):
     """智能投注页面：单场分析 + 全天优化"""
     if show_title:
         st.markdown("## 🎯 智能投注")
-    # ... 其余代码不变
-    
+        
     # ==================== 用户设置区域 ====================
     with st.expander("⚙️ 投注設置", expanded=True):
         col1, col2, col3 = st.columns(3)
@@ -1530,7 +1529,17 @@ def render_smart_betting(show_title: bool = True):
     
     # ==================== 选择赛日 ====================
     st.markdown("### 📅 選擇賽日")
+    # 调试
+    st.write("DEBUG: 正在获取赛事数据...")
+    upcoming_races = get_upcoming_races()
+    st.write(f"DEBUG: 获取到 {len(upcoming_races)} 条赛事记录")
     
+    if upcoming_races:
+        st.write(f"DEBUG: 第一条记录示例: {upcoming_races[0]}")
+    
+    if not upcoming_races:
+        st.info("📌 未來7天暫無賽事，請點擊「更新數據」同步最新賽程")
+        # ... 后续代码
     upcoming_races = get_upcoming_races()
     
     if not upcoming_races:
@@ -2947,19 +2956,28 @@ def update_all_data_for_date(race_date: str) -> Dict:
         return {"success": 0, "failed": result.get("total", 0), "total": result.get("total", 0), "error": str(e)}
 #---------------
 def sync_future_races(days: int = 14) -> Dict:
-    """同步未来 N 天的所有赛事"""
+    """同步未来 N 天的所有赛事（带进度条）"""
     results = {"success": 0, "failed": 0, "total": 0}
+    
+    # 创建进度条
+    progress_bar = st.progress(0)
+    status_text = st.empty()
     
     for i in range(days):
         sync_date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
-        st.info(f"正在同步 {sync_date}...")
-        result = update_all_data_for_date(sync_date)
+        status_text.text(f"正在同步 {sync_date}...")
+        
+        result = update_all_data_for_date(sync_date, show_progress=False)  # 不显示内部进度
         results["success"] += result.get("success", 0)
         results["failed"] += result.get("failed", 0)
         results["total"] += result.get("total", 0)
         
-        # 避免请求过快，暂停1秒
-        time.sleep(1)
+        # 更新进度条
+        progress_bar.progress((i + 1) / days)
+        time.sleep(0.5)  # 避免请求过快
+    
+    progress_bar.empty()
+    status_text.empty()
     
     return results
 # ==================== 第2次代码结束 ====================
