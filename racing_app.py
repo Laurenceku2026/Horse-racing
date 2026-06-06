@@ -1329,10 +1329,7 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
-                # 直接使用 RPC 返回的列名
-                df["年齡"] = "-"
-                df["性別"] = "-"
-                # 重命名显示列
+                # 重命名列
                 df = df.rename(columns={
                     "馬名": "馬名",
                     "勝率": "勝率",
@@ -1340,7 +1337,8 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
                     "入t率": "入T率",
                     "基礎評分": "基礎評分"
                 })
-                return df[["馬名", "年齡", "性別", "勝率", "入Q率", "入T率", "基礎評分"]]
+                # 不显示年龄和性别（没有数据）
+                return df[["馬名", "勝率", "入Q率", "入T率", "基礎評分"]]
             else:
                 st.info("暂无马匹评分数据")
                 return pd.DataFrame()
@@ -1364,27 +1362,43 @@ def render_horse_rating_table(df: pd.DataFrame):
     # 根据分数设置颜色
     def color_score(val):
         if val >= 85:
-            return 'color: #ff4b4b; font-weight: bold'
+            return 'color: #ff4b4b; font-weight: bold; text-align: center'
         elif val >= 70:
-            return 'color: #ff6b6b; font-weight: bold'
+            return 'color: #ff6b6b; font-weight: bold; text-align: center'
         elif val >= 55:
-            return 'color: #ffaa00'
+            return 'color: #ffaa00; text-align: center'
         elif val >= 40:
-            return 'color: #ff8800'
+            return 'color: #ff8800; text-align: center'
         else:
-            return 'color: #888888'
+            return 'color: #888888; text-align: center'
     
-    # 应用样式（使用 map 而不是 applymap）
+    # 应用样式
     styled_df = df.style.map(color_score, subset=["基礎評分"])
+    
+    # 设置表格属性
+    st.markdown("""
+    <style>
+        .dataframe {
+            width: 100%;
+            text-align: center;
+        }
+        .dataframe th {
+            text-align: center !important;
+            white-space: nowrap;
+        }
+        .dataframe td {
+            text-align: center !important;
+            white-space: nowrap;
+        }
+    </style>
+    """, unsafe_allow_html=True)
     
     st.dataframe(
         styled_df,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "馬名": st.column_config.TextColumn("馬名", width="medium"),
-            "年齡": st.column_config.NumberColumn("年齡", width="small"),
-            "性別": st.column_config.TextColumn("性別", width="small"),
+            "馬名": st.column_config.TextColumn("馬名", width="small"),
             "勝率": st.column_config.TextColumn("勝率", width="small"),
             "入Q率": st.column_config.TextColumn("入Q率", width="small"),
             "入T率": st.column_config.TextColumn("入T率", width="small"),
