@@ -1329,82 +1329,97 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
-                # 重命名列
                 df = df.rename(columns={
                     "馬名": "馬名",
                     "勝率": "勝率",
-                    "入q率": "入Q率",
-                    "入t率": "入T率",
-                    "基礎評分": "基礎評分"
+                    "入Q率": "入Q率",
+                    "入T率": "入T率",
+                    "基礎評分": "基礎評分",
+                    "平均體重": "平均體重"
                 })
-                # 不显示年龄和性别（没有数据）
-                return df[["馬名", "勝率", "入Q率", "入T率", "基礎評分"]]
-            else:
-                st.info("暂无马匹评分数据")
-                return pd.DataFrame()
-        else:
-            st.error(f"RPC 调用失败: {response.status_code}")
-            return pd.DataFrame()
-            
+                return df[["馬名", "勝率", "入Q率", "入T率", "基礎評分", "平均體重"]]
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"获取马匹评分失败: {e}")
         return pd.DataFrame()
 
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
-    """
-    渲染马匹评分表格
-    """
+    """渲染马匹评分表格（使用 HTML）"""
     if df.empty:
         st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
         return
     
-    # 根据分数设置颜色
-    def color_score(val):
-        if val >= 85:
-            return 'color: #ff4b4b; font-weight: bold; text-align: center'
-        elif val >= 70:
-            return 'color: #ff6b6b; font-weight: bold; text-align: center'
-        elif val >= 55:
-            return 'color: #ffaa00; text-align: center'
-        elif val >= 40:
-            return 'color: #ff8800; text-align: center'
-        else:
-            return 'color: #888888; text-align: center'
-    
-    # 应用样式
-    styled_df = df.style.map(color_score, subset=["基礎評分"])
-    
-    # 设置表格属性
+    # 自定义 CSS
     st.markdown("""
     <style>
-        .dataframe {
+        .horse-table {
             width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+        .horse-table th {
+            background-color: #f0f2f6;
+            padding: 10px 8px;
             text-align: center;
+            border: 1px solid #ddd;
+            font-weight: bold;
         }
-        .dataframe th {
-            text-align: center !important;
-            white-space: nowrap;
+        .horse-table td {
+            padding: 8px;
+            text-align: center;
+            border: 1px solid #ddd;
         }
-        .dataframe td {
-            text-align: center !important;
-            white-space: nowrap;
+        .score-high {
+            color: #ff4b4b;
+            font-weight: bold;
+        }
+        .score-mid-high {
+            color: #ff6b6b;
+            font-weight: bold;
+        }
+        .score-mid {
+            color: #ffaa00;
+        }
+        .score-low {
+            color: #888888;
+        }
+        .horse-table tr:hover {
+            background-color: #f5f5f5;
         }
     </style>
     """, unsafe_allow_html=True)
     
-    st.dataframe(
-        styled_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "馬名": st.column_config.TextColumn("馬名", width="small"),
-            "勝率": st.column_config.TextColumn("勝率", width="small"),
-            "入Q率": st.column_config.TextColumn("入Q率", width="small"),
-            "入T率": st.column_config.TextColumn("入T率", width="small"),
-            "基礎評分": st.column_config.NumberColumn("基礎評分", width="small", format="%.0f")
-        }
-    )
+    # 生成 HTML 表格
+    html = '<table class="horse-table"><thead><tr>'
+    html += '<th>馬名</th><th>勝率</th><th>入Q率</th><th>入T率</th><th>基礎評分</th><th>平均體重</th>'
+    html += '</tr></thead><tbody>'
+    
+    for _, row in df.iterrows():
+        score = row.get("基礎評分", 0)
+        if score >= 85:
+            score_class = "score-high"
+        elif score >= 70:
+            score_class = "score-mid-high"
+        elif score >= 55:
+            score_class = "score-mid"
+        else:
+            score_class = "score-low"
+        
+        html += f"""
+        <tr>
+            <td>{row.get('馬名', '-')}</td>
+            <td>{row.get('勝率', 0):.1f}%</td>
+            <td>{row.get('入Q率', 0):.1f}%</td>
+            <td>{row.get('入T率', 0):.1f}%</td>
+            <td class="{score_class}">{score:.0f}</td>
+            <td>{int(row.get('平均體重', 0)) if row.get('平均體重', 0) > 0 else '-'}</td>
+        </tr>
+        """
+    
+    html += '</tbody></table>'
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ==================== 主页函数（替换原有的render_home） ====================
