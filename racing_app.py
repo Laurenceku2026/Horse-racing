@@ -1627,7 +1627,14 @@ def render_smart_betting(show_title: bool = True):
         horse_name = runner.get('horse_name_zh', runner.get('horse_name_en', ''))
         draw = runner.get('draw', '-')
         weight = runner.get('actual_weight', '-')
-        odds_win = runner.get('odds_win', 0)
+        odds_win = runner.get('odds_win')
+        
+        # 安全处理赔率
+        try:
+            odds_display = f"{float(odds_win):.1f}" if odds_win and float(odds_win) > 0 else "-"
+        except (ValueError, TypeError):
+            odds_display = "-"
+        
         prob = runner.get('win_probability', 0) * 100
         score = runner.get('overall_score', 0)
         
@@ -1647,7 +1654,7 @@ def render_smart_betting(show_title: bool = True):
             "馬名": horse_name,
             "檔位": draw,
             "負磅": weight,
-            "賠率": f"{odds_win:.1f}" if odds_win > 0 else "-",
+            "賠率": odds_display,
             "綜合評分": f"{score:.0f}",
             "等級": level,
             "勝率": f"{prob:.1f}%"
@@ -1661,26 +1668,33 @@ def render_smart_betting(show_title: bool = True):
     top3 = get_top_horses_by_probability(runners, limit=3)
     
     if top3:
-        col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
+    
+    for i, horse in enumerate(top3):
+        prob = horse.get('win_probability', 0) * 100
+        odds_raw = horse.get('odds_win')
         
-        for i, horse in enumerate(top3):
-            prob = horse.get('win_probability', 0) * 100
-            odds = horse.get('odds_win', 0)
-            score = horse.get('overall_score', 0)
-            horse_name = horse.get('horse_name_zh', horse.get('horse_name_en', ''))
-            
-            kelly_fraction = calculate_kelly_fraction(prob / 100, odds)
-            suggested_stake = bankroll * kelly_fraction * risk_multiplier
-            
-            with [col1, col2, col3][i]:
-                st.markdown(f"""
-                <div style="background-color: #f8f9fa; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
-                    <strong>🥇 {horse_name}</strong><br>
-                    勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
-                    評分: {score:.0f}<br>
-                    建議注額: <strong>HK${suggested_stake:.0f}</strong>
-                </div>
-                """, unsafe_allow_html=True)
+        # 安全转换赔率
+        try:
+            odds = float(odds_raw) if odds_raw else 0
+        except (ValueError, TypeError):
+            odds = 0
+        
+        score = horse.get('overall_score', 0)
+        horse_name = horse.get('horse_name_zh', horse.get('horse_name_en', ''))
+        
+        kelly_fraction = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
+        suggested_stake = bankroll * kelly_fraction * risk_multiplier
+        
+        with [col1, col2, col3][i]:
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
+                <strong>🥇 {horse_name}</strong><br>
+                勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
+                評分: {score:.0f}<br>
+                建議注額: <strong>HK${suggested_stake:.0f}</strong>
+            </div>
+            """, unsafe_allow_html=True)
         
         # 连赢建议
         if len(top3) >= 2:
