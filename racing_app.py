@@ -1225,9 +1225,8 @@ def render_horse_rating_table(df: pd.DataFrame):
 
 
 # ==================== 主页函数（替换原有的render_home） ====================
-
 def render_home():
-    """主页：数据概览 + 智能投注 + 回测"""
+    """主页：数据概览 + 全马评分榜 + 智能投注 + 回测"""
     
     # ==================== 页面标题 ====================
     st.markdown("""
@@ -1305,17 +1304,7 @@ def render_home():
     
     st.markdown("---")
     
-    # ==================== 模块2：智能投注 ====================
-    # 调用智能投注（不显示独立标题）
-    render_smart_betting(show_title=False)
-    
-    st.markdown("---")
-    
-    # ==================== 模块3：回测 ====================
-    # 调用回测（不显示独立标题）
-    render_backtest_page(show_title=False)
-    
-    # ==================== 全马基础评分榜 ====================
+    # ==================== 模块2：全马基础评分榜 ====================
     st.markdown("### 🐎 全馬基礎評分榜")
     st.caption("📌 基於近10場歷史表現計算，與場次無關。分數越高代表整體實力越強。")
     
@@ -1328,7 +1317,7 @@ def render_home():
         rating_df = get_all_horses_base_score(limit=rating_limit)
         render_horse_rating_table(rating_df)
     
-    # ==================== 评分说明 ====================
+    # 评分说明
     with st.expander("📖 評分系統說明", expanded=False):
         st.markdown("""
         ### 基礎評分計算因子（近10場）
@@ -1353,6 +1342,16 @@ def render_home():
         
         💡 **提示**：基礎評分僅反映馬匹的整體實力。實際投注時，還需考慮檔位、負磅、騎師、場地狀況等場次因素。
         """)
+    
+    st.markdown("---")
+    
+    # ==================== 模块3：智能投注 ====================
+    render_smart_betting(show_title=False)
+    
+    st.markdown("---")
+    
+    # ==================== 模块4：回测 ====================
+    render_backtest_page(show_title=False)
     
     st.markdown("---")
     st.caption("📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新")
@@ -2855,55 +2854,62 @@ def fetch_race_data_from_api(race_date: str, venue: str, race_no: int) -> Option
 
 #----------
 def update_all_data_for_date(race_date: str) -> Dict:
-    """更新指定日期的所有赛事数据（Node.js API 优先，降级到爬虫）"""
+    """更新指定日期的所有赛事数据 - 先获取赛事列表再同步"""
     result = {"success": 0, "failed": 0, "total": 0}
     
-    # 获取该日期的所有赛事
     try:
-        headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=eq.{race_date}"
-        response = requests.get(url, headers=headers)
+        API_BASE_URL = st.secrets.get("HKJC_API_URL", "")
         
-        if response.status_code == 200:
-            races = response.json()
-            result["total"] = len(races)
-            
-            for race in races:
-                # 尝试从 Node.js API 获取数据
-                api_success = False
-                try:
-                    API_BASE_URL = st.secrets.get("HKJC_API_URL", "http://localhost:3000/api")
-                    sync_url = f"{API_BASE_URL}/sync/race"
-                    sync_response = requests.post(sync_url, json={
-                        "date": race_date,
-                        "venue": race.get("venue"),
-                        "raceNo": race.get("race_no")
-                    }, timeout=30)
-                    
-                    if sync_response.status_code == 200:
-                        api_success = True
-                        result["success"] += 1
-                except Exception as e:
-                    print(f"Node.js API 调用失败: {e}")
+        if not API_BASE_URL:
+            return {"success": 0, "failed": 0, "total": 0, "error": "API地址未配置"}
+        
+        # ========== 1. 从 API 获取该日期的赛事列表 ==========
+        meetings_url = f"{API_BASE_URL}/meetings"
+        meetings_response = requests.get(meetings_url, timeout=30)
+        
+        if meetings_response.status_code != 200:
+            return {"success": 0, "failed": 0, "total": 0, "error": "无法获取赛马日列表"}
+        
+        meetings = meetings_response.json().get("data", [])
+        
+        # 找到目标日期的赛事
+        target_meeting = None
+        for meeting in meetings:
+            if meeting.get("date") == race_date:
+                target_meeting = meeting
+                break
+        
+        if not target_meeting:
+            return {"success": 0, "failed": 0, "total": 0, "error": f"未找到 {race_date} 的赛事"}
+        
+        total_races = target_meeting.get("raceCount", 0)
+        result["total"] = total_races
+        
+        # ========== 2. 逐场同步 ==========
+        for race_no in range(1, total_races + 1):
+            try:
+                sync_url = f"{API_BASE_URL}/sync/race"
+                sync_response = requests.post(sync_url, json={
+                    "date": race_date,
+                    "venue": target_meeting.get("venueCode", "ST"),
+                    "raceNo": race_no
+                }, timeout=60)
                 
-                # 降级到 Python 爬虫
-                if not api_success:
-                    try:
-                        from hkjc_scraper import get_race_results, save_to_supabase
-                        results = get_race_results(race_date, race.get("venue"), race.get("race_no"))
-                        if results:
-                            save_to_supabase(race, results)
-                            result["success"] += 1
-                        else:
-                            result["failed"] += 1
-                    except Exception as e:
-                        print(f"爬虫降级失败: {e}")
-                        result["failed"] += 1
+                if sync_response.status_code == 200 and sync_response.json().get("success"):
+                    result["success"] += 1
+                    print(f"✅ 同步成功: 第{race_no}场")
+                else:
+                    result["failed"] += 1
+                    print(f"❌ 同步失败: 第{race_no}场")
+            except Exception as e:
+                print(f"❌ 同步异常: 第{race_no}场 - {e}")
+                result["failed"] += 1
         
         return result
+        
     except Exception as e:
         print(f"更新数据失败: {e}")
-        return {"success": 0, "failed": result.get("total", 0), "total": result.get("total", 0)}
+        return {"success": 0, "failed": result.get("total", 0), "total": result.get("total", 0), "error": str(e)}
 
 
 # ==================== 第2次代码结束 ====================
