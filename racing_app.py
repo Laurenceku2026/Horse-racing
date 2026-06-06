@@ -1749,7 +1749,12 @@ def render_smart_betting(show_title: bool = True):
                 # 遍历所有赛事
                 for race in races:
                     race_id_tmp = race.get('race_id')
-                    race_runners = get_race_runners_with_details(race_id_tmp)
+                    # 正确（传入 race_date, venue, race_no）
+                    race_runners = get_race_runners_with_details(
+                        race.get('race_date'),
+                        race.get('venue'),
+                        race.get('race_no')
+                    )
                     
                     if not race_runners:
                         continue
@@ -1833,7 +1838,11 @@ def render_smart_betting(show_title: bool = True):
             # 收集所有赛事的信心马
             for race in races:
                 race_id_tmp = race.get('race_id')
-                race_runners = get_race_runners_with_details(race_id_tmp)
+                race_runners = get_race_runners_with_details(
+                    race.get('race_date'),
+                    race.get('venue'),
+                    race.get('race_no')
+                )
                 
                 if not race_runners:
                     continue
