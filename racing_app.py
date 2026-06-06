@@ -1346,56 +1346,41 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
 
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
-    """渲染马匹评分表格（使用 HTML）"""
+    """渲染马匹评分表格"""
     if df.empty:
         st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
         return
     
-    # 自定义 CSS
-    st.markdown("""
+    # 生成 HTML 表格
+    html = """
     <style>
         .horse-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 14px;
-            margin: 10px 0;
         }
         .horse-table th {
             background-color: #f0f2f6;
-            padding: 10px 8px;
-            text-align: center;
-            border: 1px solid #ddd;
-            font-weight: bold;
-        }
-        .horse-table td {
             padding: 8px;
             text-align: center;
             border: 1px solid #ddd;
         }
-        .score-high {
-            color: #ff4b4b;
-            font-weight: bold;
+        .horse-table td {
+            padding: 6px;
+            text-align: center;
+            border: 1px solid #ddd;
         }
-        .score-mid-high {
-            color: #ff6b6b;
-            font-weight: bold;
-        }
-        .score-mid {
-            color: #ffaa00;
-        }
-        .score-low {
-            color: #888888;
-        }
-        .horse-table tr:hover {
-            background-color: #f5f5f5;
-        }
+        .score-high { color: #ff4b4b; font-weight: bold; }
+        .score-mid-high { color: #ff6b6b; font-weight: bold; }
+        .score-mid { color: #ffaa00; }
+        .score-low { color: #888888; }
     </style>
-    """, unsafe_allow_html=True)
-    
-    # 生成 HTML 表格
-    html = '<table class="horse-table"><thead><tr>'
-    html += '<th>馬名</th><th>勝率</th><th>入Q率</th><th>入T率</th><th>基礎評分</th><th>平均體重</th>'
-    html += '</tr></thead><tbody>'
+    <table class="horse-table">
+        <thead>
+            <tr><th>馬名</th><th>勝率</th><th>入Q率</th><th>入T率</th><th>基礎評分</th><th>平均體重</th></tr>
+        </thead>
+        <tbody>
+    """
     
     for _, row in df.iterrows():
         score = row.get("基礎評分", 0)
@@ -1419,8 +1404,11 @@ def render_horse_rating_table(df: pd.DataFrame):
         </tr>
         """
     
-    html += '</tbody></table>'
-    st.markdown(html, unsafe_allow_html=True)
+    html += "</tbody></table>"
+    
+    # 使用 components.html 强制渲染
+    from streamlit.components.v1 import html as st_html
+    st_html(html, height=400, scrolling=True)
 
 
 # ==================== 主页函数（替换原有的render_home） ====================
