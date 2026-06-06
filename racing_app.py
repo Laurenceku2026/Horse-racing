@@ -1380,13 +1380,14 @@ def get_races_by_date(race_date: str) -> List[Dict]:
         print(f"获取赛事列表失败: {e}")
         return []
 
-
+#------------
 def get_upcoming_races() -> List[Dict]:
     """获取未来7天的赛事"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
         headers = get_supabase_headers(use_secret=True)
+        # 注意：表名是 races（没有 racing/ 前缀）
         url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_week}&order=race_date.asc,race_no.asc"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
