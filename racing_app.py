@@ -1419,7 +1419,19 @@ def get_upcoming_races() -> List[Dict]:
     except Exception as e:
         print(f"获取未来赛事失败: {e}")
         return []
-
+#------------------
+def get_races_by_date(race_date: str) -> List[Dict]:
+    """获取指定日期的所有赛事"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race_date}&order=race_no.asc"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+        return []
+    except Exception as e:
+        print(f"获取赛事列表失败: {e}")
+        return []
 #-------------------------
 def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
     """获取赛事出赛马匹详情（含评分）"""
