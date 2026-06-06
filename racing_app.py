@@ -1346,7 +1346,7 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
 
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
-    """渲染马匹评分表格（分页）"""
+    """渲染马匹评分表格（分页 + 全部数据）"""
     if df.empty:
         st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
         return
@@ -1355,11 +1355,12 @@ def render_horse_rating_table(df: pd.DataFrame):
     page_size = 50
     total_pages = (len(df) + page_size - 1) // page_size
     
+    # 页码选择
     col1, col2 = st.columns([1, 3])
     with col1:
-        page = st.number_input("頁碼", min_value=1, max_value=total_pages, value=1, step=1)
+        page = st.number_input("頁碼", min_value=1, max_value=total_pages, value=1, step=1, key="rating_page")
     
-    # 获取当前页数据
+    # 获取当前页数据（使用全部数据，不是 head(200)）
     start_idx = (page - 1) * page_size
     end_idx = min(start_idx + page_size, len(df))
     display_df = df.iloc[start_idx:end_idx].copy()
@@ -1369,6 +1370,22 @@ def render_horse_rating_table(df: pd.DataFrame):
     display_df["入Q率"] = display_df["入Q率"].apply(lambda x: f"{x:.1f}%")
     display_df["入T率"] = display_df["入T率"].apply(lambda x: f"{x:.1f}%")
     
+    # 使用自定义 CSS 强制居中
+    st.markdown("""
+    <style>
+        .stDataFrame [data-testid="stElement"] {
+            text-align: center !important;
+        }
+        .stDataFrame th {
+            text-align: center !important;
+        }
+        .stDataFrame td {
+            text-align: center !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # 显示表格
     st.dataframe(
         display_df,
         use_container_width=True,
