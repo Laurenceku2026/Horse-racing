@@ -26,8 +26,8 @@ app.get('/api/health', (req, res) => {
 // ==================== 获取今日赛马日 ====================
 app.get('/api/meetings', async (req, res) => {
     try {
-        // 获取未来7天的赛马日
         const activeMeetings = await horseAPI.getActiveMeetings();
+        // 确保返回格式是 { success: true, data: [...] }
         res.json({ success: true, data: activeMeetings });
     } catch (error) {
         console.error('获取赛马日失败:', error);
