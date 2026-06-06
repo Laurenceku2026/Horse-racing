@@ -1329,11 +1329,12 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
+                # RPC 返回的列名是：馬名, 勝率, 入q率, 入t率, 基礎評分, 平均體重
                 df = df.rename(columns={
                     "馬名": "馬名",
                     "勝率": "勝率",
-                    "入Q率": "入Q率",
-                    "入T率": "入T率",
+                    "入q率": "入Q率",  # 注意：小写 q
+                    "入t率": "入T率",  # 注意：小写 t
                     "基礎評分": "基礎評分",
                     "平均體重": "平均體重"
                 })
