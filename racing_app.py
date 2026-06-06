@@ -2863,24 +2863,18 @@ def update_all_data_for_date(race_date: str) -> Dict:
         if not API_BASE_URL:
             return {"success": 0, "failed": 0, "total": 0, "error": "API地址未配置"}
         
-        # ========== 1. 直接从 API 获取该日期的赛事列表 ==========
-        # 注意：getActiveMeetings 获取的是未来赛马日
-        # 如果 race_date 是今天或未来，应该能获取到
+        # 1. 直接从 API 获取该日期的赛事列表
         meetings_url = f"{API_BASE_URL}/meetings"
         st.info(f"正在调用 API: {meetings_url}")
         meetings_response = requests.get(meetings_url, timeout=30)
-        
-        st.info(f"API 响应状态码: {meetings_response.status_code}")
         
         if meetings_response.status_code != 200:
             return {"success": 0, "failed": 0, "total": 0, "error": f"API返回错误: {meetings_response.status_code}"}
         
         meetings_data = meetings_response.json()
-        st.info(f"API 返回数据: {meetings_data}")
-        
         meetings = meetings_data.get("data", [])
         
-        # 找到目标日期的赛事
+        # 2. 找到目标日期的赛事
         target_meeting = None
         for meeting in meetings:
             if meeting.get("date") == race_date:
@@ -2888,29 +2882,39 @@ def update_all_data_for_date(race_date: str) -> Dict:
                 break
         
         if not target_meeting:
-            return {"success": 0, "failed": 0, "total": 0, "error": f"未找到 {race_date} 的赛事，API返回的赛马日: {[m.get('date') for m in meetings]}"}
+            return {"success": 0, "failed": 0, "total": 0, "error": f"未找到 {race_date} 的赛事"}
         
-        total_races = target_meeting.get("raceCount", 0)
+        # 3. 从 races 数组获取赛事数量和列表
+        races_list = target_meeting.get("races", [])
+        total_races = len(races_list)
         result["total"] = total_races
         
-        # ========== 2. 逐场同步 ==========
-        for race_no in range(1, total_races + 1):
+        if total_races == 0:
+            return {"success": 0, "failed": 0, "total": 0, "error": f"{race_date} 没有赛事"}
+        
+        # 4. 获取场地代码（注意字段名是 venueCode）
+        venue = target_meeting.get("venueCode", "ST")
+        
+        # 5. 逐场同步
+        for race_info in races_list:
+            race_no = race_info.get("no")
             try:
                 sync_url = f"{API_BASE_URL}/sync/race"
                 sync_response = requests.post(sync_url, json={
                     "date": race_date,
-                    "venue": target_meeting.get("venueCode", "ST"),
+                    "venue": venue,
                     "raceNo": race_no
                 }, timeout=60)
                 
                 if sync_response.status_code == 200 and sync_response.json().get("success"):
                     result["success"] += 1
+                    st.success(f"✅ 第{race_no}场同步成功")
                 else:
                     result["failed"] += 1
-                    st.warning(f"第{race_no}场同步失败: {sync_response.text}")
+                    st.warning(f"❌ 第{race_no}场同步失败: {sync_response.text}")
             except Exception as e:
                 result["failed"] += 1
-                st.error(f"第{race_no}场异常: {e}")
+                st.error(f"❌ 第{race_no}场异常: {e}")
         
         return result
         
