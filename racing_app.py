@@ -1827,96 +1827,96 @@ def render_smart_betting(show_title: bool = True):
     st.caption("基於各場信心馬匹，推薦2串1、3串1過關組合")
 
     if st.button("🎲 生成過關組合", key="generate_parlay", use_container_width=True):
-    with st.spinner("正在計算過關組合..."):
-        confidence_horses = []
-        
-        # 收集所有赛事的信心马
-        for race in races:
-            race_id_tmp = race.get('race_id')
-            race_runners = get_race_runners_with_details(race_id_tmp)
+        with st.spinner("正在計算過關組合..."):
+            confidence_horses = []
             
-            if not race_runners:
-                continue
-            
-            # 计算评分
-            race_scores, race_probs = calculate_all_horses_scores(race_id_tmp, race_runners, user_weights)
-            
-            for i, runner in enumerate(race_runners):
-                if i < len(race_scores):
-                    runner['win_probability'] = race_scores[i].get('win_probability', 0) / 100
-            
-            # 获取最高胜率马
-            top = max(race_runners, key=lambda x: x.get('win_probability', 0), default=None)
-            if top:
-                prob = top.get('win_probability', 0)
-                if prob >= 0.20:  # 胜率大于20%
-                    # 安全获取赔率
-                    odds_raw = top.get('odds_win', 0)
-                    try:
-                        odds = float(odds_raw) if odds_raw else 0
-                    except (ValueError, TypeError):
-                        odds = 0
-                    
-                    confidence_horses.append({
-                        "race_no": race.get('race_no'),
-                        "horse_name": top.get('horse_name_zh', top.get('horse_name_en', '')),
-                        "probability": prob,
-                        "odds": odds,
-                        "race_id": race_id_tmp
-                    })
-        
-        # 生成过关组合
-        parlay_results = []
-        
-        # 2串1
-        for i in range(len(confidence_horses)):
-            for j in range(i+1, len(confidence_horses)):
-                horse1 = confidence_horses[i]
-                horse2 = confidence_horses[j]
+            # 收集所有赛事的信心马
+            for race in races:
+                race_id_tmp = race.get('race_id')
+                race_runners = get_race_runners_with_details(race_id_tmp)
                 
-                joint_prob = horse1['probability'] * horse2['probability']
-                combined_odds = horse1['odds'] * horse2['odds']
+                if not race_runners:
+                    continue
                 
-                if joint_prob * combined_odds > 1 and combined_odds > 0:
-                    suggested_stake = bankroll * 0.05 * risk_multiplier
-                    parlay_results.append({
-                        "組合": "2串1",
-                        "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場",
-                        "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']}",
-                        "組合賠率": f"{combined_odds:.1f}",
-                        "聯合概率": f"{joint_prob*100:.1f}%",
-                        "建議注額": f"HK${suggested_stake:.0f}"
-                    })
-        
-        # 3串1
-        for i in range(len(confidence_horses)):
-            for j in range(i+1, len(confidence_horses)):
-                for k in range(j+1, len(confidence_horses)):
+                # 计算评分
+                race_scores, race_probs = calculate_all_horses_scores(race_id_tmp, race_runners, user_weights)
+                
+                for i, runner in enumerate(race_runners):
+                    if i < len(race_scores):
+                        runner['win_probability'] = race_scores[i].get('win_probability', 0) / 100
+                
+                # 获取最高胜率马
+                top = max(race_runners, key=lambda x: x.get('win_probability', 0), default=None)
+                if top:
+                    prob = top.get('win_probability', 0)
+                    if prob >= 0.20:  # 胜率大于20%
+                        # 安全获取赔率
+                        odds_raw = top.get('odds_win', 0)
+                        try:
+                            odds = float(odds_raw) if odds_raw else 0
+                        except (ValueError, TypeError):
+                            odds = 0
+                        
+                        confidence_horses.append({
+                            "race_no": race.get('race_no'),
+                            "horse_name": top.get('horse_name_zh', top.get('horse_name_en', '')),
+                            "probability": prob,
+                            "odds": odds,
+                            "race_id": race_id_tmp
+                        })
+            
+            # 生成过关组合
+            parlay_results = []
+            
+            # 2串1
+            for i in range(len(confidence_horses)):
+                for j in range(i+1, len(confidence_horses)):
                     horse1 = confidence_horses[i]
                     horse2 = confidence_horses[j]
-                    horse3 = confidence_horses[k]
                     
-                    joint_prob = horse1['probability'] * horse2['probability'] * horse3['probability']
-                    combined_odds = horse1['odds'] * horse2['odds'] * horse3['odds']
+                    joint_prob = horse1['probability'] * horse2['probability']
+                    combined_odds = horse1['odds'] * horse2['odds']
                     
                     if joint_prob * combined_odds > 1 and combined_odds > 0:
-                        suggested_stake = bankroll * 0.03 * risk_multiplier
+                        suggested_stake = bankroll * 0.05 * risk_multiplier
                         parlay_results.append({
-                            "組合": "3串1",
-                            "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場 + 第{horse3['race_no']}場",
-                            "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']} + {horse3['horse_name']}",
+                            "組合": "2串1",
+                            "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場",
+                            "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']}",
                             "組合賠率": f"{combined_odds:.1f}",
                             "聯合概率": f"{joint_prob*100:.1f}%",
                             "建議注額": f"HK${suggested_stake:.0f}"
                         })
-        
-        if parlay_results:
-            st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
             
-            total_parlay_stake = sum(float(r['建議注額'].replace('HK$', '')) for r in parlay_results)
-            st.info(f"💰 過關總建議注額: HK${total_parlay_stake:.0f}")
-        else:
-            st.info("暫無符合條件的過關組合")
+            # 3串1
+            for i in range(len(confidence_horses)):
+                for j in range(i+1, len(confidence_horses)):
+                    for k in range(j+1, len(confidence_horses)):
+                        horse1 = confidence_horses[i]
+                        horse2 = confidence_horses[j]
+                        horse3 = confidence_horses[k]
+                        
+                        joint_prob = horse1['probability'] * horse2['probability'] * horse3['probability']
+                        combined_odds = horse1['odds'] * horse2['odds'] * horse3['odds']
+                        
+                        if joint_prob * combined_odds > 1 and combined_odds > 0:
+                            suggested_stake = bankroll * 0.03 * risk_multiplier
+                            parlay_results.append({
+                                "組合": "3串1",
+                                "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場 + 第{horse3['race_no']}場",
+                                "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']} + {horse3['horse_name']}",
+                                "組合賠率": f"{combined_odds:.1f}",
+                                "聯合概率": f"{joint_prob*100:.1f}%",
+                                "建議注額": f"HK${suggested_stake:.0f}"
+                            })
+            
+            if parlay_results:
+                st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
+                
+                total_parlay_stake = sum(float(r['建議注額'].replace('HK$', '')) for r in parlay_results)
+                st.info(f"💰 過關總建議注額: HK${total_parlay_stake:.0f}")
+            else:
+                st.info("暫無符合條件的過關組合")
     
     st.markdown("---")
     
