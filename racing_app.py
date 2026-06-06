@@ -1533,7 +1533,7 @@ def render_home():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         update_btn = st.button("🔄 更新所有数据", type="primary", use_container_width=True)
-    
+    #-----------
     if update_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning("免費次數已用完，請升級到專業版")
@@ -1610,20 +1610,6 @@ def render_home():
 # ============================================================
 
 # ==================== 辅助函数：获取赛日所有赛事 ====================
-
-    def get_races_by_date(race_date: str) -> List[Dict]:
-        """获取指定日期的所有赛事"""
-        try:
-            headers = get_supabase_headers(use_secret=True)
-            url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race_date}&order=race_no.asc"
-            response = requests.get(url, headers=headers)
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except Exception as e:
-            print(f"获取赛事列表失败: {e}")
-            return []
-
 #------------
 def get_upcoming_races() -> List[Dict]:
     """获取未来14天的赛事（从数据库读取）"""
@@ -1702,7 +1688,284 @@ def get_top_horses_by_probability(runners: List[Dict], limit: int = 3) -> List[D
     sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
     return sorted_runners[:limit]
 
+#-----------------
+# ==================== ML 模型训练和预测 ====================
+# 尝试导入 ML 库
+try:
+    import lightgbm as lgb
+    LGB_AVAILABLE = True
+except ImportError:
+    LGB_AVAILABLE = False
 
+try:
+    import xgboost as xgb
+    XGB_AVAILABLE = True
+except ImportError:
+    XGB_AVAILABLE = False
+
+try:
+    from sklearn.preprocessing import LabelEncoder, StandardScaler
+    from sklearn.model_selection import train_test_split
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+
+
+def prepare_ml_features(horse_id: int, race_id: int, past_performances: List[Dict]) -> Dict:
+    """
+    为 ML 模型准备特征
+    返回特征字典
+    """
+    features = {}
+    
+    # 1. 基础统计特征
+    if past_performances:
+        recent_5 = past_performances[:5] if len(past_performances) >= 5 else past_performances
+        recent_10 = past_performances[:10] if len(past_performances) >= 10 else past_performances
+        
+        # 胜率、入Q率、入T率
+        wins = sum(1 for p in recent_10 if p.get('position') == 1)
+        places = sum(1 for p in recent_10 if p.get('position', 0) <= 2)
+        shows = sum(1 for p in recent_10 if p.get('position', 0) <= 3)
+        
+        features['win_rate_10'] = wins / len(recent_10) if recent_10 else 0
+        features['place_rate_10'] = places / len(recent_10) if recent_10 else 0
+        features['show_rate_10'] = shows / len(recent_10) if recent_10 else 0
+        
+        # 近5场胜率
+        wins_5 = sum(1 for p in recent_5 if p.get('position') == 1)
+        features['win_rate_5'] = wins_5 / len(recent_5) if recent_5 else 0
+        
+        # 平均完成时间
+        finish_times = [p.get('finish_seconds', 0) for p in recent_5 if p.get('finish_seconds')]
+        features['avg_finish_time'] = np.mean(finish_times) if finish_times else 0
+        
+        # 名次趋势（最近5场名次变化）
+        positions = [p.get('position', 0) for p in recent_5 if p.get('position')]
+        if len(positions) >= 2:
+            features['position_trend'] = positions[0] - positions[-1]  # 正数表示进步
+        else:
+            features['position_trend'] = 0
+        
+        # 负磅趋势
+        weights = [p.get('actual_weight', 0) for p in recent_5 if p.get('actual_weight')]
+        if len(weights) >= 2:
+            features['weight_trend'] = weights[0] - weights[-1]
+        else:
+            features['weight_trend'] = 0
+    
+    return features
+
+
+def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]:
+    """训练 LightGBM 模型"""
+    if not LGB_AVAILABLE:
+        return None
+    
+    try:
+        # 准备训练数据
+        X_list = []
+        y_list = []
+        
+        # 获取所有赛事
+        races = [d for d in draws if d.get('race_date')]
+        
+        for i, race in enumerate(races):
+            if i < lookback:
+                continue
+            
+            # 使用 race 之前的数据训练
+            train_draws = races[:i]
+            
+            for runner in race.get('runners', []):
+                horse_id = runner.get('horse_id')
+                if not horse_id:
+                    continue
+                
+                # 获取该马匹的历史往绩
+                past = get_horse_past_performances(horse_id, limit=10)
+                features = prepare_ml_features(horse_id, race.get('race_id'), past)
+                
+                if features:
+                    features['draw'] = runner.get('draw', 0)
+                    features['actual_weight'] = runner.get('actual_weight', 0)
+                    features['odds'] = runner.get('odds_win', 0)
+                    features['jockey_id'] = runner.get('jockey_id', 0)
+                    features['trainer_id'] = runner.get('trainer_id', 0)
+                    features['distance'] = race.get('distance', 0)
+                    
+                    X_list.append(features)
+                    # 目标：是否跑入前三
+                    y_list.append(1 if runner.get('position', 0) <= 3 else 0)
+        
+        if len(X_list) < 100:
+            return None
+        
+        X_df = pd.DataFrame(X_list).fillna(0)
+        y_series = pd.Series(y_list)
+        
+        model = lgb.LGBMClassifier(
+            n_estimators=100,
+            max_depth=5,
+            learning_rate=0.1,
+            random_state=42,
+            verbose=-1
+        )
+        
+        model.fit(X_df, y_series)
+        return model
+        
+    except Exception as e:
+        print(f"LightGBM 训练失败: {e}")
+        return None
+
+
+def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]:
+    """训练 XGBoost 模型"""
+    if not XGB_AVAILABLE:
+        return None
+    
+    try:
+        X_list = []
+        y_list = []
+        
+        races = [d for d in draws if d.get('race_date')]
+        
+        for i, race in enumerate(races):
+            if i < lookback:
+                continue
+            
+            train_draws = races[:i]
+            
+            for runner in race.get('runners', []):
+                horse_id = runner.get('horse_id')
+                if not horse_id:
+                    continue
+                
+                past = get_horse_past_performances(horse_id, limit=10)
+                features = prepare_ml_features(horse_id, race.get('race_id'), past)
+                
+                if features:
+                    features['draw'] = runner.get('draw', 0)
+                    features['actual_weight'] = runner.get('actual_weight', 0)
+                    features['odds'] = runner.get('odds_win', 0)
+                    features['distance'] = race.get('distance', 0)
+                    
+                    X_list.append(features)
+                    y_list.append(1 if runner.get('position', 0) <= 3 else 0)
+        
+        if len(X_list) < 100:
+            return None
+        
+        X_df = pd.DataFrame(X_list).fillna(0)
+        y_series = pd.Series(y_list)
+        
+        model = xgb.XGBClassifier(
+            n_estimators=100,
+            max_depth=5,
+            learning_rate=0.1,
+            random_state=42,
+            use_label_encoder=False,
+            eval_metric='logloss',
+            verbosity=0
+        )
+        
+        model.fit(X_df, y_series)
+        return model
+        
+    except Exception as e:
+        print(f"XGBoost 训练失败: {e}")
+        return None
+
+
+def predict_with_ml_model(model: Any, features: Dict) -> float:
+    """使用 ML 模型预测胜率"""
+    if model is None:
+        return 0.5
+    
+    try:
+        X_pred = pd.DataFrame([features]).fillna(0)
+        prob = model.predict_proba(X_pred)[0][1]
+        return prob
+    except Exception as e:
+        print(f"预测失败: {e}")
+        return 0.5
+
+
+def get_model_predictions(race_id: int, runners: List[Dict], model_type: str) -> List[float]:
+    """
+    获取 ML 模型预测的胜率
+    model_type: 'lightgbm', 'xgboost', 'ensemble'
+    """
+    predictions = []
+    
+    # 训练模型（使用历史数据）
+    # 注意：实际应用中应该缓存模型，避免重复训练
+    draws = get_historical_draws_for_training(limit=300)
+    
+    if model_type == 'lightgbm':
+        model = train_lightgbm_model(draws)
+    elif model_type == 'xgboost':
+        model = train_xgboost_model(draws)
+    else:
+        # 集成模型
+        lgb_model = train_lightgbm_model(draws)
+        xgb_model = train_xgboost_model(draws)
+        
+        for runner in runners:
+            horse_id = runner.get('horse_id')
+            past = get_horse_past_performances(horse_id, limit=10)
+            features = prepare_ml_features(horse_id, race_id, past)
+            
+            if features:
+                lgb_prob = predict_with_ml_model(lgb_model, features) if lgb_model else 0.5
+                xgb_prob = predict_with_ml_model(xgb_model, features) if xgb_model else 0.5
+                prob = (lgb_prob + xgb_prob) / 2
+            else:
+                prob = 0.5
+            
+            predictions.append(prob)
+        
+        return predictions
+    
+    for runner in runners:
+        horse_id = runner.get('horse_id')
+        past = get_horse_past_performances(horse_id, limit=10)
+        features = prepare_ml_features(horse_id, race_id, past)
+        
+        if features:
+            features['draw'] = runner.get('draw', 0)
+            features['actual_weight'] = runner.get('actual_weight', 0)
+            features['odds'] = runner.get('odds_win', 0)
+            prob = predict_with_ml_model(model, features)
+        else:
+            prob = 0.5
+        
+        predictions.append(prob)
+    
+    return predictions
+
+
+def get_historical_draws_for_training(limit: int = 300) -> List[Dict]:
+    """获取用于训练的历史数据"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/races?order=race_date.desc&limit={limit}"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            races = response.json()
+            # 获取每场比赛的出赛马匹
+            for race in races:
+                runners_url = f"{SUPABASE_URL}/rest/v1/race_runners?race_id=eq.{race.get('race_id')}"
+                runners_response = requests.get(runners_url, headers=headers)
+                if runners_response.status_code == 200:
+                    race['runners'] = runners_response.json()
+            return races
+        return []
+    except Exception as e:
+        print(f"获取训练数据失败: {e}")
+        return []
 # ==================== 智能投注主页面 ====================
 
 def render_smart_betting(show_title: bool = True):
@@ -1712,41 +1975,49 @@ def render_smart_betting(show_title: bool = True):
         
     # ==================== 用户设置区域 ====================
     with st.expander("⚙️ 投注設置", expanded=True):
-        col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        # 获取用户默认预算
+        profile = get_user_profile(st.session_state.user_id)
+        default_bankroll = profile.get('default_bankroll', 1000)
+        bankroll = st.number_input(
+            "💰 投注預算 (HKD)",
+            min_value=100,
+            max_value=100000,
+            value=int(default_bankroll),
+            step=100,
+            key="betting_bankroll"
+        )
+    
+    with col2:
+        risk_preference = st.selectbox(
+            "📊 風險偏好",
+            options=["conservative", "standard", "aggressive"],
+            format_func=lambda x: {"conservative": "保守", "standard": "標準", "aggressive": "進取"}.get(x, "標準"),
+            key="risk_preference"
+        )
         
-        with col1:
-            # 获取用户默认预算
-            profile = get_user_profile(st.session_state.user_id)
-            default_bankroll = profile.get('default_bankroll', 1000)
-            bankroll = st.number_input(
-                "💰 投注預算 (HKD)",
-                min_value=100,
-                max_value=100000,
-                value=int(default_bankroll),
-                step=100,
-                key="betting_bankroll"
-            )
-        
-        with col2:
-            risk_preference = st.selectbox(
-                "📊 風險偏好",
-                options=["conservative", "standard", "aggressive"],
-                format_func=lambda x: {"conservative": "保守", "standard": "標準", "aggressive": "進取"}.get(x, "標準"),
-                key="risk_preference"
-            )
-            
-            # 风险系数映射
-            risk_multiplier = {
-                "conservative": 0.5,
-                "standard": 0.8,
-                "aggressive": 1.0
-            }.get(risk_preference, 0.8)
-        
-        with col3:
-            # 评分权重显示（只读，可后续扩展为可调）
-            st.markdown("**📐 評分權重**")
-            st.caption("基礎:30% | 場次:40% | 賠率:30%")
-            st.caption("溫度:0.8 | 賠率混合比:0.6")
+        # 风险系数映射
+        risk_multiplier = {
+            "conservative": 0.5,
+            "standard": 0.8,
+            "aggressive": 1.0
+        }.get(risk_preference, 0.8)
+    
+    with col3:
+        model_choice = st.selectbox(
+            "🤖 AI 模型",
+            options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
+            index=0,
+            key="ml_model_choice",
+            help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
+        )
+    
+    with col4:
+        st.markdown("**📐 評分權重**")
+        st.caption("基礎:30% | 場次:40% | 賠率:30%")
+        st.caption("溫度:0.8 | 賠率混合比:0.6")
     
     st.markdown("---")
     
@@ -1821,19 +2092,37 @@ def render_smart_betting(show_title: bool = True):
         "temperature": 0.8,
         "odds_mix_ratio": 0.6
     }
-    
-    # 计算评分和胜率
-    with st.spinner("正在計算馬匹勝率..."):
-        scores, probabilities = calculate_all_horses_scores(race_id, runners, user_weights)
-    
-    # 更新runner数据
-    for i, runner in enumerate(runners):
-        if i < len(scores):
-            runner['basic_score'] = scores[i].get('basic_score', 0)
-            runner['race_score'] = scores[i].get('race_score', 0)
-            runner['odds_score'] = scores[i].get('odds_score', 0)
-            runner['overall_score'] = scores[i].get('combined_score', 0)
-            runner['win_probability'] = scores[i].get('win_probability', 0) / 100
+    #-----------
+    # 根据选择的模型计算胜率
+    if model_choice == "评分系统":
+        with st.spinner("正在計算馬匹勝率（評分系統）..."):
+            scores, probabilities = calculate_all_horses_scores(race_id, runners, user_weights)
+        
+        # 更新runner数据
+        for i, runner in enumerate(runners):
+            if i < len(scores):
+                runner['basic_score'] = scores[i].get('basic_score', 0)
+                runner['race_score'] = scores[i].get('race_score', 0)
+                runner['odds_score'] = scores[i].get('odds_score', 0)
+                runner['overall_score'] = scores[i].get('combined_score', 0)
+                runner['win_probability'] = scores[i].get('win_probability', 0) / 100
+    else:
+        # 使用 ML 模型预测
+        model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
+        with st.spinner(f"正在計算馬匹勝率（{model_choice}）..."):
+            ml_probs = get_model_predictions(race_id, runners, model_type)
+        
+        # 更新runner数据
+        for i, runner in enumerate(runners):
+            if i < len(ml_probs):
+                runner['win_probability'] = ml_probs[i]
+                # ML 模型没有详细的子评分，设置默认值
+                runner['basic_score'] = 50
+                runner['race_score'] = 50
+                runner['odds_score'] = 50
+                runner['overall_score'] = ml_probs[i] * 100
+            else:
+                runner['win_probability'] = 0.1
     
     # 按胜率排序
     sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
@@ -2375,16 +2664,209 @@ def run_full_day_backtest(race_date: str, user_weights: Dict) -> Dict:
     except Exception as e:
         print(f"全天回测失败: {e}")
         return {"success": False, "error": str(e)}
+#--------------
+def run_models_backtest(start_date: str, end_date: str) -> List[Dict]:
+    """运行多个模型的回测对比"""
+    results = []
+    
+    models = [
+        {"name": "评分系统", "type": "rule"},
+        {"name": "LightGBM", "type": "lightgbm"},
+        {"name": "XGBoost", "type": "xgboost"},
+        {"name": "集成模型", "type": "ensemble"}
+    ]
+    
+    for model in models:
+        try:
+            result = run_single_model_backtest(start_date, end_date, model["type"])
+            results.append({
+                "模型": model["name"],
+                "测试场次": result.get("total_races", 0),
+                "预测正确": result.get("correct_predictions", 0),
+                "准确率": result.get("accuracy", 0),
+                "总回报": result.get("total_return", 0),
+                "总投入": result.get("total_stake", 0),
+                "ROI": result.get("roi", 0)
+            })
+        except Exception as e:
+            print(f"{model['name']} 回测失败: {e}")
+            results.append({
+                "模型": model["name"],
+                "测试场次": 0,
+                "预测正确": 0,
+                "准确率": 0,
+                "总回报": 0,
+                "总投入": 0,
+                "ROI": 0
+            })
+    
+    return results
 
 
-# ==================== 回测页面 ====================
-
+def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
+    """运行单个模型的回测"""
+    result = {
+        "total_races": 0,
+        "correct_predictions": 0,
+        "accuracy": 0,
+        "total_return": 0,
+        "total_stake": 0,
+        "roi": 0
+    }
+    
+    try:
+        # 获取回测期间的赛事
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{start_date}&race_date=lte.{end_date}&order=race_date.asc"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            return result
+        
+        races = response.json()
+        result["total_races"] = len(races)
+        
+        # 用户权重（用于评分系统）
+        user_weights = {
+            "basic": 0.30,
+            "race": 0.40,
+            "odds": 0.30,
+            "temperature": 0.8,
+            "odds_mix_ratio": 0.6
+        }
+        
+        for race in races:
+            race_id = race.get('race_id')
+            race_date = race.get('race_date')
+            venue = race.get('venue', 'ST')
+            race_no = race.get('race_no', 1)
+            
+            # 获取该赛事的出赛马匹
+            runners = get_race_runners_with_details(race_date, venue, race_no)
+            
+            if not runners:
+                continue
+            
+            # 根据模型类型预测
+            predicted_winner = None
+            best_prob = 0
+            
+            if model_type == "rule":
+                # 使用评分系统
+                scores, probabilities = calculate_all_horses_scores(race_id, runners, user_weights)
+                for i, runner in enumerate(runners):
+                    if i < len(probabilities) and probabilities[i] > best_prob:
+                        best_prob = probabilities[i]
+                        predicted_winner = runner.get('horse_name')
+            else:
+                # 使用 ML 模型
+                model_type_key = 'lightgbm' if model_type == 'lightgbm' else 'xgboost' if model_type == 'xgboost' else 'ensemble'
+                ml_probs = get_model_predictions(race_id, runners, model_type_key)
+                for i, runner in enumerate(runners):
+                    if i < len(ml_probs) and ml_probs[i] > best_prob:
+                        best_prob = ml_probs[i]
+                        predicted_winner = runner.get('horse_name')
+            
+            # 获取实际冠军
+            actual_winner = None
+            for runner in runners:
+                if runner.get('finishing_position') == 1:
+                    actual_winner = runner.get('horse_name')
+                    break
+            
+            if predicted_winner and actual_winner and predicted_winner == actual_winner:
+                result["correct_predictions"] += 1
+                
+                # 模拟投注（假设每场投注 100 元）
+                result["total_stake"] += 100
+                
+                # 获取赔率（简化处理）
+                odds = 3.0
+                for runner in runners:
+                    if runner.get('horse_name') == predicted_winner:
+                        odds = runner.get('odds_win', 3.0)
+                        break
+                
+                result["total_return"] += 100 * odds
+        
+        if result["total_races"] > 0:
+            result["accuracy"] = result["correct_predictions"] / result["total_races"] * 100
+            if result["total_stake"] > 0:
+                result["roi"] = (result["total_return"] - result["total_stake"]) / result["total_stake"] * 100
+        
+    except Exception as e:
+        print(f"回测失败: {e}")
+    
+    return result
+#-----------
 def render_backtest_page(show_title: bool = True):
-    """回测页面：单场回测 + 全天回测"""
+    """回测页面：模型对比 + 单场回测 + 全天回测"""
     if show_title:
         st.markdown("## 📊 回測")
-    # ... 其余代码不变
     
+    # ==================== 新增：模型对比回测 ====================
+    st.markdown("### 🤖 模型對比回測")
+    st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        backtest_start = st.date_input(
+            "開始日期", 
+            value=datetime.now() - timedelta(days=90),
+            key="backtest_start_date"
+        )
+    with col2:
+        backtest_end = st.date_input(
+            "結束日期", 
+            value=datetime.now(),
+            key="backtest_end_date"
+        )
+    with col3:
+        run_backtest_btn = st.button("▶️ 運行模型對比回測", type="primary", use_container_width=True)
+    
+    if run_backtest_btn:
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在運行模型對比回測..."):
+                results = run_models_backtest(
+                    start_date=backtest_start.strftime("%Y-%m-%d"),
+                    end_date=backtest_end.strftime("%Y-%m-%d")
+                )
+                
+                if results:
+                    st.markdown("#### 📈 模型對比結果")
+                    
+                    # 显示对比表格
+                    compare_df = pd.DataFrame(results)
+                    st.dataframe(
+                        compare_df.style.format({
+                            '准确率': '{:.1f}%',
+                            'ROI': '{:+.1f}%',
+                            '总回报': '${:.0f}'
+                        }),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    # 绘制对比图表
+                    fig = go.Figure()
+                    for model in results:
+                        fig.add_trace(go.Bar(
+                            name=model['模型'],
+                            x=['准确率', 'ROI'],
+                            y=[model['准确率'], model['ROI']],
+                            text=[f"{model['准确率']:.1f}%", f"{model['ROI']:+.1f}%"],
+                            textposition='auto'
+                        ))
+                    fig.update_layout(title="模型性能对比", barmode='group', height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("回测数据不足，请确保有足够的历史数据")
+    
+    st.markdown("---")
+    
+    # ==================== 原有的单场回测代码保持不变 ====================
     # 获取用户权重
     user_weights = {
         "basic": 0.30,
@@ -2394,7 +2876,7 @@ def render_backtest_page(show_title: bool = True):
         "odds_mix_ratio": 0.6
     }
     
-    # ==================== 单场回测 ====================
+    # 单场回测
     st.markdown("### 🏇 單場回測")
     st.caption("選擇一場已完成賽事，AI預測 vs 實際結果")
     
@@ -2458,7 +2940,7 @@ def render_backtest_page(show_title: bool = True):
     
     st.markdown("---")
     
-    # ==================== 全天回测 ====================
+    # ==================== 原有的全天回测代码保持不变 ====================
     st.markdown("### 📅 全天回測")
     st.caption("選擇一個賽日，測試AI對全天賽事的預測準確率")
     
@@ -3173,6 +3655,103 @@ def fetch_race_data_from_api(race_date: str, venue: str, race_no: int) -> Option
         print(f"API请求异常: {e}")
         return None
 #--------------
+# ==================== 导入爬虫模块 ====================
+try:
+    from hkjc_advanced_scraper_v2 import parse_race_result
+    SCRAPER_AVAILABLE = True
+except ImportError:
+    SCRAPER_AVAILABLE = False
+    print("爬虫模块不可用，请确保 hkjc_advanced_scraper_v2.py 在项目根目录")
+
+
+def save_race_result_to_db(record: Dict) -> bool:
+    """保存单条成绩记录到数据库（去重）"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 检查是否已存在（根据唯一键：race_date + venue + race_no + horse_no）
+        check_url = f"{SUPABASE_URL}/rest/v1/past_performances?race_date=eq.{record['race_date']}&venue=eq.{record['venue']}&race_no=eq.{record['race_no']}&horse_no=eq.{record['horse_no']}"
+        check_response = requests.get(check_url, headers=headers)
+        
+        if check_response.status_code == 200 and check_response.json():
+            # 已存在，跳过
+            return True
+        
+        # 插入新记录
+        insert_url = f"{SUPABASE_URL}/rest/v1/past_performances"
+        insert_response = requests.post(insert_url, headers=headers, json=record)
+        
+        if insert_response.status_code not in [200, 201]:
+            print(f"保存失败: {insert_response.text}")
+            return False
+        
+        return True
+    except Exception as e:
+        print(f"保存异常: {e}")
+        return False
+
+
+def get_latest_race_date_from_db() -> Optional[str]:
+    """从数据库获取最新的赛事日期"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/races?order=race_date.desc&limit=1"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200 and response.json():
+            return response.json()[0].get('race_date')
+        return None
+    except Exception as e:
+        print(f"获取最新赛事日期失败: {e}")
+        return None
+
+
+def cleanup_old_records(keep_count: int = 9000) -> Dict:
+    """清理旧记录，只保留最新的 keep_count 条"""
+    result = {"deleted": 0, "kept": 0}
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 获取当前记录数
+        count_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=id"
+        count_response = requests.get(count_url, headers=headers)
+        
+        if count_response.status_code != 200:
+            return result
+        
+        all_ids = [item.get('id') for item in count_response.json() if item.get('id')]
+        total_count = len(all_ids)
+        
+        if total_count <= keep_count:
+            result["kept"] = total_count
+            return result
+        
+        # 获取需要保留的最新记录 ID
+        keep_url = f"{SUPABASE_URL}/rest/v1/past_performances?order=race_date.desc&limit={keep_count}&select=id"
+        keep_response = requests.get(keep_url, headers=headers)
+        
+        if keep_response.status_code != 200:
+            return result
+        
+        keep_ids = {str(item.get('id')) for item in keep_response.json() if item.get('id')}
+        
+        # 删除不在保留列表中的记录
+        for record_id in all_ids:
+            if str(record_id) not in keep_ids:
+                delete_url = f"{SUPABASE_URL}/rest/v1/past_performances?id=eq.{record_id}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                if delete_response.status_code in [200, 204]:
+                    result["deleted"] += 1
+        
+        result["kept"] = keep_count
+        
+    except Exception as e:
+        print(f"清理旧记录失败: {e}")
+    
+    return result
+
+
 def sync_all_data() -> Dict:
     """
     智能同步所有数据（增量更新）
@@ -3182,20 +3761,18 @@ def sync_all_data() -> Dict:
     """
     result = {"success": False, "new_races": 0, "new_records": 0, "error": None}
     
+    if not SCRAPER_AVAILABLE:
+        result["error"] = "爬虫模块不可用，请确保 hkjc_advanced_scraper_v2.py 在项目根目录"
+        return result
+    
     try:
         # 1. 获取当前数据库中最新的赛事日期
-        headers = get_supabase_headers(use_secret=True)
-        races_url = f"{SUPABASE_URL}/rest/v1/races?order=race_date.desc&limit=1"
-        races_response = requests.get(races_url, headers=headers)
-        
-        latest_date = None
-        if races_response.status_code == 200 and races_response.json():
-            latest = races_response.json()[0]
-            latest_date = latest.get('race_date')
+        latest_date_str = get_latest_race_date_from_db()
         
         # 2. 确定需要同步的起始日期
-        if latest_date:
-            start_date = datetime.strptime(latest_date, '%Y-%m-%d') + timedelta(days=1)
+        if latest_date_str:
+            latest_date = datetime.strptime(latest_date_str, '%Y-%m-%d')
+            start_date = latest_date + timedelta(days=1)
             # 如果最新日期是今天或未来，不需要同步
             if start_date > datetime.now():
                 result["success"] = True
@@ -3208,33 +3785,67 @@ def sync_all_data() -> Dict:
         
         end_date = datetime.now()
         
-        # 3. 调用爬虫抓取缺失的数据
-        st.info(f"正在同步 {start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')} 的数据...")
-        
-        # 这里调用你的爬虫函数（需要根据实际情况调整）
-        # 注意：这需要你有一个函数来抓取指定日期范围的数据并返回记录数
-        # 简化版：直接调用 update_all_data_for_date 逐日同步
-        
+        # 3. 遍历日期范围，抓取缺失的数据
         total_new_races = 0
         total_new_records = 0
         
         current = start_date
+        venues = ['ST', 'HV']
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # 计算总天数
+        total_days = (end_date - start_date).days + 1
+        days_processed = 0
+        
         while current <= end_date:
+            days_processed += 1
+            progress_bar.progress(days_processed / total_days)
+            
             if current.weekday() in [5, 6]:  # 周六或周日
                 date_str = current.strftime("%Y/%m/%d")
-                # 尝试同步该日期的数据
-                race_info, records = parse_race_result(date_str, "ST", 1)  # 需要根据实际情况
-                # 这里简化处理，实际需要遍历场次
+                status_text.text(f"正在同步 {current.strftime('%Y-%m-%d')}...")
+                
+                for venue in venues:
+                    for race_no in range(1, 13):
+                        try:
+                            race_info, results = parse_race_result(date_str, venue, race_no)
+                            
+                            if results:
+                                # 保存每条记录
+                                for record in results:
+                                    # 添加赛事信息
+                                    record['race_class'] = race_info.get('race_class', '')
+                                    record['distance'] = race_info.get('distance', 0)
+                                    record['going'] = race_info.get('going', '')
+                                    record['sectional_times'] = json.dumps(race_info.get('sectional_times', []))
+                                    
+                                    success = save_race_result_to_db(record)
+                                    if success:
+                                        total_new_records += 1
+                                
+                                total_new_races += 1
+                        except Exception as e:
+                            print(f"同步失败 {date_str} {venue} 第{race_no}场: {e}")
+                            continue
+                    
+                    time.sleep(1)  # 避免请求过快
+            
             current += timedelta(days=1)
+        
+        progress_bar.empty()
+        status_text.empty()
         
         result["success"] = True
         result["new_races"] = total_new_races
         result["new_records"] = total_new_records
         
         # 4. 清理超过 9000 行的旧数据
-        cleanup_result = cleanup_old_records(keep_count=9000)
-        if cleanup_result.get("deleted", 0) > 0:
-            st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
+        if total_new_records > 0:
+            cleanup_result = cleanup_old_records(keep_count=9000)
+            if cleanup_result.get("deleted", 0) > 0:
+                st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
         
         return result
         
