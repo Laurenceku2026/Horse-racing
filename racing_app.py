@@ -1195,6 +1195,34 @@ def render_user_management():
     st.dataframe(df_users, use_container_width=True, hide_index=True)
     st.caption(f"共 {len(users)} 位用户")
 #----------------------------
+def admin_sign_out():
+    """管理员退出"""
+    prev_user_id = st.session_state.get("admin_previous_user_id")
+    prev_user_email = st.session_state.get("admin_previous_user_email")
+    prev_access_token = st.session_state.get("admin_previous_access_token")
+    prev_refresh_token = st.session_state.get("admin_previous_refresh_token")
+    
+    if prev_user_id and prev_user_email:
+        st.session_state.authenticated = True
+        st.session_state.user_id = prev_user_id
+        st.session_state.user_email = prev_user_email
+        st.session_state.access_token = prev_access_token
+        st.session_state.refresh_token = prev_refresh_token
+        st.session_state.token_expiry = time.time() + 3600
+    else:
+        st.session_state.authenticated = False
+        st.session_state.user_id = None
+        st.session_state.user_email = None
+        st.session_state.access_token = None
+        st.session_state.refresh_token = None
+        st.session_state.token_expiry = 0
+    
+    st.session_state.admin_mode = False
+    st.session_state.admin_previous_user_id = None
+    st.session_state.admin_previous_user_email = None
+    st.session_state.admin_previous_access_token = None
+    st.session_state.admin_previous_refresh_token = None
+    st.rerun()        
 # ==================== 侧边栏 ====================
 def render_sidebar():
     """渲染侧边栏"""
