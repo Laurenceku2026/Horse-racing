@@ -331,7 +331,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                     "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
                 }
                 headers_secret = get_supabase_headers(use_secret=True)
-                insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+                insert_url = f"{SUPABASE_URL}/rest/v1/user_settings"
                 insert_response = requests.post(insert_url, headers=headers_secret, json=settings_data)
                 
                 if insert_response.status_code in [200, 201]:
@@ -356,7 +356,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                         if user.get("email") == email:
                             user_id = user.get("id")
                             # 检查是否已有 racing.user_settings 记录
-                            check_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings?user_id=eq.{user_id}"
+                            check_url = f"{SUPABASE_URL}/rest/v1/user_settings?user_id=eq.{user_id}"
                             check_response = requests.get(check_url, headers=admin_headers)
                             
                             if check_response.status_code == 200 and not check_response.json():
@@ -372,7 +372,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                                     "temperature": DEFAULT_WEIGHTS["temperature"],
                                     "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
                                 }
-                                insert_url = f"{SUPABASE_URL}/rest/v1/racing/user_settings"
+                                insert_url = f"{SUPABASE_URL}/rest/v1/user_settings"
                                 requests.post(insert_url, headers=admin_headers, json=settings_data)
                             
                             return True, "該郵箱已在系統中，請直接登入", user_id
@@ -1113,7 +1113,7 @@ def get_all_horses_base_score(limit: int = 50) -> pd.DataFrame:
         headers = get_supabase_headers(use_secret=True)
         
         # 获取所有马匹
-        horses_url = f"{SUPABASE_URL}/rest/v1/racing/horses"
+        horses_url = f"{SUPABASE_URL}/rest/v1/horses"
         horses_response = requests.get(horses_url, headers=headers)
         
         if horses_response.status_code != 200:
@@ -1122,7 +1122,7 @@ def get_all_horses_base_score(limit: int = 50) -> pd.DataFrame:
         horses = horses_response.json()
         
         # 获取所有历史往绩
-        perf_url = f"{SUPABASE_URL}/rest/v1/racing/past_performances"
+        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances"
         perf_response = requests.get(perf_url, headers=headers)
         
         past_performances = {}
@@ -1244,22 +1244,22 @@ def render_home():
         headers = get_supabase_headers(use_secret=True)
         
         # 马匹数量
-        horses_url = f"{SUPABASE_URL}/rest/v1/racing/horses"
+        horses_url = f"{SUPABASE_URL}/rest/v1/horses"
         horses_response = requests.get(horses_url, headers=headers)
         horse_count = len(horses_response.json()) if horses_response.status_code == 200 else 0
         
         # 赛事数量
-        races_url = f"{SUPABASE_URL}/rest/v1/racing/races"
+        races_url = f"{SUPABASE_URL}/rest/v1/races"
         races_response = requests.get(races_url, headers=headers)
         race_count = len(races_response.json()) if races_response.status_code == 200 else 0
         
         # 骑师数量
-        jockeys_url = f"{SUPABASE_URL}/rest/v1/racing/jockeys"
+        jockeys_url = f"{SUPABASE_URL}/rest/v1/jockeys"
         jockeys_response = requests.get(jockeys_url, headers=headers)
         jockey_count = len(jockeys_response.json()) if jockeys_response.status_code == 200 else 0
         
         # 练马师数量
-        trainers_url = f"{SUPABASE_URL}/rest/v1/racing/trainers"
+        trainers_url = f"{SUPABASE_URL}/rest/v1/trainers"
         trainers_response = requests.get(trainers_url, headers=headers)
         trainer_count = len(trainers_response.json()) if trainers_response.status_code == 200 else 0
         
@@ -1371,7 +1371,7 @@ def get_races_by_date(race_date: str) -> List[Dict]:
     """获取指定日期的所有赛事"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=eq.{race_date}&order=race_no.asc"
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race_date}&order=race_no.asc"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -1387,7 +1387,7 @@ def get_upcoming_races() -> List[Dict]:
         today = datetime.now().strftime("%Y-%m-%d")
         next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=gte.{today}&race_date=lte.{next_week}&order=race_date.asc,race_no.asc"
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_week}&order=race_date.asc,race_no.asc"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -1401,7 +1401,7 @@ def get_race_runners_with_details(race_id: int) -> List[Dict]:
     """获取赛事出赛马匹详情（含评分）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?race_id=eq.{race_id}"
+        url = f"{SUPABASE_URL}/rest/v1/race_runners?race_id=eq.{race_id}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             runners = response.json()
@@ -1410,7 +1410,7 @@ def get_race_runners_with_details(race_id: int) -> List[Dict]:
             for runner in runners:
                 horse_id = runner.get('horse_id')
                 if horse_id:
-                    horse_url = f"{SUPABASE_URL}/rest/v1/racing/horses?horse_id=eq.{horse_id}"
+                    horse_url = f"{SUPABASE_URL}/rest/v1/horses?horse_id=eq.{horse_id}"
                     horse_resp = requests.get(horse_url, headers=headers)
                     if horse_resp.status_code == 200 and horse_resp.json():
                         horse = horse_resp.json()[0]
@@ -1872,7 +1872,7 @@ def get_historical_races(limit: int = 100) -> List[Dict]:
     """获取历史赛事列表（用于回测）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/races?race_status=eq.RESULT&order=race_date.desc,race_no.asc&limit={limit}"
+        url = f"{SUPABASE_URL}/rest/v1/races?race_status=eq.RESULT&order=race_date.desc,race_no.asc&limit={limit}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -1891,7 +1891,7 @@ def get_race_without_future_data(race_date: str, race_id: int) -> List[Dict]:
         headers = get_supabase_headers(use_secret=True)
         
         # 获取赛事信息
-        race_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_id=eq.{race_id}"
+        race_url = f"{SUPABASE_URL}/rest/v1/races?race_id=eq.{race_id}"
         race_response = requests.get(race_url, headers=headers)
         
         if race_response.status_code != 200 or not race_response.json():
@@ -1900,7 +1900,7 @@ def get_race_without_future_data(race_date: str, race_id: int) -> List[Dict]:
         race = race_response.json()[0]
         
         # 获取出赛马匹
-        runners_url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?race_id=eq.{race_id}"
+        runners_url = f"{SUPABASE_URL}/rest/v1/race_runners?race_id=eq.{race_id}"
         runners_response = requests.get(runners_url, headers=headers)
         
         if runners_response.status_code != 200:
@@ -1912,7 +1912,7 @@ def get_race_without_future_data(race_date: str, race_id: int) -> List[Dict]:
         for runner in runners:
             horse_id = runner.get('horse_id')
             if horse_id:
-                perf_url = f"{SUPABASE_URL}/rest/v1/racing/past_performances?horse_id=eq.{horse_id}&race_date=lt.{race_date}&order=race_date.desc&limit=20"
+                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?horse_id=eq.{horse_id}&race_date=lt.{race_date}&order=race_date.desc&limit=20"
                 perf_response = requests.get(perf_url, headers=headers)
                 if perf_response.status_code == 200:
                     runner['past_performances'] = perf_response.json()
@@ -1939,7 +1939,7 @@ def run_backtest_on_race(race_id: int, race_date: str, user_weights: Dict) -> Di
         
         # 获取实际赛果
         headers = get_supabase_headers(use_secret=True)
-        race_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_id=eq.{race_id}"
+        race_url = f"{SUPABASE_URL}/rest/v1/races?race_id=eq.{race_id}"
         race_response = requests.get(race_url, headers=headers)
         actual_race = race_response.json()[0] if race_response.status_code == 200 else None
         
@@ -2030,7 +2030,7 @@ def run_full_day_backtest(race_date: str, user_weights: Dict) -> Dict:
     try:
         # 获取该日期的所有赛事
         headers = get_supabase_headers(use_secret=True)
-        races_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_date=eq.{race_date}&race_status=eq.RESULT&order=race_no.asc"
+        races_url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race_date}&race_status=eq.RESULT&order=race_no.asc"
         races_response = requests.get(races_url, headers=headers)
         
         if races_response.status_code != 200:
@@ -2547,7 +2547,7 @@ def calculate_jockey_score(jockey_id: int, recent_n: int = 20) -> float:
     """计算骑师评分"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/jockeys?jockey_id=eq.{jockey_id}"
+        url = f"{SUPABASE_URL}/rest/v1/jockeys?jockey_id=eq.{jockey_id}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200 and response.json():
             data = response.json()[0]
@@ -2563,7 +2563,7 @@ def calculate_trainer_score(trainer_id: int, venue: str) -> float:
     """计算练马师评分"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/trainers?trainer_id=eq.{trainer_id}"
+        url = f"{SUPABASE_URL}/rest/v1/trainers?trainer_id=eq.{trainer_id}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200 and response.json():
             data = response.json()[0]
@@ -2674,7 +2674,7 @@ def get_horse_past_performances(horse_id: int, limit: int = 10) -> List[Dict]:
     """从数据库获取马匹的历史往绩"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/past_performances?horse_id=eq.{horse_id}&order=race_date.desc&limit={limit}"
+        url = f"{SUPABASE_URL}/rest/v1/past_performances?horse_id=eq.{horse_id}&order=race_date.desc&limit={limit}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -2787,7 +2787,7 @@ def save_race_runners_with_scores(race_id: int, runners_with_scores: List[Dict])
                 "overall_score": runner.get("combined_score"),
                 "win_probability": runner.get("win_probability", 0) / 100
             }
-            url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?runner_id=eq.{runner.get('runner_id')}"
+            url = f"{SUPABASE_URL}/rest/v1/race_runners?runner_id=eq.{runner.get('runner_id')}"
             response = requests.patch(url, headers=headers, json=data)
             if response.status_code not in [200, 204]:
                 print(f"保存评分失败: {response.text}")
@@ -2802,7 +2802,7 @@ def get_race_runners_from_db(race_id: int) -> List[Dict]:
     """从数据库获取一场赛事的出赛马匹列表"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?race_id=eq.{race_id}"
+        url = f"{SUPABASE_URL}/rest/v1/race_runners?race_id=eq.{race_id}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -2821,12 +2821,12 @@ def update_race_result(race_id: int, results: List[Dict]) -> bool:
                 "finishing_position": result.get("finishing_position"),
                 "winning_distance": result.get("winning_distance")
             }
-            url = f"{SUPABASE_URL}/rest/v1/racing/race_runners?runner_id=eq.{result.get('runner_id')}"
+            url = f"{SUPABASE_URL}/rest/v1/race_runners?runner_id=eq.{result.get('runner_id')}"
             response = requests.patch(url, headers=headers, json=data)
             if response.status_code not in [200, 204]:
                 print(f"更新赛果失败: {response.text}")
                 return False
-        race_url = f"{SUPABASE_URL}/rest/v1/racing/races?race_id=eq.{race_id}"
+        race_url = f"{SUPABASE_URL}/rest/v1/races?race_id=eq.{race_id}"
         race_response = requests.patch(race_url, headers=headers, json={"race_status": "RESULT"})
         return race_response.status_code in [200, 204]
     except Exception as e:
