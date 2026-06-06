@@ -1346,69 +1346,44 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
 
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
-    """渲染马匹评分表格"""
+    """渲染马匹评分表格（分页）"""
     if df.empty:
         st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
         return
     
-    # 生成 HTML 表格
-    html = """
-    <style>
-        .horse-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-        }
-        .horse-table th {
-            background-color: #f0f2f6;
-            padding: 8px;
-            text-align: center;
-            border: 1px solid #ddd;
-        }
-        .horse-table td {
-            padding: 6px;
-            text-align: center;
-            border: 1px solid #ddd;
-        }
-        .score-high { color: #ff4b4b; font-weight: bold; }
-        .score-mid-high { color: #ff6b6b; font-weight: bold; }
-        .score-mid { color: #ffaa00; }
-        .score-low { color: #888888; }
-    </style>
-    <table class="horse-table">
-        <thead>
-            <tr><th>馬名</th><th>勝率</th><th>入Q率</th><th>入T率</th><th>基礎評分</th><th>平均體重</th></tr>
-        </thead>
-        <tbody>
-    """
+    # 分页参数
+    page_size = 50
+    total_pages = (len(df) + page_size - 1) // page_size
     
-    for _, row in df.iterrows():
-        score = row.get("基礎評分", 0)
-        if score >= 85:
-            score_class = "score-high"
-        elif score >= 70:
-            score_class = "score-mid-high"
-        elif score >= 55:
-            score_class = "score-mid"
-        else:
-            score_class = "score-low"
-        
-        html += f"""
-        <tr>
-            <td>{row.get('馬名', '-')}</td>
-            <td>{row.get('勝率', 0):.1f}%</td>
-            <td>{row.get('入Q率', 0):.1f}%</td>
-            <td>{row.get('入T率', 0):.1f}%</td>
-            <td class="{score_class}">{score:.0f}</td>
-            <td>{int(row.get('平均體重', 0)) if row.get('平均體重', 0) > 0 else '-'}</td>
-        </tr>
-        """
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        page = st.number_input("頁碼", min_value=1, max_value=total_pages, value=1, step=1)
     
-    html += "</tbody></table>"
+    # 获取当前页数据
+    start_idx = (page - 1) * page_size
+    end_idx = min(start_idx + page_size, len(df))
+    display_df = df.iloc[start_idx:end_idx].copy()
     
-    # 使用 components.html 强制渲染
-    from streamlit.components.v1 import html as st_html
-    st_html(html, height=400, scrolling=True)
+    # 格式化百分比
+    display_df["勝率"] = display_df["勝率"].apply(lambda x: f"{x:.1f}%")
+    display_df["入Q率"] = display_df["入Q率"].apply(lambda x: f"{x:.1f}%")
+    display_df["入T率"] = display_df["入T率"].apply(lambda x: f"{x:.1f}%")
+    
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "馬名": st.column_config.TextColumn("馬名", width="small"),
+            "勝率": st.column_config.TextColumn("勝率", width="small"),
+            "入Q率": st.column_config.TextColumn("入Q率", width="small"),
+            "入T率": st.column_config.TextColumn("入T率", width="small"),
+            "基礎評分": st.column_config.NumberColumn("基礎評分", width="small", format="%.0f"),
+            "平均體重": st.column_config.NumberColumn("平均體重", width="small", format="%.0f")
+        }
+    )
+    
+    st.caption(f"📊 第 {page} / {total_pages} 頁，共 {len(df)} 匹馬")
 
 
 # ==================== 主页函数（替换原有的render_home） ====================
