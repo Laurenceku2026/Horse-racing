@@ -1318,17 +1318,18 @@ def render_top_buttons():
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
 def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
-    """获取所有马匹的基础评分（从视图查询）"""
+    """获取所有马匹的基础评分（通过 RPC 调用）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/horse_ratings?limit={limit}"
-        response = requests.get(url, headers=headers)
+        url = f"{SUPABASE_URL}/rest/v1/rpc/get_horse_ratings"
+        payload = {"limit_count": limit}
+        response = requests.post(url, headers=headers, json=payload)
         
         if response.status_code == 200:
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
-                # 重命名列以匹配显示
+                # 重命名列
                 df = df.rename(columns={
                     "馬名": "馬名",
                     "勝率": "勝率",
@@ -1336,13 +1337,19 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
                     "入T率": "入T率",
                     "基礎評分": "基礎評分"
                 })
-                # 添加年龄和性别列（视图没有，暂时设为空）
+                # 添加年龄和性别列（RPC 没有，暂时设为空）
                 df["年齡"] = "-"
                 df["性別"] = "-"
                 return df[["馬名", "年齡", "性別", "勝率", "入Q率", "入T率", "基礎評分"]]
-        return pd.DataFrame()
+            else:
+                st.info("暂无马匹评分数据")
+                return pd.DataFrame()
+        else:
+            st.error(f"RPC 调用失败: {response.status_code}")
+            return pd.DataFrame()
+            
     except Exception as e:
-        print(f"获取马匹评分失败: {e}")
+        st.error(f"获取马匹评分失败: {e}")
         return pd.DataFrame()
 
 #------------
