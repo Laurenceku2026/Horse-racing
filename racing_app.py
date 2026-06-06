@@ -1318,85 +1318,29 @@ def render_top_buttons():
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
 def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
-    """
-    获取所有马匹的基础评分（基于近10场历史数据，与场次无关）
-    """
+    """获取所有马匹的基础评分（从视图查询）"""
     try:
         headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/horse_ratings?limit={limit}"
+        response = requests.get(url, headers=headers)
         
-        # 获取所有马匹
-        horses_url = f"{SUPABASE_URL}/rest/v1/horses"
-        horses_response = requests.get(horses_url, headers=headers)
-        
-        if horses_response.status_code != 200:
-            return pd.DataFrame()
-        
-        horses = horses_response.json()
-        
-        # 获取所有历史往绩（按马名分组）
-        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?order=race_date.desc&limit=10000"
-        perf_response = requests.get(perf_url, headers=headers)
-        
-        # 按马名分组
-        from collections import defaultdict
-        past_performances_by_name = defaultdict(list)
-        
-        if perf_response.status_code == 200:
-            for p in perf_response.json():
-                horse_name = p.get('horse_name')
-                if horse_name:
-                    past_performances_by_name[horse_name].append(p)
-        
-        results = []
-        for horse in horses[:limit]:
-            name_zh = horse.get('name_zh', '')
-            name_en = horse.get('name_en', '')
-            age = horse.get('age', 0)
-            sex = horse.get('sex', '')
-            
-            # 使用马名匹配
-            horse_name = name_zh if name_zh else name_en
-            performances = past_performances_by_name.get(horse_name, [])
-            
-            if not performances:
-                results.append({
-                    "馬名": horse_name,
-                    "年齡": age,
-                    "性別": sex,
-                    "勝率": "0%",
-                    "入Q率": "0%",
-                    "入T率": "0%",
-                    "基礎評分": 0
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                df = pd.DataFrame(data)
+                # 重命名列以匹配显示
+                df = df.rename(columns={
+                    "馬名": "馬名",
+                    "勝率": "勝率",
+                    "入Q率": "入Q率",
+                    "入T率": "入T率",
+                    "基礎評分": "基礎評分"
                 })
-                continue
-            
-            # 计算各项指标
-            total = len(performances)
-            wins = sum(1 for p in performances if p.get('position') == 1)
-            places = sum(1 for p in performances if p.get('position') in [1, 2])
-            shows = sum(1 for p in performances if p.get('position') in [1, 2, 3])
-            
-            win_rate = wins / total * 100
-            place_rate = places / total * 100
-            show_rate = shows / total * 100
-            
-            # 基础评分（胜率50% + 入Q率30% + 入T率20%）
-            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
-            
-            results.append({
-                "馬名": horse_name,
-                "年齡": age,
-                "性別": sex,
-                "勝率": f"{win_rate:.1f}%",
-                "入Q率": f"{place_rate:.1f}%",
-                "入T率": f"{show_rate:.1f}%",
-                "基礎評分": round(basic_score, 2)
-            })
-        
-        # 按基础评分排序
-        results.sort(key=lambda x: x["基礎評分"], reverse=True)
-        return pd.DataFrame(results)
-        
+                # 添加年龄和性别列（视图没有，暂时设为空）
+                df["年齡"] = "-"
+                df["性別"] = "-"
+                return df[["馬名", "年齡", "性別", "勝率", "入Q率", "入T率", "基礎評分"]]
+        return pd.DataFrame()
     except Exception as e:
         print(f"获取马匹评分失败: {e}")
         return pd.DataFrame()
