@@ -1329,17 +1329,17 @@ def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
             data = response.json()
             if data:
                 df = pd.DataFrame(data)
-                # 重命名列
+                # 直接使用 RPC 返回的列名
+                df["年齡"] = "-"
+                df["性別"] = "-"
+                # 重命名显示列
                 df = df.rename(columns={
                     "馬名": "馬名",
                     "勝率": "勝率",
-                    "入Q率": "入Q率",
-                    "入T率": "入T率",
+                    "入q率": "入Q率",
+                    "入t率": "入T率",
                     "基礎評分": "基礎評分"
                 })
-                # 添加年龄和性别列（RPC 没有，暂时设为空）
-                df["年齡"] = "-"
-                df["性別"] = "-"
                 return df[["馬名", "年齡", "性別", "勝率", "入Q率", "入T率", "基礎評分"]]
             else:
                 st.info("暂无马匹评分数据")
