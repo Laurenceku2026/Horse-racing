@@ -1284,23 +1284,47 @@ def render_home():
             st.metric("🤠 騎師總數", "0")
         with col4:
             st.metric("🏋️ 練馬師總數", "0")
+    #-----------
+    # ==================== 数据更新区域 ====================
+    st.markdown("### 🔄 數據更新")
     
-    # 手动更新按钮
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        update_btn = st.button("🔄 手動更新所有數據", type="primary", use_container_width=True)
-    
-    if update_btn:
-        if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
-        else:
-            with st.spinner("正在從HKJC API獲取最新數據..."):
-                today = datetime.now().strftime("%Y-%m-%d")
-                result = update_all_data_for_date(today)
-                if result["total"] > 0:
-                    st.success(f"✅ 更新完成！成功 {result['success']} 場，失敗 {result['failed']} 場")
-                else:
-                    st.info("今日暫無賽事，無需更新")
+        # 日期选择器
+        sync_date = st.date_input(
+            "選擇同步日期", 
+            value=datetime.now().date(),
+            key="sync_date",
+            help="選擇要同步的賽事日期"
+        )
+        
+        col_sync, col_future = st.columns(2)
+        with col_sync:
+            sync_btn = st.button("📅 同步所選日期", type="primary", use_container_width=True)
+        with col_future:
+            future_btn = st.button("🚀 同步未來2週賽事", use_container_width=True)
+        
+        if sync_btn:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+            else:
+                with st.spinner(f"正在同步 {sync_date} 的賽事..."):
+                    result = update_all_data_for_date(sync_date.strftime("%Y-%m-%d"))
+                    if result["total"] > 0:
+                        st.success(f"✅ 同步完成！成功 {result['success']} 場，失敗 {result['failed']} 場")
+                    else:
+                        st.info(f"{sync_date} 暫無賽事")
+        
+        if future_btn:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+            else:
+                with st.spinner("正在同步未來2週賽事（可能需要幾分鐘）..."):
+                    result = sync_future_races(days=14)
+                    if result["total"] > 0:
+                        st.success(f"✅ 同步完成！共 {result['total']} 場賽事，成功 {result['success']} 場，失敗 {result['failed']} 場")
+                    else:
+                        st.info("未來2週暫無賽事")
     
     st.markdown("---")
     
@@ -1382,13 +1406,12 @@ def get_races_by_date(race_date: str) -> List[Dict]:
 
 #------------
 def get_upcoming_races() -> List[Dict]:
-    """获取未来7天的赛事"""
+    """获取未来14天的赛事（从数据库读取）"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
-        next_week = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        next_two_weeks = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
         headers = get_supabase_headers(use_secret=True)
-        # 注意：表名是 races（没有 racing/ 前缀）
-        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_week}&order=race_date.asc,race_no.asc"
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_two_weeks}&order=race_date.asc,race_no.asc"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -2922,8 +2945,23 @@ def update_all_data_for_date(race_date: str) -> Dict:
     except Exception as e:
         st.error(f"更新数据失败: {e}")
         return {"success": 0, "failed": result.get("total", 0), "total": result.get("total", 0), "error": str(e)}
-
-
+#---------------
+def sync_future_races(days: int = 14) -> Dict:
+    """同步未来 N 天的所有赛事"""
+    results = {"success": 0, "failed": 0, "total": 0}
+    
+    for i in range(days):
+        sync_date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
+        st.info(f"正在同步 {sync_date}...")
+        result = update_all_data_for_date(sync_date)
+        results["success"] += result.get("success", 0)
+        results["failed"] += result.get("failed", 0)
+        results["total"] += result.get("total", 0)
+        
+        # 避免请求过快，暂停1秒
+        time.sleep(1)
+    
+    return results
 # ==================== 第2次代码结束 ====================
 # 注意：没有 if __name__ == "__main__"，因为主入口在第1次代码中
 
