@@ -2854,7 +2854,7 @@ def fetch_race_data_from_api(race_date: str, venue: str, race_no: int) -> Option
 
 #----------
 def update_all_data_for_date(race_date: str) -> Dict:
-    """更新指定日期的所有赛事数据 - 先获取赛事列表再同步"""
+    """更新指定日期的所有赛事数据 - 直接从 API 获取并同步"""
     result = {"success": 0, "failed": 0, "total": 0}
     
     try:
@@ -2863,14 +2863,22 @@ def update_all_data_for_date(race_date: str) -> Dict:
         if not API_BASE_URL:
             return {"success": 0, "failed": 0, "total": 0, "error": "API地址未配置"}
         
-        # ========== 1. 从 API 获取该日期的赛事列表 ==========
+        # ========== 1. 直接从 API 获取该日期的赛事列表 ==========
+        # 注意：getActiveMeetings 获取的是未来赛马日
+        # 如果 race_date 是今天或未来，应该能获取到
         meetings_url = f"{API_BASE_URL}/meetings"
+        st.info(f"正在调用 API: {meetings_url}")
         meetings_response = requests.get(meetings_url, timeout=30)
         
-        if meetings_response.status_code != 200:
-            return {"success": 0, "failed": 0, "total": 0, "error": "无法获取赛马日列表"}
+        st.info(f"API 响应状态码: {meetings_response.status_code}")
         
-        meetings = meetings_response.json().get("data", [])
+        if meetings_response.status_code != 200:
+            return {"success": 0, "failed": 0, "total": 0, "error": f"API返回错误: {meetings_response.status_code}"}
+        
+        meetings_data = meetings_response.json()
+        st.info(f"API 返回数据: {meetings_data}")
+        
+        meetings = meetings_data.get("data", [])
         
         # 找到目标日期的赛事
         target_meeting = None
@@ -2880,7 +2888,7 @@ def update_all_data_for_date(race_date: str) -> Dict:
                 break
         
         if not target_meeting:
-            return {"success": 0, "failed": 0, "total": 0, "error": f"未找到 {race_date} 的赛事"}
+            return {"success": 0, "failed": 0, "total": 0, "error": f"未找到 {race_date} 的赛事，API返回的赛马日: {[m.get('date') for m in meetings]}"}
         
         total_races = target_meeting.get("raceCount", 0)
         result["total"] = total_races
@@ -2897,18 +2905,17 @@ def update_all_data_for_date(race_date: str) -> Dict:
                 
                 if sync_response.status_code == 200 and sync_response.json().get("success"):
                     result["success"] += 1
-                    print(f"✅ 同步成功: 第{race_no}场")
                 else:
                     result["failed"] += 1
-                    print(f"❌ 同步失败: 第{race_no}场")
+                    st.warning(f"第{race_no}场同步失败: {sync_response.text}")
             except Exception as e:
-                print(f"❌ 同步异常: 第{race_no}场 - {e}")
                 result["failed"] += 1
+                st.error(f"第{race_no}场异常: {e}")
         
         return result
         
     except Exception as e:
-        print(f"更新数据失败: {e}")
+        st.error(f"更新数据失败: {e}")
         return {"success": 0, "failed": result.get("total", 0), "total": result.get("total", 0), "error": str(e)}
 
 
