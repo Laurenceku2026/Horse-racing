@@ -58,7 +58,7 @@ app.post('/api/sync/race', async (req, res) => {
             console.log('获取赔率失败:', oddsErr.message);
         }
         
-        // ========== 3. 保存到 races 表（public schema） ==========
+        // ========== 3. 保存到 races 表 ==========
         const { error: raceError } = await supabase
             .from('races')
             .upsert({
@@ -84,53 +84,83 @@ app.post('/api/sync/race', async (req, res) => {
         const runners = raceDetails.runners || [];
         
         for (const runner of runners) {
-            // 4.1 保存马匹
-            if (runner.horseName) {
-                await supabase
+            // 🔧 调试：打印 runner 的原始结构（只打印第一匹马）
+            if (runners.indexOf(runner) === 0) {
+                console.log('runner 数据结构示例:', JSON.stringify(runner, null, 2));
+            }
+            
+            // 4.1 获取马名（尝试多个可能的字段名）
+            const horseName = runner.horseName || runner.name || runner.horse_name || 'Unknown';
+            
+            // 4.2 获取骑师名（可能是一个对象，需要提取 name_en）
+            let jockeyName = null;
+            let jockeyNameZh = null;
+            if (runner.jockey) {
+                if (typeof runner.jockey === 'object') {
+                    jockeyName = runner.jockey.name_en || runner.jockey.name || runner.jockey.name_ch;
+                    jockeyNameZh = runner.jockey.name_ch || null;
+                } else {
+                    jockeyName = runner.jockey;
+                }
+            }
+            
+            // 4.3 保存马匹
+            if (horseName && horseName !== 'Unknown') {
+                const { error: horseError } = await supabase
                     .from('horses')
                     .upsert({
-                        name_en: runner.horseName,
-                        name_zh: runner.horseNameZh || '',
+                        name_en: horseName,
+                        name_zh: runner.horseNameZh || null,
                         age: runner.age || null,
                         sex: runner.sex || null
                     }, { onConflict: 'name_en' });
+                
+                if (horseError) {
+                    console.error(`保存马匹失败 ${horseName}:`, horseError);
+                }
             }
             
-            // 4.2 保存骑师
-            if (runner.jockey) {
-                await supabase
+            // 4.4 保存骑师
+            if (jockeyName) {
+                const { error: jockeyError } = await supabase
                     .from('jockeys')
                     .upsert({
-                        name_en: runner.jockey,
-                        name_zh: runner.jockeyZh || ''
+                        name_en: jockeyName,
+                        name_zh: jockeyNameZh || null
                     }, { onConflict: 'name_en' });
+                
+                if (jockeyError) {
+                    console.error(`保存骑师失败 ${jockeyName}:`, jockeyError);
+                }
             }
             
-            // 4.3 获取赔率
+            // 4.5 获取赔率
             let winOdds = null;
             if (oddsData && oddsData.WIN) {
                 const horseOdds = oddsData.WIN.find(o => o.horseNo === runner.horseNo);
                 if (horseOdds) winOdds = horseOdds.odds;
             }
             
-            // 4.4 保存出赛记录
+            // 4.6 保存出赛记录
             const { error: runnerError } = await supabase
                 .from('race_runners')
                 .upsert({
                     race_date: date,
                     race_no: parseInt(raceNo),
                     venue: venue,
-                    horse_name: runner.horseName,
-                    horse_no: runner.horseNo,
+                    horse_name: horseName,
+                    horse_no: runner.horseNo || runner.number,
                     draw: runner.draw,
                     actual_weight: runner.actualWeight,
                     rating: runner.rating,
-                    jockey_name: runner.jockey,
+                    jockey_name: jockeyName,
                     odds_win: winOdds
                 }, { onConflict: 'race_date,venue,race_no,horse_no' });
             
             if (runnerError) {
                 console.error('保存出赛记录失败:', runnerError);
+            } else {
+                console.log(`保存出赛记录成功: ${horseName}`);
             }
         }
         
