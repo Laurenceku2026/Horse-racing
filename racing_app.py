@@ -1966,8 +1966,8 @@ def get_historical_draws_for_training(limit: int = 300) -> List[Dict]:
     except Exception as e:
         print(f"获取训练数据失败: {e}")
         return []
+#--------------
 # ==================== 智能投注主页面 ====================
-
 def render_smart_betting(show_title: bool = True):
     """智能投注页面：单场分析 + 全天优化"""
     if show_title:
@@ -2239,7 +2239,33 @@ def render_smart_betting(show_title: bool = True):
                     if qin_odds > 0 and joint_prob * qin_odds > 1:
                         suggested_qin = bankroll * 0.05 * risk_multiplier
                         st.markdown(f"**{horse1.get('horse_name_zh', '')} + {horse2.get('horse_name_zh', '')}** | 建議注額: HK${suggested_qin:.0f}")
+    #----------------
+    # ==================== DeepSeek AI 分析 ====================
+    st.markdown("### 🤖 AI 智能分析")
     
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        analyze_with_deepseek = st.button("🔍 使用 DeepSeek 分析本场赛事", use_container_width=True, type="secondary")
+    
+    if analyze_with_deepseek:
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("DeepSeek 正在分析..."):
+                # 构建赛事信息
+                race_info = {
+                    "venue": selected_race.get('venue', 'ST'),
+                    "distance": selected_race.get('distance', 0),
+                    "race_class": selected_race.get('race_class', ''),
+                    "going": selected_race.get('going', '')
+                }
+                # 获取前5匹马的详细信息用于分析
+                top_runners = sorted_runners[:5] if sorted_runners else []
+                analysis_text = analyze_race_with_deepseek(race_info, top_runners)
+                
+                st.markdown("#### 📝 DeepSeek 分析结果")
+                st.info(analysis_text)
+    #------------
     st.markdown("---")
     
     # ==================== 全天优化投注 ====================
@@ -3501,10 +3527,11 @@ def calculate_horse_score(
     actual_weight: int,
     jockey_id: int,
     trainer_id: int,
-    odds_win,
-    user_weights: Dict
+    odds_win: float,
+    user_weights: Dict,
+    incident: str = ""  # 新增参数
 ) -> Dict:
-    """计算马匹的综合评分"""
+    """计算马匹的综合评分（含 DeepSeek 事件分析）"""
     past_performances = get_horse_past_performances(horse_id)
     basic_score = calculate_basic_score(horse_id, distance, past_performances)
     weight_comfort_range = get_horse_weight_comfort_range(horse_id)
@@ -3513,20 +3540,192 @@ def calculate_horse_score(
         jockey_id, trainer_id, weight_comfort_range, past_performances
     )
     odds_score = calculate_odds_score(odds_win)
+    
+    # DeepSeek 事件影响分析
+    incident_impact = 0
+    if incident and incident != '无特别报告。':
+        incident_result = analyze_incident_with_deepseek(incident)
+        incident_impact = incident_result.get("score", 0)
+    
+    # 综合评分 = 基础评分 + 场次评分 + 赔率评分 + 事件影响
     combined_score = (
         basic_score * user_weights.get("basic", 0.30) +
         race_score * user_weights.get("race", 0.40) +
         odds_score * user_weights.get("odds", 0.30)
-    )
+    ) + incident_impact
+    
+    # 确保评分在 0-100 之间
+    combined_score = max(0, min(100, combined_score))
+    
     return {
         "horse_id": horse_id,
         "basic_score": round(basic_score, 2),
         "race_score": round(race_score, 2),
         "odds_score": round(odds_score, 2),
         "combined_score": round(combined_score, 2),
+        "incident_impact": incident_impact,
         "weight_comfort_range": weight_comfort_range
     }
+#----------
+# ==================== DeepSeek API 集成 ====================
+try:
+    from openai import OpenAI
+    DEEPSEEK_AVAILABLE = True
+except ImportError:
+    DEEPSEEK_AVAILABLE = False
+    print("OpenAI 库未安装，DeepSeek 功能不可用")
 
+
+def get_deepseek_client():
+    """获取 DeepSeek 客户端"""
+    if not DEEPSEEK_AVAILABLE:
+        return None
+    
+    api_key = st.secrets.get("DEEPSEEK_API_KEY", "")
+    base_url = st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    
+    if not api_key:
+        print("DeepSeek API Key 未配置")
+        return None
+    
+    try:
+        return OpenAI(api_key=api_key, base_url=base_url)
+    except Exception as e:
+        print(f"创建 DeepSeek 客户端失败: {e}")
+        return None
+
+
+def analyze_incident_with_deepseek(incident_text: str) -> Dict:
+    """
+    使用 DeepSeek 分析竞赛事件报告
+    返回：影响分数、事件类型、建议
+    """
+    # 默认返回
+    default_result = {"score": 0, "type": "normal", "suggestion": ""}
+    
+    if not incident_text or incident_text == '无特别报告。' or incident_text == '無特別報告。':
+        return default_result
+    
+    client = get_deepseek_client()
+    if not client:
+        return default_result
+    
+    prompt = f"""
+    分析以下香港赛马竞赛事件报告，评估对马匹表现的影响。
+    
+    事件报告：{incident_text}
+    
+    请返回 JSON 格式：
+    {{
+        "impact_score": -20 到 20 之间的整数，
+            负分表示不利影响（如受阻、走外叠、出闸笨拙、健康问题），
+            正分表示有利影响（如顺利、节省脚程），
+            0表示中性或无影响，
+        "incident_type": "受阻/抢口/走外叠/出闸笨拙/健康问题/赛后抽检/正常/其他" 中的一个，
+        "suggestion": "简要建议（20字以内）"
+    }}
+    
+    只返回 JSON，不要有其他内容。
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model=st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1,
+            max_tokens=300
+        )
+        
+        result_text = response.choices[0].message.content
+        print(f"DeepSeek 响应: {result_text}")
+        
+        # 提取 JSON
+        import json
+        import re
+        json_match = re.search(r'\{[^{}]*\}', result_text)
+        if json_match:
+            result = json.loads(json_match.group())
+            return {
+                "score": result.get("impact_score", 0),
+                "type": result.get("incident_type", "其他"),
+                "suggestion": result.get("suggestion", "")
+            }
+    except Exception as e:
+        print(f"DeepSeek 分析失败: {e}")
+    
+    return default_result
+
+
+def analyze_race_with_deepseek(race_info: Dict, runners: List[Dict]) -> str:
+    """
+    使用 DeepSeek 分析整场赛事，生成投注建议
+    返回自然语言建议
+    """
+    client = get_deepseek_client()
+    if not client:
+        return "DeepSeek 未配置，无法生成分析建议。"
+    
+    # 构建提示词
+    runners_summary = []
+    for i, runner in enumerate(runners[:5]):  # 只取前5匹
+        runners_summary.append(
+            f"{i+1}. {runner.get('horse_name', '未知')} - "
+            f"胜率: {runner.get('win_probability', 0)*100:.1f}%, "
+            f"赔率: {runner.get('odds_win', 0):.1f}, "
+            f"档位: {runner.get('draw', '-')}"
+        )
+    
+    prompt = f"""
+    你是一位专业的香港赛马分析师。请分析以下赛事并给出投注建议。
+    
+    赛事信息：
+    - 场地：{race_info.get('venue', 'ST')}
+    - 路程：{race_info.get('distance', 0)}米
+    - 班次：{race_info.get('race_class', '未知')}
+    - 场地状况：{race_info.get('going', '未知')}
+    
+    主要马匹分析：
+    {chr(10).join(runners_summary)}
+    
+    请给出：
+    1. 赛事形势分析（50字以内）
+    2. 推荐投注策略（独赢/位置/连赢）
+    3. 信心马匹及理由
+    
+    请用中文回复，简洁明了。
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model=st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"DeepSeek 赛事分析失败: {e}")
+        return f"分析失败: {str(e)}"
+
+
+def batch_analyze_incidents(incidents: List[str]) -> List[Dict]:
+    """
+    批量分析多个事件报告
+    使用缓存避免重复调用 API
+    """
+    results = []
+    cache = {}  # 简单缓存
+    
+    for incident in incidents:
+        if incident in cache:
+            results.append(cache[incident])
+        else:
+            result = analyze_incident_with_deepseek(incident)
+            cache[incident] = result
+            results.append(result)
+    
+    return results
 #-----------------
 def calculate_all_horses_scores(
     race_id: int,
