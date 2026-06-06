@@ -2637,15 +2637,26 @@ def calculate_race_score(
 
 # ==================== 3. 赔率校准 ====================
 
-def normalize_odds(odds: float, max_odds: float = 99.0) -> float:
+def normalize_odds(odds, max_odds: float = 99.0) -> float:
     """将赔率归一化为0-100的分数"""
-    if odds <= 0 or odds > max_odds:
+    # 处理 None、空字符串、非数字等情况
+    if odds is None or odds == '' or odds == 'null':
         return 50.0
-    normalized = max(0, min(100, 100 * (1 - (odds - 1) / (max_odds - 1))))
+    
+    try:
+        odds_float = float(odds)
+    except (ValueError, TypeError):
+        return 50.0
+    
+    if odds_float <= 0 or odds_float > max_odds:
+        return 50.0
+    
+    # 归一化：赔率1.5映射到100，赔率99映射到0
+    normalized = max(0, min(100, 100 * (1 - (odds_float - 1) / (max_odds - 1))))
     return normalized
 
 
-def calculate_odds_score(odds_win: float) -> float:
+def calculate_odds_score(odds_win) -> float:
     """计算赔率校准分"""
     return normalize_odds(odds_win)
 
@@ -2729,7 +2740,7 @@ def get_horse_weight_comfort_range(horse_id: int) -> Tuple[int, int]:
         return (int(mean_weight - WEIGHT_COMFORT_RANGE), int(mean_weight + WEIGHT_COMFORT_RANGE))
     return (118, 128)
 
-
+#-------------
 def calculate_horse_score(
     horse_id: int,
     race_id: int,
@@ -2739,7 +2750,7 @@ def calculate_horse_score(
     actual_weight: int,
     jockey_id: int,
     trainer_id: int,
-    odds_win: float,
+    odds_win,
     user_weights: Dict
 ) -> Dict:
     """计算马匹的综合评分"""
@@ -2765,7 +2776,7 @@ def calculate_horse_score(
         "weight_comfort_range": weight_comfort_range
     }
 
-
+#-----------------
 def calculate_all_horses_scores(
     race_id: int,
     runners: List[Dict],
@@ -2774,11 +2785,18 @@ def calculate_all_horses_scores(
     """计算一场赛事所有马匹的评分和胜率"""
     if not runners:
         return [], []
+    
     scores = []
     basic_scores = []
     race_scores = []
     odds_scores = []
+    
     for runner in runners:
+        # 获取赔率，处理 None 情况
+        odds_win = runner.get("odds_win")
+        if odds_win is None or odds_win == '':
+            odds_win = 10.0  # 默认赔率
+        
         result = calculate_horse_score(
             horse_id=runner.get("horse_id"),
             race_id=race_id,
@@ -2788,19 +2806,22 @@ def calculate_all_horses_scores(
             actual_weight=runner.get("actual_weight"),
             jockey_id=runner.get("jockey_id"),
             trainer_id=runner.get("trainer_id"),
-            odds_win=runner.get("odds_win", 10.0),
+            odds_win=odds_win,
             user_weights=user_weights
         )
         scores.append(result)
         basic_scores.append(result["basic_score"])
         race_scores.append(result["race_score"])
         odds_scores.append(result["odds_score"])
+    
     probabilities = calculate_win_probabilities(
         basic_scores, race_scores, odds_scores,
         user_weights, user_weights.get("odds_mix_ratio", 0.6)
     )
+    
     for i, prob in enumerate(probabilities):
         scores[i]["win_probability"] = round(prob * 100, 2)
+    
     return scores, probabilities
 
 
