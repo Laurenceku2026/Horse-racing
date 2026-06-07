@@ -1762,14 +1762,21 @@ def get_races_by_date(race_date: str) -> List[Dict]:
         return []
 #-------------------------
 def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
-    """获取赛事出赛马匹详情（含评分）"""
+    """获取赛事出赛马匹详情（含评分和 horse_id）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        # 确保 select 中包含 horse_id
-        url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&select=*,horse_id"
+        url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            return response.json()
+            runners = response.json()
+            # 转换：将 horse_name_zh 作为中文名
+            for runner in runners:
+                if runner.get('horse_name_zh'):
+                    runner['horse_name'] = runner['horse_name_zh']
+                # 确保 horse_id 字段存在
+                if 'horse_id' not in runner:
+                    runner['horse_id'] = None
+            return runners
         return []
     except Exception as e:
         print(f"获取出赛马匹失败: {e}")
