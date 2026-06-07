@@ -209,7 +209,77 @@ def t():
     """获取当前语言文本"""
     lang = st.session_state.get("lang", "zh")
     return TEXTS[lang]
+#-------------------------
+# ==================== 中英文马名映射 ====================
+@st.cache_data(ttl=3600)
+def get_horse_name_mapping() -> Dict[str, str]:
+    """获取马名中英文映射（中文 -> 英文）"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            mapping = {}
+            for item in data:
+                zh = item.get('name_zh')
+                en = item.get('name_en')
+                if zh and en:
+                    mapping[zh] = en
+            return mapping
+        return {}
+    except Exception as e:
+        print(f"获取马名映射失败: {e}")
+        return {}
 
+
+@st.cache_data(ttl=3600)
+def get_reverse_horse_name_mapping() -> Dict[str, str]:
+    """获取马名映射（英文 -> 中文）"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            mapping = {}
+            for item in data:
+                zh = item.get('name_zh')
+                en = item.get('name_en')
+                if zh and en:
+                    mapping[en] = zh
+            return mapping
+        return {}
+    except Exception as e:
+        print(f"获取马名映射失败: {e}")
+        return {}
+
+
+def translate_horse_name(name: str, target_lang: str = None) -> str:
+    """翻译马名"""
+    if not name:
+        return name
+    
+    if target_lang is None:
+        target_lang = st.session_state.get("lang", "zh")
+    
+    current_lang = st.session_state.get("lang", "zh")
+    
+    # 如果当前语言就是目标语言，直接返回
+    if target_lang == current_lang:
+        return name
+    
+    if target_lang == 'en':
+        # 中文 → 英文
+        mapping = get_horse_name_mapping()
+        return mapping.get(name, name)
+    else:
+        # 英文 → 中文
+        mapping = get_reverse_horse_name_mapping()
+        return mapping.get(name, name)
+#-------------------------
 # ==================== Supabase配置 ====================
 SUPABASE_URL = st.secrets.get("SUPABASE_STOCK_URL", "")
 SUPABASE_KEY = st.secrets.get("SUPABASE_STOCK_SECRET_KEY", "")
@@ -1195,6 +1265,45 @@ def render_user_management():
     st.dataframe(df_users, use_container_width=True, hide_index=True)
     st.caption(f"共 {len(users)} 位用户")
 #----------------------------
+# ==================== Tab4: 马名映射管理 ====================
+with tab4:
+    st.markdown("### 🌐 中英文马名映射")
+    st.caption("管理马名的中英文对应关系，用于界面语言切换")
+    
+    # 获取当前映射
+    mapping_data = get_horse_name_mapping()
+    
+    if mapping_data:
+        mapping_df = pd.DataFrame([
+            {"中文名": zh, "英文名": en} for zh, en in mapping_data.items()
+        ])
+        
+        edited_mapping = st.data_editor(
+            mapping_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "中文名": st.column_config.TextColumn("中文名", disabled=True),
+                "英文名": st.column_config.TextColumn("英文名")
+            }
+        )
+        
+        if st.button("💾 保存映射", type="primary"):
+            # 更新映射表
+            for _, row in edited_mapping.iterrows():
+                zh = row["中文名"]
+                en = row["英文名"]
+                if zh and en:
+                    # 更新数据库
+                    headers = get_supabase_headers(use_secret=True)
+                    url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?name_zh=eq.{zh}"
+                    requests.patch(url, headers=headers, json={"name_en": en})
+            st.success("映射已保存")
+            st.cache_data.clear()
+            st.rerun()
+    else:
+        st.info("暂无映射数据")
+#-------------------------------
 def admin_sign_out():
     """管理员退出"""
     prev_user_id = st.session_state.get("admin_previous_user_id")
@@ -1318,12 +1427,7 @@ def render_top_buttons():
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
 def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.DataFrame:
-    """获取所有马匹的基础评分（基于指定最近场次）
-    
-    Args:
-        limit: 返回马匹数量
-        recent_games: 使用最近多少场比赛计算（0 表示全部）
-    """
+    """获取所有马匹的基础评分（根据语言显示马名）"""
     try:
         headers = get_supabase_headers(use_secret=True)
         
@@ -1332,7 +1436,6 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
-            st.error(f"查询失败: {response.status_code}")
             return pd.DataFrame()
         
         data = response.json()
@@ -1354,6 +1457,11 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 "race_date": p.get("race_date")
             })
         
+        # 获取语言设置
+        current_lang = st.session_state.get("lang", "zh")
+        mapping = get_horse_name_mapping()
+        reverse_mapping = get_reverse_horse_name_mapping()
+        
         results = []
         for horse_name, records in horse_records.items():
             # 按日期排序（最新的在前）
@@ -1366,7 +1474,7 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 selected = records[:recent_games]
             
             total = len(selected)
-            if total < 3:  # 少于3场不显示
+            if total < 3:
                 continue
             
             wins = sum(1 for r in selected if r.get("position") == 1)
@@ -1382,8 +1490,14 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             show_rate = shows / total * 100
             basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
             
+            # 根据语言选择马名显示
+            if current_lang == 'en':
+                display_name = mapping.get(horse_name, horse_name)
+            else:
+                display_name = horse_name
+            
             results.append({
-                "馬名": horse_name,
+                "馬名": display_name,
                 "勝率": round(win_rate, 1),
                 "入Q率": round(place_rate, 1),
                 "入T率": round(show_rate, 1),
