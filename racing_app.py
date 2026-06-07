@@ -210,6 +210,21 @@ def t():
     lang = st.session_state.get("lang", "zh")
     return TEXTS[lang]
 #-------------------------
+# ==================== 马名获取函数（基于 horse_id）====================
+@st.cache_data(ttl=3600)
+def get_horse_name_cache() -> Dict[str, str]:
+    """获取 horse_id -> 中文名 的映射"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?select=horse_id,name_zh"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return {item['horse_id']: item.get('name_zh', '') for item in data}
+        return {}
+    except Exception as e:
+        print(f"获取马名缓存失败: {e}")
+        return {}
 # ==================== 中英文马名映射 ====================
 @st.cache_data(ttl=3600)
 def get_horse_name_mapping() -> Dict[str, str]:
@@ -1428,31 +1443,36 @@ def render_top_buttons():
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
 def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.DataFrame:
-    """获取所有马匹的基础评分（根据语言显示马名）"""
+    """获取所有马匹的基础评分（基于 horse_id）"""
     try:
         headers = get_supabase_headers(use_secret=True)
         
-        # 获取所有成绩记录
-        url = f"{SUPABASE_URL}/rest/v1/past_performances?select=horse_name,position,body_weight,race_date&limit=50000"
-        response = requests.get(url, headers=headers)
+        # 1. 获取马名映射（horse_id -> 中文名）
+        name_cache = get_horse_name_cache()
         
-        if response.status_code != 200:
+        # 2. 获取所有成绩记录，按 horse_id 分组
+        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=horse_id,position,body_weight,race_date&limit=50000"
+        perf_response = requests.get(perf_url, headers=headers)
+        
+        if perf_response.status_code != 200:
+            st.error(f"获取成绩数据失败: {perf_response.status_code}")
             return pd.DataFrame()
         
-        data = response.json()
+        data = perf_response.json()
         
         if not data:
+            st.info("暂无成绩数据")
             return pd.DataFrame()
         
-        # 按马名分组
+        # 按 horse_id 分组
         from collections import defaultdict
         horse_records = defaultdict(list)
         
         for p in data:
-            horse_name = p.get("horse_name")
-            if not horse_name:
+            horse_id = p.get("horse_id")
+            if not horse_id:
                 continue
-            horse_records[horse_name].append({
+            horse_records[horse_id].append({
                 "position": p.get("position"),
                 "body_weight": p.get("body_weight"),
                 "race_date": p.get("race_date")
@@ -1460,11 +1480,9 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
         
         # 获取语言设置
         current_lang = st.session_state.get("lang", "zh")
-        mapping = get_horse_name_mapping()
-        reverse_mapping = get_reverse_horse_name_mapping()
         
         results = []
-        for horse_name, records in horse_records.items():
+        for horse_id, records in horse_records.items():
             # 按日期排序（最新的在前）
             records.sort(key=lambda x: x.get("race_date", ""), reverse=True)
             
@@ -1491,14 +1509,11 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             show_rate = shows / total * 100
             basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
             
-            # 根据语言选择马名显示
-            if current_lang == 'en':
-                display_name = mapping.get(horse_name, horse_name)
-            else:
-                display_name = horse_name
+            # 获取马名（根据语言）
+            horse_name = name_cache.get(horse_id, horse_id)
             
             results.append({
-                "馬名": display_name,
+                "馬名": horse_name,
                 "勝率": round(win_rate, 1),
                 "入Q率": round(place_rate, 1),
                 "入T率": round(show_rate, 1),
@@ -2135,7 +2150,7 @@ def render_smart_betting(show_title: bool = True):
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         refresh_schedule_btn = st.button("🔄 刷新賽程", use_container_width=True)
-    #--------------
+    
     if refresh_schedule_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning("免費次數已用完，請升級到專業版")
@@ -2209,6 +2224,9 @@ def render_smart_betting(show_title: bool = True):
         st.warning("暫無出賽馬匹數據，請點擊「更新本場數據」同步")
         return
     
+    # ==================== 获取马名映射缓存 ====================
+    name_cache = get_horse_name_cache()
+    
     # 获取用户权重
     user_weights = {
         "basic": 0.30,
@@ -2254,9 +2272,12 @@ def render_smart_betting(show_title: bool = True):
     # 构建表格数据
     race_data = []
     for runner in sorted_runners:
-        horse_name = runner.get('horse_name', '')
+        horse_id = runner.get('horse_id')
+        # 使用 horse_id 从缓存获取中文名
+        horse_name = name_cache.get(horse_id, '')
         if not horse_name:
-            horse_name = runner.get('horse_name_en', '')
+            horse_name = runner.get('horse_name', runner.get('horse_name_en', ''))
+        
         horse_no = runner.get('horse_no', '-')
         draw = runner.get('draw', '-')
         weight = runner.get('actual_weight', '-')
@@ -2313,7 +2334,8 @@ def render_smart_betting(show_title: bool = True):
                 odds = 0
             
             score = horse.get('overall_score', 0)
-            horse_name = horse.get('horse_name_zh', horse.get('horse_name_en', ''))
+            horse_id = horse.get('horse_id')
+            horse_name = name_cache.get(horse_id, horse.get('horse_name', ''))
             horse_no = horse.get('horse_no', '')
             
             kelly_fraction = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
