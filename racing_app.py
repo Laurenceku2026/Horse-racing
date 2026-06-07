@@ -1241,43 +1241,43 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
         return result
 #-------------
 # ==================== Tab4: 马名映射管理 ====================
-with tab4:
-    st.markdown("### 🌐 中英文马名映射")
-    st.caption("管理马名的中英文对应关系，用于界面语言切换")
-    
-    # 获取当前映射
-    mapping_data = get_horse_name_mapping()
-    
-    if mapping_data:
-        mapping_df = pd.DataFrame([
-            {"中文名": zh, "英文名": en} for zh, en in mapping_data.items()
-        ])
+    with tab4:
+        st.markdown("### 🌐 中英文马名映射")
+        st.caption("管理马名的中英文对应关系，用于界面语言切换")
         
-        edited_mapping = st.data_editor(
-            mapping_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "中文名": st.column_config.TextColumn("中文名", disabled=True),
-                "英文名": st.column_config.TextColumn("英文名")
-            }
-        )
+        # 获取当前映射
+        mapping_data = get_horse_name_mapping()
         
-        if st.button("💾 保存映射", type="primary"):
-            # 更新映射表
-            for _, row in edited_mapping.iterrows():
-                zh = row["中文名"]
-                en = row["英文名"]
-                if zh and en:
-                    # 更新数据库
-                    headers = get_supabase_headers(use_secret=True)
-                    url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?name_zh=eq.{zh}"
-                    requests.patch(url, headers=headers, json={"name_en": en})
-            st.success("映射已保存")
-            st.cache_data.clear()
-            st.rerun()
-    else:
-        st.info("暂无映射数据")
+        if mapping_data:
+            mapping_df = pd.DataFrame([
+                {"中文名": zh, "英文名": en} for zh, en in mapping_data.items()
+            ])
+            
+            edited_mapping = st.data_editor(
+                mapping_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "中文名": st.column_config.TextColumn("中文名", disabled=True),
+                    "英文名": st.column_config.TextColumn("英文名")
+                }
+            )
+            
+            if st.button("💾 保存映射", type="primary"):
+                # 更新映射表
+                for _, row in edited_mapping.iterrows():
+                    zh = row["中文名"]
+                    en = row["英文名"]
+                    if zh and en:
+                        # 更新数据库
+                        headers = get_supabase_headers(use_secret=True)
+                        url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?name_zh=eq.{zh}"
+                        requests.patch(url, headers=headers, json={"name_en": en})
+                st.success("映射已保存")
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.info("暂无映射数据")
 
 #-------
 def render_user_management():
