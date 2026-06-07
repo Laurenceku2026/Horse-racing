@@ -1317,13 +1317,18 @@ def render_top_buttons():
 # ============================================================
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
-def get_all_horses_base_score(limit: int = 500) -> pd.DataFrame:
-    """获取所有马匹的基础评分（直接查询 + 本地计算）"""
+def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.DataFrame:
+    """获取所有马匹的基础评分（基于指定最近场次）
+    
+    Args:
+        limit: 返回马匹数量
+        recent_games: 使用最近多少场比赛计算（0 表示全部）
+    """
     try:
         headers = get_supabase_headers(use_secret=True)
         
-        # 直接获取所有成绩记录（8697 条）
-        url = f"{SUPABASE_URL}/rest/v1/past_performances?select=horse_name,position,body_weight&limit=20000"
+        # 获取所有成绩记录
+        url = f"{SUPABASE_URL}/rest/v1/past_performances?select=horse_name,position,body_weight,race_date&limit=50000"
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
@@ -1335,46 +1340,47 @@ def get_all_horses_base_score(limit: int = 500) -> pd.DataFrame:
         if not data:
             return pd.DataFrame()
         
-        # 本地统计
+        # 按马名分组
         from collections import defaultdict
-        stats = defaultdict(lambda: {
-            "total": 0, "wins": 0, "places": 0, "shows": 0,
-            "total_weight": 0, "weight_count": 0
-        })
+        horse_records = defaultdict(list)
         
         for p in data:
             horse_name = p.get("horse_name")
-            position = p.get("position")
-            body_weight = p.get("body_weight")
-            
-            if not horse_name or position is None:
+            if not horse_name:
                 continue
-            
-            s = stats[horse_name]
-            s["total"] += 1
-            if position == 1:
-                s["wins"] += 1
-            if position <= 2:
-                s["places"] += 1
-            if position <= 3:
-                s["shows"] += 1
-            if body_weight:
-                s["total_weight"] += body_weight
-                s["weight_count"] += 1
+            horse_records[horse_name].append({
+                "position": p.get("position"),
+                "body_weight": p.get("body_weight"),
+                "race_date": p.get("race_date")
+            })
         
-        # 计算评分
         results = []
-        for horse_name, s in stats.items():
-            total = s["total"]
-            if total < 3:
+        for horse_name, records in horse_records.items():
+            # 按日期排序（最新的在前）
+            records.sort(key=lambda x: x.get("race_date", ""), reverse=True)
+            
+            # 取最近 N 场
+            if recent_games == 0:
+                selected = records
+            else:
+                selected = records[:recent_games]
+            
+            total = len(selected)
+            if total < 3:  # 少于3场不显示
                 continue
             
-            win_rate = s["wins"] / total * 100
-            place_rate = s["places"] / total * 100
-            show_rate = s["shows"] / total * 100
-            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
+            wins = sum(1 for r in selected if r.get("position") == 1)
+            places = sum(1 for r in selected if r.get("position") in [1, 2])
+            shows = sum(1 for r in selected if r.get("position") in [1, 2, 3])
             
-            avg_weight = s["total_weight"] / s["weight_count"] if s["weight_count"] > 0 else 0
+            # 体重平均值
+            weights = [r.get("body_weight") for r in selected if r.get("body_weight")]
+            avg_weight = sum(weights) / len(weights) if weights else 0
+            
+            win_rate = wins / total * 100
+            place_rate = places / total * 100
+            show_rate = shows / total * 100
+            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
             
             results.append({
                 "馬名": horse_name,
@@ -1467,16 +1473,6 @@ def render_home():
         races_response = requests.get(races_url, headers=headers)
         race_count = len(races_response.json()) if races_response.status_code == 200 else 0
         
-        # 骑师数量
-        jockeys_url = f"{SUPABASE_URL}/rest/v1/jockeys"
-        jockeys_response = requests.get(jockeys_url, headers=headers)
-        jockey_count = len(jockeys_response.json()) if jockeys_response.status_code == 200 else 0
-        
-        # 练马师数量
-        trainers_url = f"{SUPABASE_URL}/rest/v1/trainers"
-        trainers_response = requests.get(trainers_url, headers=headers)
-        trainer_count = len(trainers_response.json()) if trainers_response.status_code == 200 else 0
-        
         # 成绩记录数量
         perf_url = f"{SUPABASE_URL}/rest/v1/past_performances"
         perf_response = requests.get(perf_url, headers=headers)
@@ -1504,15 +1500,19 @@ def render_home():
             st.metric("📅 數據日期範圍", f"{oldest_date} ~ {latest_date}" if latest_date != 'N/A' else "暂无数据")
         
         # 第二行：骑师和练马师
-        col1, col2, col3, col4 = st.columns(4)
+        jockeys_url = f"{SUPABASE_URL}/rest/v1/jockeys"
+        jockeys_response = requests.get(jockeys_url, headers=headers)
+        jockey_count = len(jockeys_response.json()) if jockeys_response.status_code == 200 else 0
+        
+        trainers_url = f"{SUPABASE_URL}/rest/v1/trainers"
+        trainers_response = requests.get(trainers_url, headers=headers)
+        trainer_count = len(trainers_response.json()) if trainers_response.status_code == 200 else 0
+        
+        col1, col2 = st.columns(2)
         with col1:
             st.metric("🤠 騎師總數", jockey_count)
         with col2:
             st.metric("🏋️ 練馬師總數", trainer_count)
-        with col3:
-            st.metric("", "")  # 占位
-        with col4:
-            st.metric("", "")  # 占位
             
     except Exception as e:
         st.warning(f"獲取數據統計失敗: {e}")
@@ -1525,18 +1525,16 @@ def render_home():
             st.metric("📊 成績記錄總數", "0")
         with col4:
             st.metric("📅 數據範圍", "-")
-        latest_date = 'N/A'
-        oldest_date = 'N/A'
     
     st.markdown("---")
-    #-----------
+    
     # ==================== 数据更新区域 ====================
     st.markdown("### 🔄 數據更新")
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         update_btn = st.button("🔄 更新所有数据", type="primary", use_container_width=True)
-    #-----------
+    
     if update_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning("免費次數已用完，請升級到專業版")
@@ -1553,42 +1551,31 @@ def render_home():
     
     # ==================== 模块2：全马基础评分榜 ====================
     st.markdown("### 🐎 全馬基礎評分榜")
-    st.caption("📌 基於近10場歷史表現計算，與場次無關。分數越高代表整體實力越強。")
+    st.caption("📌 基於最近 N 場歷史表現計算，分數越高代表整體實力越強。")
     
-    # 评分数量选择
+    # 评分场次选择
     col1, col2 = st.columns([1, 4])
     with col1:
-        rating_limit = st.selectbox("顯示數量", [20, 30, 50, 100], index=1, key="rating_limit")
+        recent_games = st.selectbox(
+            "計算場次",
+            options=[3, 5, 8, 10, 12, 15, 20, 0],
+            format_func=lambda x: "全部" if x == 0 else f"最近 {x} 場",
+            index=3,  # 默认 10 场
+            key="recent_games"
+        )
     
-    with st.spinner("正在計算馬匹評分..."):
-        rating_df = get_all_horses_base_score(limit=rating_limit)
+    # 评分数量选择
+    with col2:
+        rating_limit = st.selectbox(
+            "顯示數量",
+            options=[50, 100, 200, 300, 500],
+            index=1,  # 默认 100
+            key="rating_limit"
+        )
+    
+    with st.spinner(f"正在計算馬匹評分（最近 {recent_games if recent_games > 0 else '全部'} 場）..."):
+        rating_df = get_all_horses_base_score(limit=rating_limit, recent_games=recent_games)
         render_horse_rating_table(rating_df)
-    
-    # 评分说明
-    with st.expander("📖 評分系統說明", expanded=False):
-        st.markdown("""
-        ### 基礎評分計算因子（近10場）
-        
-        | 因子 | 權重 | 說明 |
-        |------|------|------|
-        | 勝率 | 35% | 最近10場的獲勝比例 |
-        | 入Q率 | 25% | 最近10場跑入前2名的比例 |
-        | 入T率 | 15% | 最近10場跑入前3名的比例 |
-        | 路程適應性 | 15% | 在類似路程的表現 |
-        | 評分趨勢 | 10% | 官方評分的變化趨勢 |
-        
-        ### 評分等級對照
-        
-        | 等級 | 分數範圍 | 說明 |
-        |------|----------|------|
-        | S | 85-100 | 頂尖馬匹，勝率極高 |
-        | A | 70-84 | 優秀馬匹，爭勝能力強 |
-        | B | 55-69 | 中上馬匹，有競爭力 |
-        | C | 40-54 | 一般馬匹，需要關注 |
-        | D | 0-39 | 表現較弱，建議迴避 |
-        
-        💡 **提示**：基礎評分僅反映馬匹的整體實力。實際投注時，還需考慮檔位、負磅、騎師、場地狀況等場次因素。
-        """)
     
     st.markdown("---")
     
