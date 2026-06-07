@@ -2091,7 +2091,7 @@ def get_historical_draws_for_training(limit: int = 300) -> List[Dict]:
 #--------------
 # ==================== 智能投注主页面 ====================
 def render_smart_betting(show_title: bool = True):
-    """智能投注页面：单场分析 + 全天优化"""
+    """智能投注页面：单场分析 + 全天优化 + 过关组合"""
     if show_title:
         st.markdown("## 🎯 智能投注")
         
@@ -2100,7 +2100,6 @@ def render_smart_betting(show_title: bool = True):
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            # 获取用户默认预算
             profile = get_user_profile(st.session_state.user_id)
             default_bankroll = profile.get('default_bankroll', 1000)
             bankroll = st.number_input(
@@ -2119,8 +2118,6 @@ def render_smart_betting(show_title: bool = True):
                 format_func=lambda x: {"conservative": "保守", "standard": "標準", "aggressive": "進取"}.get(x, "標準"),
                 key="risk_preference"
             )
-            
-            # 风险系数映射
             risk_multiplier = {
                 "conservative": 0.5,
                 "standard": 0.8,
@@ -2143,10 +2140,12 @@ def render_smart_betting(show_title: bool = True):
     
     st.markdown("---")
     
+    # ==================== 获取马名映射缓存 ====================
+    name_cache = get_horse_name_cache()
+    
     # ==================== 选择赛日 ====================
     st.markdown("### 📅 選擇賽日")
     
-    # 刷新赛程按钮
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         refresh_schedule_btn = st.button("🔄 刷新賽程", use_container_width=True)
@@ -2163,30 +2162,25 @@ def render_smart_betting(show_title: bool = True):
                 else:
                     st.info("未来14天暂无赛事")
     
-    # 获取未来赛事
     upcoming_races = get_upcoming_races()
     
     if not upcoming_races:
         st.info("📌 未來14天暫無賽事，請點擊「刷新賽程」同步最新賽程")
         return
     
-    # 按日期分组
     dates = sorted(set([r.get('race_date') for r in upcoming_races]))
     date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
     
     selected_date_str = st.selectbox("選擇賽日", date_options, key="selected_race_date")
     selected_date = selected_date_str.split(" ")[0]
     
-    # 获取该日期的所有赛事
     races = [r for r in upcoming_races if r.get('race_date') == selected_date]
-    
     st.markdown(f"**📋 共 {len(races)} 場賽事**")
     st.markdown("---")
     
     # ==================== 单场分析 ====================
     st.markdown("### 📊 單場分析")
     
-    # 选择场次
     race_options = []
     for r in races:
         distance = r.get('distance', 0)
@@ -2196,7 +2190,6 @@ def render_smart_betting(show_title: bool = True):
     selected_idx = st.selectbox("選擇場次", range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     selected_race = races[selected_idx]
     
-    # 刷新本场数据按钮
     col1, col2 = st.columns([1, 4])
     with col1:
         refresh_race_btn = st.button("🔄 更新本場數據", key="refresh_race")
@@ -2206,14 +2199,12 @@ def render_smart_betting(show_title: bool = True):
             st.warning("免費次數已用完，請升級到專業版")
         else:
             with st.spinner("正在更新最新賠率和出賽馬匹..."):
-                result = sync_single_race(selected_race)
-                if result:
+                if sync_single_race(selected_race):
                     st.success("數據已更新")
                     st.rerun()
                 else:
                     st.warning("更新失敗")
     
-    # 获取出赛马匹
     runners = get_race_runners_with_details(
         selected_race.get('race_date'),
         selected_race.get('venue'),
@@ -2224,10 +2215,6 @@ def render_smart_betting(show_title: bool = True):
         st.warning("暫無出賽馬匹數據，請點擊「更新本場數據」同步")
         return
     
-    # ==================== 获取马名映射缓存 ====================
-    name_cache = get_horse_name_cache()
-    
-    # 获取用户权重
     user_weights = {
         "basic": 0.30,
         "race": 0.40,
@@ -2236,148 +2223,202 @@ def render_smart_betting(show_title: bool = True):
         "odds_mix_ratio": 0.6
     }
     
-    # 根据选择的模型计算胜率
+    # 计算胜率
     if model_choice == "评分系统":
         with st.spinner("正在計算馬匹勝率（評分系統）..."):
             scores, probabilities = calculate_all_horses_scores(selected_race.get('race_id'), runners, user_weights)
-        
         for i, runner in enumerate(runners):
             if i < len(scores):
-                runner['basic_score'] = scores[i].get('basic_score', 0)
-                runner['race_score'] = scores[i].get('race_score', 0)
-                runner['odds_score'] = scores[i].get('odds_score', 0)
                 runner['overall_score'] = scores[i].get('combined_score', 0)
                 runner['win_probability'] = scores[i].get('win_probability', 0) / 100
     else:
         model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
         with st.spinner(f"正在計算馬匹勝率（{model_choice}）..."):
             ml_probs = get_model_predictions(selected_race.get('race_id'), runners, model_type)
-        
         for i, runner in enumerate(runners):
             if i < len(ml_probs):
                 runner['win_probability'] = ml_probs[i]
-                runner['basic_score'] = 50
-                runner['race_score'] = 50
-                runner['odds_score'] = 50
                 runner['overall_score'] = ml_probs[i] * 100
-            else:
-                runner['win_probability'] = 0.1
     
-    # 按胜率排序
     sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
     
-    # 显示分析结果表格
+    # 显示表格
     st.markdown(f"#### 🏇 第{selected_race.get('race_no')}場 出賽馬匹")
     
-    # 构建表格数据
     race_data = []
     for runner in sorted_runners:
         horse_id = runner.get('horse_id')
-        # 使用 horse_id 从缓存获取中文名
-        horse_name = name_cache.get(horse_id, '')
-        if not horse_name:
-            horse_name = runner.get('horse_name', runner.get('horse_name_en', ''))
-        
-        horse_no = runner.get('horse_no', '-')
-        draw = runner.get('draw', '-')
-        weight = runner.get('actual_weight', '-')
-        jockey = runner.get('jockey_name', '-')
-        
-        odds_raw = runner.get('odds_win')
-        try:
-            odds_display = f"{float(odds_raw):.1f}" if odds_raw and float(odds_raw) > 0 else "-"
-        except (ValueError, TypeError):
-            odds_display = "-"
-        
-        prob = runner.get('win_probability', 0) * 100
-        score = runner.get('overall_score', 0)
-        
-        if score >= 85:
-            level = "S"
-        elif score >= 70:
-            level = "A"
-        elif score >= 55:
-            level = "B"
-        elif score >= 40:
-            level = "C"
-        else:
-            level = "D"
+        horse_name = name_cache.get(horse_id, runner.get('horse_name', ''))
         
         race_data.append({
-            "馬號": horse_no,
+            "馬號": runner.get('horse_no', '-'),
             "馬名": horse_name,
-            "檔位": draw,
-            "負磅": weight,
-            "騎師": jockey,
-            "賠率": odds_display,
-            "勝率": f"{prob:.1f}%",
-            "綜合評分": f"{score:.0f}",
-            "等級": level
+            "檔位": runner.get('draw', '-'),
+            "負磅": runner.get('actual_weight', '-'),
+            "騎師": runner.get('jockey_name', '-'),
+            "賠率": runner.get('odds_win', '-'),
+            "勝率": f"{runner.get('win_probability', 0)*100:.1f}%",
+            "綜合評分": f"{runner.get('overall_score', 0):.0f}"
         })
     
     st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
     
-    # ==================== 投注建议 ====================
+    # 投注建议
     st.markdown("#### 💡 投注建議")
-    
-    top3 = sorted_runners[:3] if len(sorted_runners) >= 3 else sorted_runners
+    top3 = sorted_runners[:3]
     
     if top3:
-        cols = st.columns(len(top3))
+        cols = st.columns(3)
         for i, horse in enumerate(top3):
             prob = horse.get('win_probability', 0) * 100
-            odds_raw = horse.get('odds_win')
-            
-            try:
-                odds = float(odds_raw) if odds_raw else 0
-            except (ValueError, TypeError):
-                odds = 0
-            
+            odds = horse.get('odds_win', 0)
             score = horse.get('overall_score', 0)
             horse_id = horse.get('horse_id')
-            horse_name = name_cache.get(horse_id, horse.get('horse_name', ''))
-            horse_no = horse.get('horse_no', '')
-            
-            kelly_fraction = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
-            suggested_stake = bankroll * kelly_fraction * risk_multiplier
+            horse_name = name_cache.get(horse_id, '')
+            kelly = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
+            stake = bankroll * kelly * risk_multiplier
             
             with cols[i]:
                 st.markdown(f"""
-                <div style="background-color: #f8f9fa; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
-                    <strong>🥇 {horse_no}號 {horse_name}</strong><br>
+                <div style="background:#f8f9fa; padding:0.8rem; border-radius:0.5rem;">
+                    <strong>🥇 {horse_name}</strong><br>
                     勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
-                    評分: {score:.0f}<br>
-                    建議注額: <strong>HK${suggested_stake:.0f}</strong>
+                    建議注額: <strong>HK${stake:.0f}</strong>
                 </div>
                 """, unsafe_allow_html=True)
-        
-        # 连赢建议
-        if len(top3) >= 2:
-            st.markdown("---")
-            st.markdown("**🔗 連贏建議 (QIN)**")
+    
+    st.markdown("---")
+    
+    # ==================== 全天优化投注 ====================
+    st.markdown("### 🌟 全天優化投注")
+    st.caption("基於凱利公式 + 風險管理，自動分配全天投注策略")
+    
+    if st.button("🚀 生成全天投注策略", key="generate_full_day", use_container_width=True, type="primary"):
+        with st.spinner("正在計算全天投注策略..."):
+            all_bets = []
+            total_stake = 0
+            total_expected = 0
             
-            for i in range(min(2, len(top3))):
-                for j in range(i+1, min(3, len(top3))):
-                    horse1 = top3[i]
-                    horse2 = top3[j]
-                    prob1 = horse1.get('win_probability', 0)
-                    prob2 = horse2.get('win_probability', 0)
-                    joint_prob = prob1 * prob2 * 2
+            for race in races:
+                race_runners = get_race_runners_with_details(
+                    race.get('race_date'), race.get('venue'), race.get('race_no')
+                )
+                if not race_runners:
+                    continue
+                
+                # 计算胜率
+                if model_choice == "评分系统":
+                    scores, _ = calculate_all_horses_scores(race.get('race_id'), race_runners, user_weights)
+                    for i, r in enumerate(race_runners):
+                        if i < len(scores):
+                            r['win_probability'] = scores[i].get('win_probability', 0) / 100
+                else:
+                    model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
+                    ml_probs = get_model_predictions(race.get('race_id'), race_runners, model_type)
+                    for i, r in enumerate(race_runners):
+                        if i < len(ml_probs):
+                            r['win_probability'] = ml_probs[i]
+                
+                top_horses = sorted(race_runners, key=lambda x: x.get('win_probability', 0), reverse=True)[:2]
+                
+                for horse in top_horses:
+                    prob = horse.get('win_probability', 0)
+                    odds = horse.get('odds_win', 0)
+                    if prob <= 0 or odds <= 1:
+                        continue
                     
-                    odds1_raw = horse1.get('odds_win')
-                    odds2_raw = horse2.get('odds_win')
+                    kelly = calculate_kelly_fraction(prob, odds)
+                    if kelly <= 0:
+                        continue
                     
-                    try:
-                        odds1 = float(odds1_raw) if odds1_raw else 0
-                        odds2 = float(odds2_raw) if odds2_raw else 0
-                    except (ValueError, TypeError):
-                        odds1 = odds2 = 0
+                    stake = bankroll * kelly * risk_multiplier * 0.3
+                    expected = calculate_expected_value(prob, odds, stake)
                     
-                    qin_odds = (odds1 * odds2) / 2 if odds1 > 0 and odds2 > 0 else 0
-                    
-                    if qin_odds > 0 and joint_prob * qin_odds > 1:
-                        suggested_qin = bankroll * 0.05 * risk_multiplier
-                        st.markdown(f"**{horse1.get('horse_no', '')} + {horse2.get('horse_no', '')}號** | 建議注額: HK${suggested_qin:.0f}")
+                    if stake >= 10:
+                        all_bets.append({
+                            "場次": f"第{race.get('race_no')}場",
+                            "馬匹": name_cache.get(horse.get('horse_id'), ''),
+                            "賠率": odds,
+                            "勝率": f"{prob*100:.1f}%",
+                            "建議注額": f"HK${stake:.0f}",
+                            "期望值": f"${expected:.0f}"
+                        })
+                        total_stake += stake
+                        total_expected += expected
+            
+            if all_bets:
+                st.dataframe(pd.DataFrame(all_bets), use_container_width=True, hide_index=True)
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("💰 總投注額", f"HK${total_stake:.0f}")
+                with col2:
+                    st.metric("📈 總期望值", f"${total_expected:+.0f}")
+                with col3:
+                    roi = (total_expected / total_stake * 100) if total_stake > 0 else 0
+                    st.metric("📊 預期ROI", f"{roi:+.1f}%")
+            else:
+                st.warning("未找到符合條件的投注機會")
+    
+    st.markdown("---")
+    
+    # ==================== 过关组合推荐 ====================
+    st.markdown("### 🔗 過關組合推薦")
+    st.caption("基於各場信心馬匹，推薦2串1、3串1過關組合")
+    
+    if st.button("🎲 生成過關組合", key="generate_parlay", use_container_width=True):
+        with st.spinner("正在計算過關組合..."):
+            confidence_horses = []
+            
+            for race in races:
+                race_runners = get_race_runners_with_details(
+                    race.get('race_date'), race.get('venue'), race.get('race_no')
+                )
+                if not race_runners:
+                    continue
+                
+                if model_choice == "评分系统":
+                    scores, _ = calculate_all_horses_scores(race.get('race_id'), race_runners, user_weights)
+                    for i, r in enumerate(race_runners):
+                        if i < len(scores):
+                            r['win_probability'] = scores[i].get('win_probability', 0) / 100
+                else:
+                    model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
+                    ml_probs = get_model_predictions(race.get('race_id'), race_runners, model_type)
+                    for i, r in enumerate(race_runners):
+                        if i < len(ml_probs):
+                            r['win_probability'] = ml_probs[i]
+                
+                top = max(race_runners, key=lambda x: x.get('win_probability', 0), default=None)
+                if top and top.get('win_probability', 0) >= 0.20:
+                    confidence_horses.append({
+                        "race_no": race.get('race_no'),
+                        "horse_name": name_cache.get(top.get('horse_id'), ''),
+                        "probability": top.get('win_probability', 0),
+                        "odds": top.get('odds_win', 0)
+                    })
+            
+            parlay_results = []
+            
+            # 2串1
+            for i in range(len(confidence_horses)):
+                for j in range(i+1, len(confidence_horses)):
+                    h1, h2 = confidence_horses[i], confidence_horses[j]
+                    joint_prob = h1['probability'] * h2['probability']
+                    combined_odds = h1['odds'] * h2['odds']
+                    if joint_prob * combined_odds > 1 and combined_odds > 0:
+                        parlay_results.append({
+                            "組合": "2串1",
+                            "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
+                            "馬匹": f"{h1['horse_name']} + {h2['horse_name']}",
+                            "組合賠率": f"{combined_odds:.1f}",
+                            "聯合概率": f"{joint_prob*100:.1f}%",
+                            "建議注額": f"HK${bankroll * 0.05 * risk_multiplier:.0f}"
+                        })
+            
+            if parlay_results:
+                st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
+            else:
+                st.info("暫無符合條件的過關組合")
     
     st.markdown("---")
     st.caption("⚠️ 本建議基於AI模型預測，不保證實際收益。請理性投注，切勿超出預算。")
