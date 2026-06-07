@@ -1765,13 +1765,11 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
     """获取赛事出赛马匹详情（含评分）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        # 使用 race_date, venue, race_no 查询
-        url = f"{SUPABASE_URL}/rest/v1/race_runners?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
+        # 确保 select 中包含 horse_id
+        url = f"{SUPABASE_URL}/rest/v1/race_runners?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&select=*,horse_id"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            runners = response.json()
-            # 注意：runners 中已经有 horse_name 和 jockey_name，不需要再补充
-            return runners
+            return response.json()
         return []
     except Exception as e:
         print(f"获取出赛马匹失败: {e}")
