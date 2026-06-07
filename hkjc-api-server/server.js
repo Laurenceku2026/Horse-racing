@@ -137,6 +137,7 @@ app.post('/api/sync/race', async (req, res) => {
             }
             
             // 保存出赛记录（包含 horse_id）
+            // 保存出赛记录（使用新表名，带 onConflict）
             const { error: runnerError } = await supabase
                 .from('race_runners_clean')
                 .upsert({
