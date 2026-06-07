@@ -948,8 +948,8 @@ def render_admin_panel():
     st.markdown(f"## ⚙️ {t()['admin_panel']}")
     
     # 创建选项卡
-    tab1, tab2, tab3 = st.tabs(["📊 数据编辑器", "📈 回测", "👥 用户管理"])
-    
+    # 定义四个选项卡
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 数据编辑器", "📈 回测", "👥 用户管理", "🌐 马名映射"])
     # ==================== Tab1: 数据编辑器 ====================
     with tab1:
         st.markdown("### 📋 数据库编辑器")
