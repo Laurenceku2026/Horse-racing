@@ -1317,128 +1317,125 @@ def render_top_buttons():
 # ============================================================
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
-def get_all_horses_base_score(limit: int = 100) -> pd.DataFrame:
-    """获取所有马匹的基础评分（通过 RPC 调用）"""
+def get_all_horses_base_score(limit: int = 500) -> pd.DataFrame:
+    """获取所有马匹的基础评分（直接查询 + 本地计算）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/rpc/get_horse_ratings"
-        payload = {"limit_count": limit}
-        response = requests.post(url, headers=headers, json=payload)
         
-        if response.status_code == 200:
-            data = response.json()
-            if data:
-                df = pd.DataFrame(data)
-                # RPC 返回的列名是：馬名, 勝率, 入q率, 入t率, 基礎評分, 平均體重
-                df = df.rename(columns={
-                    "馬名": "馬名",
-                    "勝率": "勝率",
-                    "入q率": "入Q率",  # 注意：小写 q
-                    "入t率": "入T率",  # 注意：小写 t
-                    "基礎評分": "基礎評分",
-                    "平均體重": "平均體重"
-                })
-                return df[["馬名", "勝率", "入Q率", "入T率", "基礎評分", "平均體重"]]
-        return pd.DataFrame()
+        # 直接获取所有成绩记录（8697 条）
+        url = f"{SUPABASE_URL}/rest/v1/past_performances?select=horse_name,position,body_weight&limit=20000"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            st.error(f"查询失败: {response.status_code}")
+            return pd.DataFrame()
+        
+        data = response.json()
+        
+        if not data:
+            return pd.DataFrame()
+        
+        # 本地统计
+        from collections import defaultdict
+        stats = defaultdict(lambda: {
+            "total": 0, "wins": 0, "places": 0, "shows": 0,
+            "total_weight": 0, "weight_count": 0
+        })
+        
+        for p in data:
+            horse_name = p.get("horse_name")
+            position = p.get("position")
+            body_weight = p.get("body_weight")
+            
+            if not horse_name or position is None:
+                continue
+            
+            s = stats[horse_name]
+            s["total"] += 1
+            if position == 1:
+                s["wins"] += 1
+            if position <= 2:
+                s["places"] += 1
+            if position <= 3:
+                s["shows"] += 1
+            if body_weight:
+                s["total_weight"] += body_weight
+                s["weight_count"] += 1
+        
+        # 计算评分
+        results = []
+        for horse_name, s in stats.items():
+            total = s["total"]
+            if total < 3:
+                continue
+            
+            win_rate = s["wins"] / total * 100
+            place_rate = s["places"] / total * 100
+            show_rate = s["shows"] / total * 100
+            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
+            
+            avg_weight = s["total_weight"] / s["weight_count"] if s["weight_count"] > 0 else 0
+            
+            results.append({
+                "馬名": horse_name,
+                "勝率": round(win_rate, 1),
+                "入Q率": round(place_rate, 1),
+                "入T率": round(show_rate, 1),
+                "基礎評分": round(basic_score, 1),
+                "平均體重": round(avg_weight, 0)
+            })
+        
+        # 按评分排序
+        results.sort(key=lambda x: x["基礎評分"], reverse=True)
+        
+        df = pd.DataFrame(results[:limit])
+        
+        if df.empty:
+            return df
+        
+        # 添加性别和年龄列（暂时为空）
+        df["性別"] = "-"
+        df["年齡"] = "-"
+        
+        # 调整列顺序
+        df = df[["馬名", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "基礎評分"]]
+        
+        # 格式化百分比显示
+        df["勝率"] = df["勝率"].apply(lambda x: f"{x:.1f}%")
+        df["入Q率"] = df["入Q率"].apply(lambda x: f"{x:.1f}%")
+        df["入T率"] = df["入T率"].apply(lambda x: f"{x:.1f}%")
+        
+        return df
+        
     except Exception as e:
         st.error(f"获取马匹评分失败: {e}")
         return pd.DataFrame()
 
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
-    """渲染马匹评分表格（分页 + HTML）"""
+    """渲染马匹评分表格"""
     if df.empty:
         st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
         return
     
-    # 分页参数
-    page_size = 50
-    total_pages = (len(df) + page_size - 1) // page_size
-    
-    # 页码选择
-    col1, col2 = st.columns([1, 3])
-    with col1:
-        page = st.number_input("頁碼", min_value=1, max_value=total_pages, value=1, step=1, key="rating_page")
-    
-    # 获取当前页数据
-    start_idx = (page - 1) * page_size
-    end_idx = min(start_idx + page_size, len(df))
-    display_df = df.iloc[start_idx:end_idx]
-    
-    # 自定义 CSS
-    st.markdown("""
-    <style>
-        .rating-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 14px;
-            margin: 10px 0;
+    # 使用 st.dataframe，原生支持排序和滚动
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "馬名": st.column_config.TextColumn("馬名", width="medium"),
+            "性別": st.column_config.TextColumn("性別", width="small"),
+            "年齡": st.column_config.NumberColumn("年齡", width="small"),
+            "平均體重": st.column_config.NumberColumn("平均體重", width="small", format="%.0f"),
+            "勝率": st.column_config.TextColumn("勝率", width="small"),
+            "入Q率": st.column_config.TextColumn("入Q率", width="small"),
+            "入T率": st.column_config.TextColumn("入T率", width="small"),
+            "基礎評分": st.column_config.NumberColumn("基礎評分", width="small", format="%.0f")
         }
-        .rating-table th {
-            background-color: #f0f2f6;
-            padding: 10px 8px;
-            text-align: center;
-            border: 1px solid #ddd;
-            font-weight: bold;
-        }
-        .rating-table td {
-            padding: 8px;
-            text-align: center;
-            border: 1px solid #ddd;
-        }
-        .score-high { color: #ff4b4b; font-weight: bold; }
-        .score-mid-high { color: #ff6b6b; font-weight: bold; }
-        .score-mid { color: #ffaa00; }
-        .score-low { color: #888888; }
-        .rating-table tr:hover {
-            background-color: #f5f5f5;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+    )
     
-    # 生成 HTML 表格
-    html = '<table class="rating-table"><thead><tr>'
-    html += '<th>馬名</th><th>勝率</th><th>入Q率</th><th>入T率</th><th>基礎評分</th><th>平均體重</th>'
-    html += '</tr></thead><tbody>'
-    
-    for _, row in display_df.iterrows():
-        score = row.get("基礎評分", 0)
-        if score >= 85:
-            score_class = "score-high"
-        elif score >= 70:
-            score_class = "score-mid-high"
-        elif score >= 55:
-            score_class = "score-mid"
-        else:
-            score_class = "score-low"
-        
-        # 格式化百分比
-        win_rate = f"{row.get('勝率', 0):.1f}%" if row.get('勝率', 0) > 0 else "0.0%"
-        place_rate = f"{row.get('入Q率', 0):.1f}%" if row.get('入Q率', 0) > 0 else "0.0%"
-        show_rate = f"{row.get('入T率', 0):.1f}%" if row.get('入T率', 0) > 0 else "0.0%"
-        
-        avg_weight = row.get('平均體重', 0)
-        weight_display = f"{int(avg_weight)}" if avg_weight > 0 else "-"
-        
-        html += f"""
-        <tr>
-            <td>{row.get('馬名', '-')}</td>
-            <td>{win_rate}</td>
-            <td>{place_rate}</td>
-            <td>{show_rate}</td>
-            <td class="{score_class}">{score:.0f}</td>
-            <td>{weight_display}</td>
-        </tr>
-        """
-    
-    html += '</tbody></table>'
-    
-    # 渲染 HTML
-    from streamlit.components.v1 import html as st_html
-    st_html(html, height=500, scrolling=True)
-    
-    # 显示页数信息
-    st.caption(f"📊 第 {page} / {total_pages} 頁，共 {len(df)} 匹馬")
+    st.caption(f"📊 共 {len(df)} 匹馬")
 
 
 # ==================== 主页函数（替换原有的render_home） ====================
