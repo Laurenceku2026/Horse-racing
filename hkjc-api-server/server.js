@@ -54,8 +54,8 @@ app.post('/api/sync/race', async (req, res) => {
         let oddsData = null;
         try {
             oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(date, venue, parseInt(raceNo), ['WIN', 'PLA', 'QIN']);
-            if (oddsData) {
-                console.log(`[赔率] 获取成功，WIN赔率数量: ${oddsData.WIN?.length || 0}`);
+            if (oddsData && oddsData.WIN) {
+                console.log(`[赔率] 获取成功，WIN赔率数量: ${oddsData.WIN.length}`);
             } else {
                 console.log(`[赔率] 无数据`);
             }
@@ -89,7 +89,8 @@ app.post('/api/sync/race', async (req, res) => {
         const runners = raceDetails.runners || [];
         
         for (const runner of runners) {
-            // 获取马名
+            // 获取马匹信息
+            const horseId = runner.id || runner.horseId || '';
             const horseName = runner.name_en || runner.horseName || 'Unknown';
             const horseNo = parseInt(runner.no) || 0;
             const draw = parseInt(runner.barrierDrawNumber) || 0;
@@ -102,6 +103,9 @@ app.post('/api/sync/race', async (req, res) => {
                 jockeyName = runner.jockey.name_en || '';
             }
             
+            // 中文名
+            const horseNameZh = runner.name_ch || '';
+            
             // 获取赔率
             let winOdds = null;
             if (oddsData && oddsData.WIN) {
@@ -111,14 +115,15 @@ app.post('/api/sync/race', async (req, res) => {
                 }
             }
             
-            // 保存马匹
-            if (horseName && horseName !== 'Unknown') {
+            // 保存马匹到 horses 表
+            if (horseId) {
                 await supabase
                     .from('horses')
                     .upsert({
+                        hkjc_id: horseId,
                         name_en: horseName,
-                        name_zh: runner.name_ch || ''
-                    }, { onConflict: 'name_en' });
+                        name_zh: horseNameZh
+                    }, { onConflict: 'hkjc_id' });
             }
             
             // 保存骑师
@@ -131,14 +136,16 @@ app.post('/api/sync/race', async (req, res) => {
                     }, { onConflict: 'name_en' });
             }
             
-            // 保存出赛记录（包含赔率）
+            // 保存出赛记录（包含 horse_id）
             const { error: runnerError } = await supabase
                 .from('race_runners')
                 .upsert({
                     race_date: date,
                     race_no: parseInt(raceNo),
                     venue: venue,
+                    horse_id: horseId,
                     horse_name: horseName,
+                    horse_name_zh: horseNameZh,
                     horse_no: horseNo,
                     draw: draw,
                     actual_weight: actualWeight,
@@ -149,6 +156,8 @@ app.post('/api/sync/race', async (req, res) => {
             
             if (runnerError) {
                 console.error(`保存出赛记录失败 ${horseName}:`, runnerError);
+            } else {
+                console.log(`保存马匹: ${horseName}, horse_id: ${horseId}, 档位: ${draw}, 骑师: ${jockeyName}`);
             }
         }
         
