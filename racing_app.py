@@ -1766,7 +1766,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
     try:
         headers = get_supabase_headers(use_secret=True)
         # 确保 select 中包含 horse_id
-        url = f"{SUPABASE_URL}/rest/v1/race_runners?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&select=*,horse_id"
+        url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&select=*,horse_id"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -2077,7 +2077,7 @@ def get_historical_draws_for_training(limit: int = 300) -> List[Dict]:
             races = response.json()
             # 获取每场比赛的出赛马匹
             for race in races:
-                runners_url = f"{SUPABASE_URL}/rest/v1/race_runners?race_id=eq.{race.get('race_id')}"
+                runners_url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_id=eq.{race.get('race_id')}"
                 runners_response = requests.get(runners_url, headers=headers)
                 if runners_response.status_code == 200:
                     race['runners'] = runners_response.json()
