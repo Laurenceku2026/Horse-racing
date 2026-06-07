@@ -2271,12 +2271,25 @@ def render_smart_betting(show_title: bool = True):
         cols = st.columns(3)
         for i, horse in enumerate(top3):
             prob = horse.get('win_probability', 0) * 100
-            odds = horse.get('odds_win', 0)
+            odds_raw = horse.get('odds_win')
+            
+            # 安全处理赔率
+            try:
+                odds = float(odds_raw) if odds_raw else 0
+            except (ValueError, TypeError):
+                odds = 0
+            
             score = horse.get('overall_score', 0)
             horse_id = horse.get('horse_id')
             horse_name = name_cache.get(horse_id, '')
-            kelly = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
-            stake = bankroll * kelly * risk_multiplier
+            
+            # 安全计算凯利
+            if odds > 0:
+                kelly = calculate_kelly_fraction(prob / 100, odds)
+            else:
+                kelly = 0
+            
+            stake = bankroll * kelly * risk_multiplier if kelly > 0 else 0
             
             with cols[i]:
                 st.markdown(f"""
@@ -2320,10 +2333,17 @@ def render_smart_betting(show_title: bool = True):
                             r['win_probability'] = ml_probs[i]
                 
                 top_horses = sorted(race_runners, key=lambda x: x.get('win_probability', 0), reverse=True)[:2]
-                
+                #-----------
                 for horse in top_horses:
                     prob = horse.get('win_probability', 0)
-                    odds = horse.get('odds_win', 0)
+                    odds_raw = horse.get('odds_win')
+                    
+                    # 安全处理赔率
+                    try:
+                        odds = float(odds_raw) if odds_raw else 0
+                    except (ValueError, TypeError):
+                        odds = 0
+                    
                     if prob <= 0 or odds <= 1:
                         continue
                     
