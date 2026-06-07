@@ -2254,7 +2254,9 @@ def render_smart_betting(show_title: bool = True):
     # 构建表格数据
     race_data = []
     for runner in sorted_runners:
-        horse_name = runner.get('horse_name_zh', runner.get('horse_name_en', ''))
+        horse_name = runner.get('horse_name', '')
+        if not horse_name:
+            horse_name = runner.get('horse_name_en', '')
         horse_no = runner.get('horse_no', '-')
         draw = runner.get('draw', '-')
         weight = runner.get('actual_weight', '-')
