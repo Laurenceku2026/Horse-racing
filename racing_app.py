@@ -1725,7 +1725,9 @@ def get_upcoming_races() -> List[Dict]:
         url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_two_weeks}&order=race_date.asc,race_no.asc"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            return response.json()
+            races = response.json()
+            print(f"get_upcoming_races 返回 {len(races)} 条记录")  # 调试
+            return races
         return []
     except Exception as e:
         print(f"获取未来赛事失败: {e}")
@@ -2128,30 +2130,32 @@ def render_smart_betting(show_title: bool = True):
     
     # ==================== 选择赛日 ====================
     st.markdown("### 📅 選擇賽日")
-
-    # ... 后续代码
+    
+    # 刷新赛程按钮
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        refresh_schedule_btn = st.button("🔄 刷新賽程", use_container_width=True)
+    #--------------
+    if refresh_schedule_btn:
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在同步最新賽程..."):
+                result = sync_future_races(days=14)
+                if result.get("total", 0) > 0:
+                    st.success(f"同步完成！成功 {result.get('success', 0)} 场，失败 {result.get('failed', 0)} 场")
+                    st.rerun()
+                else:
+                    st.info("未来14天暂无赛事")
+    
+    # 获取未来赛事
     upcoming_races = get_upcoming_races()
     
     if not upcoming_races:
-        st.info("📌 未來7天暫無賽事，請點擊「更新數據」同步最新賽程")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            if st.button("🔄 更新賽程", use_container_width=True):
-                if consume_free_trial(st.session_state.user_id):
-                    with st.spinner("正在更新賽程..."):
-                        today = datetime.now().strftime("%Y-%m-%d")
-                        result = update_all_data_for_date(today)
-                        if result["total"] > 0:
-                            st.success(f"更新完成！成功 {result['success']} 場")
-                            st.rerun()
-                        else:
-                            st.info("今日暫無賽事")
-                else:
-                    st.warning("免費次數已用完")
+        st.info("📌 未來14天暫無賽事，請點擊「刷新賽程」同步最新賽程")
         return
     
-    # 按日期分组显示
+    # 按日期分组
     dates = sorted(set([r.get('race_date') for r in upcoming_races]))
     date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
     
@@ -2159,11 +2163,7 @@ def render_smart_betting(show_title: bool = True):
     selected_date = selected_date_str.split(" ")[0]
     
     # 获取该日期的所有赛事
-    races = get_races_by_date(selected_date)
-    
-    if not races:
-        st.warning("該日期暫無賽事數據")
-        return
+    races = [r for r in upcoming_races if r.get('race_date') == selected_date]
     
     st.markdown(f"**📋 共 {len(races)} 場賽事**")
     st.markdown("---")
@@ -2172,11 +2172,31 @@ def render_smart_betting(show_title: bool = True):
     st.markdown("### 📊 單場分析")
     
     # 选择场次
-    race_options = [f"第{r.get('race_no')}場 - {r.get('distance')}米 ({r.get('venue', 'ST')}) - {r.get('race_class', '')}" for r in races]
-    selected_race_idx = st.selectbox("選擇場次", range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
+    race_options = []
+    for r in races:
+        distance = r.get('distance', 0)
+        race_class = r.get('race_class', '')
+        race_options.append(f"第{r.get('race_no')}場 - {distance}米 ({race_class})")
     
-    selected_race = races[selected_race_idx]
-    race_id = selected_race.get('race_id')
+    selected_idx = st.selectbox("選擇場次", range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
+    selected_race = races[selected_idx]
+    
+    # 刷新本场数据按钮
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        refresh_race_btn = st.button("🔄 更新本場數據", key="refresh_race")
+    
+    if refresh_race_btn:
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在更新最新賠率和出賽馬匹..."):
+                result = sync_single_race(selected_race)
+                if result:
+                    st.success("數據已更新")
+                    st.rerun()
+                else:
+                    st.warning("更新失敗")
     
     # 获取出赛马匹
     runners = get_race_runners_with_details(
@@ -2186,7 +2206,7 @@ def render_smart_betting(show_title: bool = True):
     )
     
     if not runners:
-        st.warning("暫無出賽馬匹數據")
+        st.warning("暫無出賽馬匹數據，請點擊「更新本場數據」同步")
         return
     
     # 获取用户权重
@@ -2197,13 +2217,12 @@ def render_smart_betting(show_title: bool = True):
         "temperature": 0.8,
         "odds_mix_ratio": 0.6
     }
-    #-----------
+    
     # 根据选择的模型计算胜率
     if model_choice == "评分系统":
         with st.spinner("正在計算馬匹勝率（評分系統）..."):
-            scores, probabilities = calculate_all_horses_scores(race_id, runners, user_weights)
+            scores, probabilities = calculate_all_horses_scores(selected_race.get('race_id'), runners, user_weights)
         
-        # 更新runner数据
         for i, runner in enumerate(runners):
             if i < len(scores):
                 runner['basic_score'] = scores[i].get('basic_score', 0)
@@ -2212,16 +2231,13 @@ def render_smart_betting(show_title: bool = True):
                 runner['overall_score'] = scores[i].get('combined_score', 0)
                 runner['win_probability'] = scores[i].get('win_probability', 0) / 100
     else:
-        # 使用 ML 模型预测
         model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
         with st.spinner(f"正在計算馬匹勝率（{model_choice}）..."):
-            ml_probs = get_model_predictions(race_id, runners, model_type)
+            ml_probs = get_model_predictions(selected_race.get('race_id'), runners, model_type)
         
-        # 更新runner数据
         for i, runner in enumerate(runners):
             if i < len(ml_probs):
                 runner['win_probability'] = ml_probs[i]
-                # ML 模型没有详细的子评分，设置默认值
                 runner['basic_score'] = 50
                 runner['race_score'] = 50
                 runner['odds_score'] = 50
@@ -2232,27 +2248,27 @@ def render_smart_betting(show_title: bool = True):
     # 按胜率排序
     sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
     
-    # 显示分析结果
-    st.markdown(f"#### 🏇 第{selected_race.get('race_no')}場 分析結果")
+    # 显示分析结果表格
+    st.markdown(f"#### 🏇 第{selected_race.get('race_no')}場 出賽馬匹")
     
-    # 表格显示
+    # 构建表格数据
     race_data = []
     for runner in sorted_runners:
         horse_name = runner.get('horse_name_zh', runner.get('horse_name_en', ''))
+        horse_no = runner.get('horse_no', '-')
         draw = runner.get('draw', '-')
         weight = runner.get('actual_weight', '-')
-        odds_win = runner.get('odds_win')
+        jockey = runner.get('jockey_name', '-')
         
-        # 安全处理赔率
+        odds_raw = runner.get('odds_win')
         try:
-            odds_display = f"{float(odds_win):.1f}" if odds_win and float(odds_win) > 0 else "-"
+            odds_display = f"{float(odds_raw):.1f}" if odds_raw and float(odds_raw) > 0 else "-"
         except (ValueError, TypeError):
             odds_display = "-"
         
         prob = runner.get('win_probability', 0) * 100
         score = runner.get('overall_score', 0)
         
-        # 等级
         if score >= 85:
             level = "S"
         elif score >= 70:
@@ -2265,30 +2281,30 @@ def render_smart_betting(show_title: bool = True):
             level = "D"
         
         race_data.append({
+            "馬號": horse_no,
             "馬名": horse_name,
             "檔位": draw,
             "負磅": weight,
+            "騎師": jockey,
             "賠率": odds_display,
+            "勝率": f"{prob:.1f}%",
             "綜合評分": f"{score:.0f}",
-            "等級": level,
-            "勝率": f"{prob:.1f}%"
+            "等級": level
         })
     
     st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
     
-    # 投注建议
+    # ==================== 投注建议 ====================
     st.markdown("#### 💡 投注建議")
     
-    top3 = get_top_horses_by_probability(runners, limit=3)
+    top3 = sorted_runners[:3] if len(sorted_runners) >= 3 else sorted_runners
     
     if top3:
-        col1, col2, col3 = st.columns(3)
-        
+        cols = st.columns(len(top3))
         for i, horse in enumerate(top3):
             prob = horse.get('win_probability', 0) * 100
             odds_raw = horse.get('odds_win')
             
-            # 安全转换赔率
             try:
                 odds = float(odds_raw) if odds_raw else 0
             except (ValueError, TypeError):
@@ -2296,14 +2312,15 @@ def render_smart_betting(show_title: bool = True):
             
             score = horse.get('overall_score', 0)
             horse_name = horse.get('horse_name_zh', horse.get('horse_name_en', ''))
+            horse_no = horse.get('horse_no', '')
             
             kelly_fraction = calculate_kelly_fraction(prob / 100, odds) if odds > 0 else 0
             suggested_stake = bankroll * kelly_fraction * risk_multiplier
             
-            with [col1, col2, col3][i]:
+            with cols[i]:
                 st.markdown(f"""
                 <div style="background-color: #f8f9fa; padding: 0.8rem; border-radius: 0.5rem; margin-bottom: 0.5rem;">
-                    <strong>🥇 {horse_name}</strong><br>
+                    <strong>🥇 {horse_no}號 {horse_name}</strong><br>
                     勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
                     評分: {score:.0f}<br>
                     建議注額: <strong>HK${suggested_stake:.0f}</strong>
@@ -2321,29 +2338,44 @@ def render_smart_betting(show_title: bool = True):
                     horse2 = top3[j]
                     prob1 = horse1.get('win_probability', 0)
                     prob2 = horse2.get('win_probability', 0)
-                    joint_prob = prob1 * prob2 * 2  # 近似联合概率
+                    joint_prob = prob1 * prob2 * 2
                     
-                    # 安全获取赔率
                     odds1_raw = horse1.get('odds_win')
                     odds2_raw = horse2.get('odds_win')
                     
-                    # 安全转换赔率
                     try:
                         odds1 = float(odds1_raw) if odds1_raw else 0
-                    except (ValueError, TypeError):
-                        odds1 = 0
-                    
-                    try:
                         odds2 = float(odds2_raw) if odds2_raw else 0
                     except (ValueError, TypeError):
-                        odds2 = 0
+                        odds1 = odds2 = 0
                     
-                    # 连赢赔率估算（简化：取两匹马赔率乘积的一半）
                     qin_odds = (odds1 * odds2) / 2 if odds1 > 0 and odds2 > 0 else 0
                     
                     if qin_odds > 0 and joint_prob * qin_odds > 1:
                         suggested_qin = bankroll * 0.05 * risk_multiplier
-                        st.markdown(f"**{horse1.get('horse_name_zh', '')} + {horse2.get('horse_name_zh', '')}** | 建議注額: HK${suggested_qin:.0f}")
+                        st.markdown(f"**{horse1.get('horse_no', '')} + {horse2.get('horse_no', '')}號** | 建議注額: HK${suggested_qin:.0f}")
+    
+    st.markdown("---")
+    st.caption("⚠️ 本建議基於AI模型預測，不保證實際收益。請理性投注，切勿超出預算。")
+
+def sync_single_race(race: Dict) -> bool:
+    """同步单场赛事的最新数据（赔率、出赛马匹）"""
+    try:
+        API_BASE_URL = st.secrets.get("HKJC_API_URL", "")
+        if not API_BASE_URL:
+            return False
+        
+        sync_url = f"{API_BASE_URL}/sync/race"
+        response = requests.post(sync_url, json={
+            "date": race.get('race_date'),
+            "venue": race.get('venue'),
+            "raceNo": race.get('race_no')
+        }, timeout=60)
+        
+        return response.status_code == 200 and response.json().get("success")
+    except Exception as e:
+        print(f"同步单场赛事失败: {e}")
+        return False
     #----------------
     # ==================== DeepSeek AI 分析 ====================
     st.markdown("### 🤖 AI 智能分析")
