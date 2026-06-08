@@ -3271,12 +3271,17 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
             
             if not sorted_runners:
+                st.write(f"DEBUG: {race_date} 第{race_no}场 - 无 runners")
                 continue
             
             # 预测冠军
             predicted_winner = sorted_runners[0].get('horse_name')
+            predicted_score = sorted_runners[0].get('win_probability', 0)
             predicted_top3 = [r.get('horse_name') for r in sorted_runners[:3]]
-            #-----
+            
+            # 调试：显示预测信息
+            st.write(f"DEBUG: {race_date} 第{race_no}场 - 预测冠军: '{predicted_winner}', 概率: {predicted_score}")
+            
             # 获取实际结果（从 past_performances 表）
             actual_winner = None
             actual_top3 = []
@@ -3287,26 +3292,21 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 if perf_response.status_code == 200:
                     perf_data = perf_response.json()
                     if not perf_data:
-                        # 没有实际结果，跳过这场赛事
-                        print(f"跳过 {race_date} 第{race_no}场：无实际结果")
-                        continue  # 跳过，不计入测试场次
+                        st.write(f"DEBUG: {race_date} 第{race_no}场 - 无实际结果，跳过")
+                        continue
                     for p in perf_data:
                         pos = p.get('position')
                         if pos == 1:
                             actual_winner = p.get('horse_name')
                         if pos and pos <= 3:
                             actual_top3.append(p.get('horse_name'))
+                    st.write(f"DEBUG: {race_date} 第{race_no}场 - 实际冠军: '{actual_winner}'")
+                else:
+                    st.write(f"DEBUG: {race_date} 第{race_no}场 - API返回 {perf_response.status_code}")
+                    continue
             except Exception as e:
-                print(f"获取实际结果失败: {e}")
-                continue  # 出错时跳过
-            
-            # 记录调试明细
-            result["debug_details"].append({
-                "场次": f"{race_date} 第{race_no}场",
-                "预测冠军": predicted_winner,
-                "实际冠军": actual_winner,
-                "是否正确": "✅" if predicted_winner == actual_winner else "❌"
-            })
+                st.write(f"DEBUG: 获取实际结果失败: {e}")
+                continue
             
             # 记录调试明细
             result["debug_details"].append({
