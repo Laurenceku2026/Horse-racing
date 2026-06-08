@@ -3270,11 +3270,14 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             actual_top3 = []
             
             try:
-                # 查询 past_performances 表获取该场赛事的结果
                 perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&select=horse_name,position&order=position.asc"
                 perf_response = requests.get(perf_url, headers=get_supabase_headers(use_secret=True))
                 if perf_response.status_code == 200:
                     perf_data = perf_response.json()
+                    if not perf_data:
+                        # 没有实际结果，跳过这场赛事
+                        print(f"跳过 {race_date} 第{race_no}场：无实际结果")
+                        continue  # 跳过，不计入测试场次
                     for p in perf_data:
                         pos = p.get('position')
                         if pos == 1:
@@ -3283,6 +3286,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                             actual_top3.append(p.get('horse_name'))
             except Exception as e:
                 print(f"获取实际结果失败: {e}")
+                continue  # 出错时跳过
             
             # 记录调试明细
             result["debug_details"].append({
