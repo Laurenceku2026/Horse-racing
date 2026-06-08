@@ -57,8 +57,16 @@ async function getRacesNeedingOdds() {
 }
 
 // 保存赔率快照到历史表
+// 保存赔率快照到历史表（带去重）
 async function saveOddsSnapshot(race, horseNo, oddsType, oddsValue, minutesToStart) {
     try {
+        // 检查是否已存在
+        const exists = await hasOddsSnapshot(race, horseNo, oddsType, minutesToStart);
+        if (exists) {
+            console.log(`[跳过] 已存在: ${race.date} ${race.venue} R${race.raceNo} 马${horseNo} ${oddsType} @ ${minutesToStart}分钟`);
+            return;
+        }
+        
         const { error } = await supabase
             .from('odds_history')
             .insert({
@@ -74,6 +82,8 @@ async function saveOddsSnapshot(race, horseNo, oddsType, oddsValue, minutesToSta
         
         if (error) {
             console.error(`保存赔率历史失败: ${error.message}`);
+        } else {
+            console.log(`[保存] ${race.date} ${race.venue} R${race.raceNo} 马${horseNo} ${oddsType} = ${oddsValue} @ ${minutesToStart}分钟`);
         }
     } catch (error) {
         console.error(`保存赔率历史异常: ${error.message}`);
@@ -84,8 +94,14 @@ async function saveOddsSnapshot(race, horseNo, oddsType, oddsValue, minutesToSta
 async function collectOddsForRace(race) {
     console.log(`[采集] ${race.date} ${race.venue} 第${race.raceNo}场 (${race.minutesToStart}分钟后开跑)`);
     
+    // 智能采集：只采集关键时间点
+    if (!shouldCollectOdds(race.minutesToStart)) {
+        console.log(`[跳过] 非关键时间点: ${race.minutesToStart}分钟`);
+        return null;
+    }
+    
     try {
-        // 获取所有赔率类型
+        // 获取所有赔率类型（WIN, PLA, QIN, FCT, TCE, TRI）
         const oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(
             race.date, race.venue, race.raceNo, 
             ['WIN', 'PLA', 'QIN', 'FCT', 'TCE', 'TRI']
@@ -142,6 +158,12 @@ async function collectOddsForRace(race) {
         }
         
         console.log(`[采集] 完成，保存了 ${savedCount} 条记录`);
+        
+        // 每采集 10 次触发一次清理
+        if (Math.random() < 0.1) {
+            await triggerDatabaseCleanup();
+        }
+        
         return { success: true, runners: runners.length, saved: savedCount };
         
     } catch (error) {
@@ -192,7 +214,67 @@ async function updateFinalOdds(race) {
         console.error(`[最终赔率] 更新失败: ${error.message}`);
     }
 }
+// ==================== 数据清理函数 ====================
 
+// 调用 Supabase 清理函数
+async function triggerDatabaseCleanup() {
+    try {
+        const { data, error } = await supabase.rpc('manual_cleanup');
+        if (error) {
+            console.error('清理失败:', error);
+        } else {
+            console.log('清理完成:', data);
+        }
+    } catch (err) {
+        console.error('清理异常:', err);
+    }
+}
+
+// ==================== 智能赔率采集判断 ====================
+
+// 判断是否应该采集该时间点的赔率
+function shouldCollectOdds(minutesBeforeRace) {
+    // 只采集开跑前 90 分钟内的数据
+    if (minutesBeforeRace > 90) return false;
+    if (minutesBeforeRace < 0) return false;
+    
+    // 关键时间点定义
+    const keyMinutes = [
+        // 赔率公布期
+        90, 80, 70, 60,
+        // 稳定期
+        50, 45, 40, 35,
+        // 活跃期
+        30, 27, 24, 21,
+        // 冲刺期
+        18, 15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+        // 最终值
+        0
+    ];
+    
+    return keyMinutes.includes(minutesBeforeRace);
+}
+
+// 检查该时间点是否已经采集过（避免重复）
+async function hasOddsSnapshot(race, horseNo, oddsType, minutesBeforeRace) {
+    try {
+        const { data, error } = await supabase
+            .from('odds_history')
+            .select('id')
+            .eq('race_date', race.date)
+            .eq('venue', race.venue)
+            .eq('race_no', race.raceNo)
+            .eq('horse_no', horseNo)
+            .eq('odds_type', oddsType)
+            .eq('minutes_before_race', minutesBeforeRace)
+            .limit(1);
+        
+        if (error) return false;
+        return data && data.length > 0;
+    } catch (err) {
+        return false;
+    }
+}
 // ==================== 赔率采集 API 端点 ====================
 
 // 端点1：手动触发采集（用于测试）
