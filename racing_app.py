@@ -1723,7 +1723,7 @@ def render_home():
     st.markdown("---")
     
     # ==================== 模块3：智能投注 ====================
-    render_smart_betting(show_title=False)
+    render_smart_betting(show_title=True)
     
     st.markdown("---")
     
