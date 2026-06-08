@@ -1622,14 +1622,26 @@ def render_home():
         perf_url = f"{SUPABASE_URL}/rest/v1/past_performances"
         perf_response = requests.get(perf_url, headers=headers)
         perf_count = len(perf_response.json()) if perf_response.status_code == 200 else 0
-        
-        # 最新和最旧赛事日期
-        races_data = races_response.json() if races_response.status_code == 200 else []
-        if races_data:
-            dates = [r.get('race_date') for r in races_data if r.get('race_date')]
-            latest_date = max(dates) if dates else 'N/A'
-            oldest_date = min(dates) if dates else 'N/A'
-        else:
+        #------
+        # 获取最新和最旧赛事日期（从 past_performances 表）
+        try:
+            # 获取最新日期
+            perf_url_latest = f"{SUPABASE_URL}/rest/v1/past_performances?select=race_date&order=race_date.desc&limit=1"
+            perf_response_latest = requests.get(perf_url_latest, headers=headers)
+            if perf_response_latest.status_code == 200 and perf_response_latest.json():
+                latest_date = perf_response_latest.json()[0]['race_date']
+            else:
+                latest_date = 'N/A'
+            
+            # 获取最旧日期
+            perf_url_oldest = f"{SUPABASE_URL}/rest/v1/past_performances?select=race_date&order=race_date.asc&limit=1"
+            perf_response_oldest = requests.get(perf_url_oldest, headers=headers)
+            if perf_response_oldest.status_code == 200 and perf_response_oldest.json():
+                oldest_date = perf_response_oldest.json()[0]['race_date']
+            else:
+                oldest_date = 'N/A'
+        except Exception as e:
+            print(f"获取日期范围失败: {e}")
             latest_date = 'N/A'
             oldest_date = 'N/A'
         
@@ -1642,7 +1654,7 @@ def render_home():
         with col3:
             st.metric("📊 成績記錄總數", perf_count)
         with col4:
-            st.metric("📅 數據日期範圍", f"{oldest_date} ~ {latest_date}" if latest_date != 'N/A' else "暂无数据")
+            st.metric("📅 數據日期範圍", f"{oldest_date} ~ {latest_date}", help="基于历史成绩数据的日期范围")
         
         # 第二行：骑师和练马师
         jockeys_url = f"{SUPABASE_URL}/rest/v1/jockeys"
