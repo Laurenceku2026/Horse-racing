@@ -3271,7 +3271,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
             
             if not sorted_runners:
-                st.write(f"DEBUG: {race_date} 第{race_no}场 - 无 runners")
+                st.error(f"DEBUG: {race_date} 第{race_no}场 - 无 runners")
                 continue
             
             # 预测冠军
@@ -3302,7 +3302,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                             actual_top3.append(p.get('horse_name'))
                     st.error(f"DEBUG: {race_date} 第{race_no}场 - 实际冠军: '{actual_winner}'")
                 else:
-                    st.error(f"DEBUG: {race_date} 第{race_no}场 - API返回 {perf_response.status_cod
+                    st.error(f"DEBUG: {race_date} 第{race_no}场 - API返回 {perf_response.status_code}")
                     continue
             except Exception as e:
                 st.error(f"DEBUG: 获取实际结果失败: {e}")
