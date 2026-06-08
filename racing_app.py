@@ -12,6 +12,8 @@ import requests
 import json
 import time
 import hmac
+import plotly.graph_objects as go
+import plotly.express as px
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from supabase import create_client, Client
