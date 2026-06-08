@@ -3194,14 +3194,13 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         "模型": "评分系统" if model_type == "rule" else model_type.upper(),
         "测试场次": 0,
         "预测正确": 0,
-        "预测冠军": "",  # 新增
         "前三名命中": 0,
         "准确率": 0,
         "前三名命中率": 0,
         "总回报": 0,
         "总投入": 0,
-        "ROI": 0
-        "debug_details": [],  # 新增：调试明细
+        "ROI": 0,
+        "debug_details": [],
     }
     
     try:
