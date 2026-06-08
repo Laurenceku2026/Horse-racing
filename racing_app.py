@@ -3127,14 +3127,145 @@ def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -
     
     return result
 #-----------
+def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> Dict:
+    """运行单个模型的回测"""
+    result = {
+        "模型": "评分系统" if model_type == "rule" else model_type.upper(),
+        "测试场次": 0,
+        "预测正确": 0,
+        "预测冠军": "",  # 新增
+        "前三名命中": 0,
+        "准确率": 0,
+        "前三名命中率": 0,
+        "总回报": 0,
+        "总投入": 0,
+        "ROI": 0
+    }
+    
+    try:
+        # 获取回测期间的赛事
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{start_date}&race_date=lte.{end_date}&order=race_date.asc"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            return result
+        
+        races = response.json()
+        result["测试场次"] = len(races)
+        
+        # 用户权重
+        user_weights = {
+            "basic": 0.30,
+            "race": 0.40,
+            "odds": 0.30,
+            "temperature": 0.8,
+            "odds_mix_ratio": 0.6
+        }
+        
+        total_stake = 0
+        total_return = 0
+        correct_predictions = 0
+        top3_hits = 0
+        
+        for race in races:
+            race_date = race.get('race_date')
+            venue = race.get('venue', 'ST')
+            race_no = race.get('race_no', 1)
+            
+            # 获取出赛马匹
+            runners = get_race_runners_with_details(race_date, venue, race_no)
+            
+            if not runners:
+                continue
+            
+            # 根据模型类型计算胜率
+            if model_type == "rule":
+                # 评分系统
+                scores, probabilities = calculate_all_horses_scores(race.get('race_id'), runners, user_weights)
+                for i, runner in enumerate(runners):
+                    if i < len(probabilities):
+                        runner['win_probability'] = probabilities[i]
+            else:
+                # ML 模型
+                model_key = 'lightgbm' if model_type == 'lightgbm' else 'xgboost' if model_type == 'xgboost' else 'ensemble'
+                ml_probs = get_model_predictions(race.get('race_id'), runners, model_key)
+                for i, runner in enumerate(runners):
+                    if i < len(ml_probs):
+                        runner['win_probability'] = ml_probs[i]
+            
+            # 按胜率排序
+            sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
+            
+            if not sorted_runners:
+                continue
+            
+            # 预测冠军
+            predicted_winner = sorted_runners[0].get('horse_name')
+            predicted_top3 = [r.get('horse_name') for r in sorted_runners[:3]]
+            
+            # 获取实际结果
+            actual_winner = None
+            actual_top3 = []
+            for runner in runners:
+                pos = runner.get('finishing_position')
+                if pos == 1:
+                    actual_winner = runner.get('horse_name')
+                if pos and pos <= 3:
+                    actual_top3.append(runner.get('horse_name'))
+            
+            # 判断预测是否正确
+            if predicted_winner and actual_winner and predicted_winner == actual_winner:
+                correct_predictions += 1
+                
+                # 模拟投注（假设每场投注 100 元）
+                total_stake += 100
+                odds = sorted_runners[0].get('odds_win', 3.0)
+                try:
+                    odds = float(odds) if odds else 3.0
+                except:
+                    odds = 3.0
+                total_return += 100 * odds
+            
+            # 前三名命中率
+            if predicted_top3 and actual_top3:
+                hits = len(set(predicted_top3) & set(actual_top3))
+                if hits > 0:
+                    top3_hits += 1
+        
+        if result["测试场次"] > 0:
+            result["预测正确"] = correct_predictions
+            result["准确率"] = correct_predictions / result["测试场次"] * 100
+            result["前三名命中"] = top3_hits
+            result["前三名命中率"] = top3_hits / result["测试场次"] * 100
+            result["总投入"] = total_stake
+            result["总回报"] = total_return
+            if total_stake > 0:
+                result["ROI"] = (total_return - total_stake) / total_stake * 100
+        
+    except Exception as e:
+        print(f"回测失败 ({model_type}): {e}")
+    
+    return result
+#-----------
 def render_backtest_page(show_title: bool = True):
     """回测页面：模型对比 + 单场回测 + 全天回测"""
     if show_title:
         st.markdown("## 📊 回測")
     
-    # ==================== 新增：模型对比回测 ====================
+    # ==================== 模型对比回测（新增）====================
     st.markdown("### 🤖 模型對比回測")
     st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        enable_rule = st.checkbox("评分系统", value=True, key="backtest_rule")
+    with col2:
+        enable_lgb = st.checkbox("LightGBM", value=True, key="backtest_lgb")
+    with col3:
+        enable_xgb = st.checkbox("XGBoost", value=True, key="backtest_xgb")
+    with col4:
+        enable_ensemble = st.checkbox("集成模型", value=True, key="backtest_ensemble")
     
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -3157,10 +3288,39 @@ def render_backtest_page(show_title: bool = True):
             st.warning("免費次數已用完，請升級到專業版")
         else:
             with st.spinner("正在運行模型對比回測..."):
-                results = run_models_backtest(
-                    start_date=backtest_start.strftime("%Y-%m-%d"),
-                    end_date=backtest_end.strftime("%Y-%m-%d")
-                )
+                results = []
+                
+                if enable_rule:
+                    result = run_backtest_for_model(
+                        start_date=backtest_start.strftime("%Y-%m-%d"),
+                        end_date=backtest_end.strftime("%Y-%m-%d"),
+                        model_type="rule"
+                    )
+                    results.append(result)
+                
+                if enable_lgb:
+                    result = run_backtest_for_model(
+                        start_date=backtest_start.strftime("%Y-%m-%d"),
+                        end_date=backtest_end.strftime("%Y-%m-%d"),
+                        model_type="lightgbm"
+                    )
+                    results.append(result)
+                
+                if enable_xgb:
+                    result = run_backtest_for_model(
+                        start_date=backtest_start.strftime("%Y-%m-%d"),
+                        end_date=backtest_end.strftime("%Y-%m-%d"),
+                        model_type="xgboost"
+                    )
+                    results.append(result)
+                
+                if enable_ensemble:
+                    result = run_backtest_for_model(
+                        start_date=backtest_start.strftime("%Y-%m-%d"),
+                        end_date=backtest_end.strftime("%Y-%m-%d"),
+                        model_type="ensemble"
+                    )
+                    results.append(result)
                 
                 if results:
                     st.markdown("#### 📈 模型對比結果")
@@ -3170,6 +3330,7 @@ def render_backtest_page(show_title: bool = True):
                     st.dataframe(
                         compare_df.style.format({
                             '准确率': '{:.1f}%',
+                            '前三名命中率': '{:.1f}%',
                             'ROI': '{:+.1f}%',
                             '总回报': '${:.0f}'
                         }),
@@ -3182,91 +3343,109 @@ def render_backtest_page(show_title: bool = True):
                     for model in results:
                         fig.add_trace(go.Bar(
                             name=model['模型'],
-                            x=['准确率', 'ROI'],
-                            y=[model['准确率'], model['ROI']],
-                            text=[f"{model['准确率']:.1f}%", f"{model['ROI']:+.1f}%"],
+                            x=['准确率', '前三名命中率', 'ROI'],
+                            y=[model['准确率'], model['前三名命中率'], model['ROI']],
+                            text=[f"{model['准确率']:.1f}%", f"{model['前三名命中率']:.1f}%", f"{model['ROI']:+.1f}%"],
                             textposition='auto'
                         ))
                     fig.update_layout(title="模型性能对比", barmode='group', height=400)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.warning("回测数据不足，请确保有足够的历史数据")
+                    st.warning("请至少选择一个模型")
     
     st.markdown("---")
     
-    # ==================== 原有的单场回测代码保持不变 ====================
-    # 获取用户权重
-    user_weights = {
-        "basic": 0.30,
-        "race": 0.40,
-        "odds": 0.30,
-        "temperature": 0.8,
-        "odds_mix_ratio": 0.6
-    }
-    
-    # 单场回测
-    st.markdown("### 🏇 單場回測")
-    st.caption("選擇一場已完成賽事，AI預測 vs 實際結果")
-    
-    # 获取历史赛事
-    historical_races = get_historical_races(limit=50)
-    
-    if not historical_races:
-        st.info("暫無歷史賽事數據，請確保數據庫中有已完成賽事")
-    else:
-        # 选择赛事
-        race_options = []
-        for r in historical_races:
-            race_date = r.get('race_date', '')
-            race_no = r.get('race_no', 0)
-            venue = r.get('venue', '')
-            distance = r.get('distance', 0)
-            race_options.append(f"{race_date} 第{race_no}場 - {venue} {distance}米")
+    # ... 原有的单场回测和全天回测代码保持不变 ...
+        # ==================== 原有的单场回测代码保持不变 ====================
+        # 获取用户权重
+        user_weights = {
+            "basic": 0.30,
+            "race": 0.40,
+            "odds": 0.30,
+            "temperature": 0.8,
+            "odds_mix_ratio": 0.6
+        }
+        #--------------
+        # ==================== 单场回测 ====================
+        st.markdown("### 🏇 單場回測")
+        st.caption("選擇一場已完成賽事，AI預測 vs 實際結果")
         
-        selected_idx = st.selectbox("選擇賽事", range(len(race_options)), format_func=lambda x: race_options[x], key="backtest_race_select")
-        selected_race = historical_races[selected_idx]
+        # 获取历史赛事
+        historical_races = get_historical_races(limit=50)
         
-        col1, col2 = st.columns(2)
-        with col1:
-            run_single_btn = st.button("▶️ 運行單場回測", use_container_width=True, type="primary")
-        with col2:
-            if st.button("🔄 刷新歷史數據", use_container_width=True):
-                st.rerun()
-        
-        if run_single_btn:
-            if not consume_free_trial(st.session_state.user_id):
-                st.warning("免費次數已用完，請升級到專業版")
-            else:
-                with st.spinner("正在運行回測..."):
-                    result = run_backtest_on_race(
-                        selected_race.get('race_id'),
-                        selected_race.get('race_date'),
-                        user_weights
-                    )
+        if not historical_races:
+            st.info("暫無歷史賽事數據，請確保數據庫中有已完成賽事")
+        else:
+            # 选择赛事
+            race_options = []
+            for r in historical_races:
+                race_date = r.get('race_date', '')
+                race_no = r.get('race_no', 0)
+                venue = r.get('venue', '')
+                distance = r.get('distance', 0)
+                race_options.append(f"{race_date} 第{race_no}場 - {venue} {distance}米")
+            
+            selected_idx = st.selectbox("選擇賽事", range(len(race_options)), format_func=lambda x: race_options[x], key="backtest_race_select")
+            selected_race = historical_races[selected_idx]
+            
+            # 模型选择（新增）
+            col1, col2, col3 = st.columns([2, 1, 1])
+            with col1:
+                single_model = st.selectbox(
+                    "選擇回測模型",
+                    options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
+                    key="single_backtest_model"
+                )
+            with col2:
+                run_single_btn = st.button("▶️ 運行單場回測", use_container_width=True, type="primary")
+            with col3:
+                if st.button("🔄 刷新歷史數據", use_container_width=True):
+                    st.rerun()
+            
+            if run_single_btn:
+                if not consume_free_trial(st.session_state.user_id):
+                    st.warning("免費次數已用完，請升級到專業版")
+                else:
+                    # 模型类型映射
+                    model_map = {
+                        "评分系统": "rule",
+                        "LightGBM": "lightgbm",
+                        "XGBoost": "xgboost",
+                        "集成模型": "ensemble"
+                    }
+                    model_type = model_map.get(single_model, "rule")
                     
-                    if result.get("success"):
-                        st.markdown("---")
-                        st.markdown("#### 📈 回測結果")
+                    with st.spinner(f"正在運行回測（{single_model}）..."):
+                        # 使用新的回测函数
+                        result = run_backtest_for_model(
+                            start_date=selected_race.get('race_date'),
+                            end_date=selected_race.get('race_date'),
+                            model_type=model_type
+                        )
                         
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            if result.get("is_correct"):
-                                st.success("✅ 預測正確")
-                            else:
-                                st.error("❌ 預測錯誤")
-                        with col2:
-                            st.metric("總出賽馬匹", result.get("total_runners", 0))
-                        with col3:
-                            st.metric("預測冠軍得分", f"{result.get('predicted_winner_score', 0):.0f}")
-                        
-                        st.info(f"🏆 實際冠軍: {result.get('actual_winner_name', '未知')}")
-                        
-                        # 前三名命中
-                        st.metric("前三名命中數", f"{result.get('top3_hits', 0)}/3")
-                    else:
-                        st.error(f"回測失敗: {result.get('error', '未知錯誤')}")
-    
-    st.markdown("---")
+                        if result.get("测试场次", 0) > 0:
+                            st.markdown("---")
+                            st.markdown("#### 📈 回測結果")
+                            
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                is_correct = result.get("预测正确", 0) > 0
+                                if is_correct:
+                                    st.success("✅ 預測正確")
+                                else:
+                                    st.error("❌ 預測錯誤")
+                            with col2:
+                                st.metric("總出賽馬匹", result.get("测试场次", 0))
+                            with col3:
+                                st.metric("準確率", f"{result.get('准确率', 0):.1f}%")
+                            with col4:
+                                st.metric("前三名命中率", f"{result.get('前三名命中率', 0):.1f}%")
+                            
+                            st.info(f"🏆 預測冠軍: {result.get('预测冠军', '未知') if result.get('预测正确', 0) > 0 else '未命中'}")
+                        else:
+                            st.error(f"回測失敗: {result.get('error', '未知錯誤')}")
+        
+        st.markdown("---")
     
     # ==================== 原有的全天回测代码保持不变 ====================
     st.markdown("### 📅 全天回測")
