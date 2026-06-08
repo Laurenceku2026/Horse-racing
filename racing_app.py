@@ -3189,7 +3189,7 @@ def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -
     return result
 #-----------
 def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> Dict:
-    """运行单个模型的回测"""
+    """运行单个模型的回测（直接从 past_performances 获取赛事）"""
     result = {
         "模型": "评分系统" if model_type == "rule" else model_type.upper(),
         "测试场次": 0,
@@ -3204,16 +3204,28 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
     }
     
     try:
-        # 获取回测期间的赛事
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{start_date}&race_date=lte.{end_date}&order=race_date.asc"
-        response = requests.get(url, headers=headers)
+        
+        # 直接从 past_performances 获取有数据的赛事（按日期去重）
+        perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=race_date,venue,race_no&race_date=gte.{start_date}&race_date=lte.{end_date}&order=race_date.asc,race_no.asc&limit=50000"
+        response = requests.get(perf_races_url, headers=headers)
         
         if response.status_code != 200:
             return result
         
-        races = response.json()
+        perf_data = response.json()
+        
+        # 去重获取唯一的赛事
+        unique_races = {}
+        for p in perf_data:
+            key = f"{p['race_date']}_{p['venue']}_{p['race_no']}"
+            if key not in unique_races:
+                unique_races[key] = p
+        
+        races = list(unique_races.values())
         result["测试场次"] = len(races)
+        
+        # ... 后续遍历 races 的代码保持不变 ...
         
         # 用户权重
         user_weights = {
