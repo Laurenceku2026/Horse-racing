@@ -3201,7 +3201,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         "总回报": 0,
         "总投入": 0,
         "ROI": 0
-        "debug_details": []  # 新增：调试明细
+        "debug_details": [],  # 新增：调试明细
     }
     
     try:
