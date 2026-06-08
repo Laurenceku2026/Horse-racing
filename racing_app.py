@@ -3264,16 +3264,33 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             # 预测冠军
             predicted_winner = sorted_runners[0].get('horse_name')
             predicted_top3 = [r.get('horse_name') for r in sorted_runners[:3]]
-            
-            # 获取实际结果
+            #-----
+            # 获取实际结果（从 past_performances 表）
             actual_winner = None
             actual_top3 = []
-            for runner in runners:
-                pos = runner.get('finishing_position')
-                if pos == 1:
-                    actual_winner = runner.get('horse_name')
-                if pos and pos <= 3:
-                    actual_top3.append(runner.get('horse_name'))
+            
+            try:
+                # 查询 past_performances 表获取该场赛事的结果
+                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&select=horse_name,position&order=position.asc"
+                perf_response = requests.get(perf_url, headers=get_supabase_headers(use_secret=True))
+                if perf_response.status_code == 200:
+                    perf_data = perf_response.json()
+                    for p in perf_data:
+                        pos = p.get('position')
+                        if pos == 1:
+                            actual_winner = p.get('horse_name')
+                        if pos and pos <= 3:
+                            actual_top3.append(p.get('horse_name'))
+            except Exception as e:
+                print(f"获取实际结果失败: {e}")
+            
+            # 记录调试明细
+            result["debug_details"].append({
+                "场次": f"{race_date} 第{race_no}场",
+                "预测冠军": predicted_winner,
+                "实际冠军": actual_winner,
+                "是否正确": "✅" if predicted_winner == actual_winner else "❌"
+            })
             
             # 记录调试明细
             result["debug_details"].append({
