@@ -3201,6 +3201,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         "总回报": 0,
         "总投入": 0,
         "ROI": 0
+        "debug_details": []  # 新增：调试明细
     }
     
     try:
@@ -3228,7 +3229,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         total_return = 0
         correct_predictions = 0
         top3_hits = 0
-        
+        #--------------
         for race in races:
             race_date = race.get('race_date')
             venue = race.get('venue', 'ST')
@@ -3274,8 +3275,15 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                     actual_winner = runner.get('horse_name')
                 if pos and pos <= 3:
                     actual_top3.append(runner.get('horse_name'))
-            # 添加调试输出
-            print(f"DEBUG: 预测冠军 = '{predicted_winner}', 实际冠军 = '{actual_winner}'")
+            
+            # 记录调试明细
+            result["debug_details"].append({
+                "场次": f"{race_date} 第{race_no}场",
+                "预测冠军": predicted_winner,
+                "实际冠军": actual_winner,
+                "是否正确": "✅" if predicted_winner == actual_winner else "❌"
+            })
+            
             # 判断预测是否正确
             if predicted_winner and actual_winner and predicted_winner == actual_winner:
                 correct_predictions += 1
@@ -3344,7 +3352,7 @@ def render_backtest_page(show_title: bool = True):
         )
     with col3:
         run_backtest_btn = st.button("▶️ 運行模型對比回測", type="primary", use_container_width=True)
-    
+    #------------------
     if run_backtest_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning("免費次數已用完，請升級到專業版")
@@ -3412,6 +3420,18 @@ def render_backtest_page(show_title: bool = True):
                         ))
                     fig.update_layout(title="模型性能对比", barmode='group', height=400)
                     st.plotly_chart(fig, use_container_width=True)
+                    
+                    # ==================== 调试表格（显示前10场的预测 vs 实际）====================
+                    st.markdown("#### 🔍 調試資訊（前10場預測 vs 實際）")
+                    
+                    # 获取评分系统的回测明细
+                    rule_result = next((r for r in results if r['模型'] == '评分系统'), None)
+                    if rule_result and 'debug_details' in rule_result:
+                        debug_df = pd.DataFrame(rule_result['debug_details'][:10])
+                        st.dataframe(debug_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("暂无调试数据，请确保 run_backtest_for_model 返回 debug_details")
+                    
                 else:
                     st.warning("请至少选择一个模型")
     
