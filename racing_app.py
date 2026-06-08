@@ -3255,7 +3255,7 @@ def render_backtest_page(show_title: bool = True):
         st.markdown("## 📊 回測")
     
     # ==================== 模型对比回测（新增）====================
-    st.markdown("### 🤖 模型對比回測")
+    st.markdown("## 📊 回測對比")
     st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
     
     col1, col2, col3, col4 = st.columns(4)
