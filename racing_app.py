@@ -1667,15 +1667,42 @@ def render_home():
             st.metric("📊 成績記錄總數", perf_count)
         with col4:
             st.metric("📅 數據日期範圍", f"{oldest_date} ~ {latest_date}", help="基于历史成绩数据的日期范围")
+        #-----
+        # 骑师总数（从 past_performances 统计）
+        try:
+            jockeys_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=jockey&limit=50000"
+            jockeys_response = requests.get(jockeys_url, headers=headers)
+            if jockeys_response.status_code == 200:
+                jockey_data = jockeys_response.json()
+                unique_jockeys = set()
+                for j in jockey_data:
+                    jockey_name = j.get('jockey')
+                    if jockey_name and jockey_name.strip():
+                        unique_jockeys.add(jockey_name)
+                jockey_count = len(unique_jockeys)
+            else:
+                jockey_count = 0
+        except Exception as e:
+            print(f"统计骑师失败: {e}")
+            jockey_count = 0
         
-        # 第二行：骑师和练马师
-        jockeys_url = f"{SUPABASE_URL}/rest/v1/jockeys"
-        jockeys_response = requests.get(jockeys_url, headers=headers)
-        jockey_count = len(jockeys_response.json()) if jockeys_response.status_code == 200 else 0
-        
-        trainers_url = f"{SUPABASE_URL}/rest/v1/trainers"
-        trainers_response = requests.get(trainers_url, headers=headers)
-        trainer_count = len(trainers_response.json()) if trainers_response.status_code == 200 else 0
+        # 练马师总数（从 past_performances 统计）
+        try:
+            trainers_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=trainer&limit=50000"
+            trainers_response = requests.get(trainers_url, headers=headers)
+            if trainers_response.status_code == 200:
+                trainer_data = trainers_response.json()
+                unique_trainers = set()
+                for t in trainer_data:
+                    trainer_name = t.get('trainer')
+                    if trainer_name and trainer_name.strip():
+                        unique_trainers.add(trainer_name)
+                trainer_count = len(unique_trainers)
+            else:
+                trainer_count = 0
+        except Exception as e:
+            print(f"统计练马师失败: {e}")
+            trainer_count = 0
         
         col1, col2 = st.columns(2)
         with col1:
