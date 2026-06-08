@@ -247,8 +247,21 @@ def get_horse_name_mapping() -> Dict[str, str]:
     except Exception as e:
         print(f"获取马名映射失败: {e}")
         return {}
-
-
+#-------------
+@st.cache_data(ttl=300)
+def get_qin_odds(race_date: str, venue: str, race_no: int, horse_no1: int, horse_no2: int) -> Optional[float]:
+    """从 odds_history 获取连赢赔率"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/odds_history?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&odds_type=eq.QIN&horse_id=eq.{horse_no1}+{horse_no2}&order=recorded_at.desc&limit=1"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200 and response.json():
+            return response.json()[0].get('odds_value')
+        return None
+    except Exception as e:
+        print(f"获取连赢赔率失败: {e}")
+        return None
+#--------------
 @st.cache_data(ttl=3600)
 def get_reverse_horse_name_mapping() -> Dict[str, str]:
     """获取马名映射（英文 -> 中文）"""
@@ -1737,12 +1750,11 @@ def get_upcoming_races() -> List[Dict]:
         today = datetime.now().strftime("%Y-%m-%d")
         next_two_weeks = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_two_weeks}&order=race_date.asc,race_no.asc"
+        # 确保返回 race_id
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_two_weeks}&order=race_date.asc,race_no.asc&select=*,race_id"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            races = response.json()
-            print(f"get_upcoming_races 返回 {len(races)} 条记录")  # 调试
-            return races
+            return response.json()
         return []
     except Exception as e:
         print(f"获取未来赛事失败: {e}")
@@ -1762,20 +1774,26 @@ def get_races_by_date(race_date: str) -> List[Dict]:
         return []
 #-------------------------
 def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
-    """获取赛事出赛马匹详情（含评分和 horse_id）"""
+    """获取赛事出赛马匹详情（含多种赔率）"""
     try:
         headers = get_supabase_headers(use_secret=True)
+        # 查询所有赔率字段
         url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             runners = response.json()
-            # 转换：将 horse_name_zh 作为中文名
+            # 确保赔率字段存在
             for runner in runners:
+                # 中文名映射
                 if runner.get('horse_name_zh'):
                     runner['horse_name'] = runner['horse_name_zh']
-                # 确保 horse_id 字段存在
-                if 'horse_id' not in runner:
-                    runner['horse_id'] = None
+                # 赔率字段默认值
+                if 'odds_win' not in runner:
+                    runner['odds_win'] = None
+                if 'odds_place' not in runner:
+                    runner['odds_place'] = None
+                if 'odds_qin' not in runner:
+                    runner['odds_qin'] = None
             return runners
         return []
     except Exception as e:
@@ -2255,19 +2273,34 @@ def render_smart_betting(show_title: bool = True):
         horse_id = runner.get('horse_id')
         horse_name = name_cache.get(horse_id, runner.get('horse_name', ''))
         
+        # 安全处理赔率
+        odds_win_raw = runner.get('odds_win')
+        odds_place_raw = runner.get('odds_place')
+        
+        try:
+            odds_win_display = f"{float(odds_win_raw):.1f}" if odds_win_raw and float(odds_win_raw) > 0 else "-"
+        except (ValueError, TypeError):
+            odds_win_display = "-"
+        
+        try:
+            odds_place_display = f"{float(odds_place_raw):.1f}" if odds_place_raw and float(odds_place_raw) > 0 else "-"
+        except (ValueError, TypeError):
+            odds_place_display = "-"
+        
         race_data.append({
             "馬號": runner.get('horse_no', '-'),
             "馬名": horse_name,
             "檔位": runner.get('draw', '-'),
             "負磅": runner.get('actual_weight', '-'),
             "騎師": runner.get('jockey_name', '-'),
-            "賠率": runner.get('odds_win', '-'),
+            "獨贏": odds_win_display,
+            "位置": odds_place_display,
             "勝率": f"{runner.get('win_probability', 0)*100:.1f}%",
             "綜合評分": f"{runner.get('overall_score', 0):.0f}"
         })
     
     st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
-    
+    #------------
     # 投注建议
     st.markdown("#### 💡 投注建議")
     top3 = sorted_runners[:3]
@@ -2304,6 +2337,48 @@ def render_smart_betting(show_title: bool = True):
                     建議注額: <strong>HK${stake:.0f}</strong>
                 </div>
                 """, unsafe_allow_html=True)
+    
+    # ==================== 连赢推荐（追加）====================
+    st.markdown("#### 🔗 連贏推薦")
+    
+    if len(sorted_runners) >= 2:
+        # 获取前两名高胜率马的组合
+        top2 = sorted_runners[:2]
+        horse1 = top2[0]
+        horse2 = top2[1]
+        
+        horse1_id = horse1.get('horse_id')
+        horse2_id = horse2.get('horse_id')
+        horse1_name = name_cache.get(horse1_id, horse1.get('horse_name', ''))
+        horse2_name = name_cache.get(horse2_id, horse2.get('horse_name', ''))
+        
+        # 获取赔率
+        odds1_raw = horse1.get('odds_win')
+        odds2_raw = horse2.get('odds_win')
+        
+        try:
+            odds1 = float(odds1_raw) if odds1_raw else 0
+            odds2 = float(odds2_raw) if odds2_raw else 0
+        except (ValueError, TypeError):
+            odds1 = odds2 = 0
+        
+        # 估算连赢赔率（实际应从 API 获取 QIN 赔率）
+        estimated_qin_odds = (odds1 * odds2) / 2 if odds1 > 0 and odds2 > 0 else 0
+        
+        if estimated_qin_odds > 0:
+            prob1 = horse1.get('win_probability', 0)
+            prob2 = horse2.get('win_probability', 0)
+            joint_prob = prob1 * prob2 * 2
+            
+            if joint_prob * estimated_qin_odds > 1:
+                suggested_stake = bankroll * 0.05 * risk_multiplier
+                st.success(f"**{horse1_name} + {horse2_name}** | 連贏賠率: {estimated_qin_odds:.1f} | 聯合概率: {joint_prob*100:.1f}% | 建議注額: HK${suggested_stake:.0f}")
+            else:
+                st.info(f"連贏組合 {horse1_name} + {horse2_name} 期望值不足，暫不推薦")
+        else:
+            st.caption("暫無連贏賠率數據")
+    else:
+        st.caption("馬匹數量不足，無法推薦連贏")
     
     st.markdown("---")
     
