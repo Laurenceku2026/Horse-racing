@@ -1834,27 +1834,44 @@ def get_races_by_date(race_date: str) -> List[Dict]:
         return []
 #-------------------------
 def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
-    """获取赛事出赛马匹详情（含多种赔率）"""
+    """获取赛事出赛马匹详情（优先从 race_runners_clean，降级到 past_performances）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        # 查询所有赔率字段
+        
+        # 1. 先从 race_runners_clean 查询（未来赛事）
         url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
         response = requests.get(url, headers=headers)
-        if response.status_code == 200:
+        
+        if response.status_code == 200 and response.json():
             runners = response.json()
-            # 确保赔率字段存在
+            # 转换中文名
             for runner in runners:
-                # 中文名映射
                 if runner.get('horse_name_zh'):
                     runner['horse_name'] = runner['horse_name_zh']
-                # 赔率字段默认值
-                if 'odds_win' not in runner:
-                    runner['odds_win'] = None
-                if 'odds_place' not in runner:
-                    runner['odds_place'] = None
-                if 'odds_qin' not in runner:
-                    runner['odds_qin'] = None
             return runners
+        
+        # 2. 如果没有，从 past_performances 查询（历史赛事）
+        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&order=position.asc"
+        perf_response = requests.get(perf_url, headers=headers)
+        
+        if perf_response.status_code == 200:
+            perf_data = perf_response.json()
+            if perf_data:
+                # 转换为 runners 格式
+                runners = []
+                for p in perf_data:
+                    runners.append({
+                        "horse_id": p.get('horse_id'),
+                        "horse_name": p.get('horse_name'),
+                        "horse_no": p.get('horse_no'),
+                        "draw": p.get('draw'),
+                        "actual_weight": p.get('actual_weight'),
+                        "jockey_name": p.get('jockey'),
+                        "odds_win": p.get('odds'),
+                        "finishing_position": p.get('position'),
+                    })
+                return runners
+        
         return []
     except Exception as e:
         print(f"获取出赛马匹失败: {e}")
