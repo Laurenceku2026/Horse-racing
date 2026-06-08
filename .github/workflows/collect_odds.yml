@@ -1,11 +1,11 @@
 name: Auto Collect Odds
 
 on:
-  # 定时任务：每30分钟运行一次（北京时间 8:00-20:00）
+  # 定时任务：每15分钟运行一次（更频繁采集）
   # 注意：GitHub Actions 使用 UTC 时间，需要减去8小时
-  # 所以 0-12 对应北京时间 8-20
+  # 所以 0-16 对应北京时间 8-24
   schedule:
-    - cron: '*/30 0-12 * * *'
+    - cron: '*/15 0-16 * * *'
   
   # 允许手动触发
   workflow_dispatch:
@@ -17,8 +17,18 @@ jobs:
     steps:
       - name: Call auto collect API
         run: |
+          echo "开始采集赔率..."
           curl -X POST https://hkjc-api-server.onrender.com/api/collect/auto
+          echo "采集完成"
       
-      - name: Call final odds update
+      - name: Call final odds update (before race)
         run: |
+          echo "更新最终赔率..."
           curl -X POST https://hkjc-api-server.onrender.com/api/odds/final
+          echo "更新完成"
+      
+      - name: Trigger database cleanup
+        run: |
+          echo "触发数据库清理..."
+          curl -X POST https://hkjc-api-server.onrender.com/api/cleanup
+          echo "清理完成"
