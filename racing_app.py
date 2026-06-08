@@ -3274,7 +3274,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                     actual_winner = runner.get('horse_name')
                 if pos and pos <= 3:
                     actual_top3.append(runner.get('horse_name'))
-            
+            # 添加调试输出
+            print(f"DEBUG: 预测冠军 = '{predicted_winner}', 实际冠军 = '{actual_winner}'")
             # 判断预测是否正确
             if predicted_winner and actual_winner and predicted_winner == actual_winner:
                 correct_predictions += 1
