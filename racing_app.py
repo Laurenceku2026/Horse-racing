@@ -2784,12 +2784,13 @@ def sync_single_race(race: Dict) -> bool:
 # ============================================================
 
 # ==================== 回测辅助函数 ====================
-
 def get_historical_races(limit: int = 100) -> List[Dict]:
     """获取历史赛事列表（用于回测）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/races?race_status=eq.RESULT&order=race_date.desc,race_no.asc&limit={limit}"
+        today = datetime.now().strftime("%Y-%m-%d")
+        # 查询今天之前的赛事（无论 race_status 是什么）
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=lt.{today}&order=race_date.desc,race_no.asc&limit={limit}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
