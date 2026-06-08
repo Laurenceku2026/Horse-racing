@@ -1657,15 +1657,6 @@ def render_home():
             latest_date = 'N/A'
             oldest_date = 'N/A'
         #----
-        # 第一行：马匹、赛事、成绩
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("🐎 馬匹總數", horse_count)
-        with col2:
-            st.metric("🏆 賽事總數", race_count)
-        with col3:
-            st.metric("📊 成績記錄總數", perf_count)
-        
         # 骑师总数（从 past_performances 统计）
         try:
             jockeys_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=jockey&limit=50000"
@@ -1702,34 +1693,41 @@ def render_home():
             print(f"统计练马师失败: {e}")
             trainer_count = 0
         
-        # 第二行：骑师、练马师
-        col1, col2 = st.columns(2)
+        # 第一行：马匹、赛事、成绩、骑师、练马师（5列）
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("🤠 騎師總數", jockey_count)
+            st.metric("🐎 馬匹總數", horse_count)
         with col2:
+            st.metric("🏆 賽事總數", race_count)
+        with col3:
+            st.metric("📊 成績記錄總數", perf_count)
+        with col4:
+            st.metric("🤠 騎師總數", jockey_count)
+        with col5:
             st.metric("🏋️ 練馬師總數", trainer_count)
         
-        # 第三行：日期范围（居中）
+        # 第二行：日期范围（居中）
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.metric("📅 數據日期範圍", f"{oldest_date} ~ {latest_date}", help="基于历史成绩数据的日期范围")
             
     except Exception as e:
         st.warning(f"獲取數據統計失敗: {e}")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("🐎 馬匹總數", "0")
         with col2:
             st.metric("🏆 賽事總數", "0")
         with col3:
             st.metric("📊 成績記錄總數", "0")
+        with col4:
+            st.metric("🤠 騎師總數", "0")
+        with col5:
+            st.metric("🏋️ 練馬師總數", "0")
         
-        st.metric("🤠 騎師總數", "0")
-        st.metric("🏋️ 練馬師總數", "0")
-        st.metric("📅 數據範圍", "-")
-        
-        st.markdown("---")
-        return
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.metric("📅 數據範圍", "-")
     
     st.markdown("---")
     
