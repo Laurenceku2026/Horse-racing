@@ -1614,9 +1614,21 @@ def render_home():
         horse_count = len(horses_response.json()) if horses_response.status_code == 200 else 0
         
         # 赛事数量
-        races_url = f"{SUPABASE_URL}/rest/v1/races"
-        races_response = requests.get(races_url, headers=headers)
-        race_count = len(races_response.json()) if races_response.status_code == 200 else 0
+        # 赛事总数（从 past_performances 统计不同的赛事）
+        try:
+            perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=race_date,venue,race_no&limit=50000"
+            perf_races_response = requests.get(perf_races_url, headers=headers)
+            if perf_races_response.status_code == 200:
+                perf_data = perf_races_response.json()
+                unique_races = set()
+                for p in perf_data:
+                    unique_races.add((p.get('race_date'), p.get('venue'), p.get('race_no')))
+                race_count = len(unique_races)
+            else:
+                race_count = 0
+        except Exception as e:
+            print(f"统计赛事数量失败: {e}")
+            race_count = 0
         
         # 成绩记录数量
         perf_url = f"{SUPABASE_URL}/rest/v1/past_performances"
