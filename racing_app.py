@@ -3256,21 +3256,23 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             venue = race.get('venue', 'ST')
             race_no = race.get('race_no', 1)
             
+            st.error(f"🔥 处理: {race_date} 第{race_no}场")
+            
             # 获取出赛马匹
             runners = get_race_runners_with_details(race_date, venue, race_no)
+            st.error(f"🔥 获取到 {len(runners)} 匹出赛马")
             
             if not runners:
+                st.error(f"🔥 跳过: 无 runners")
                 continue
             
             # 根据模型类型计算胜率
             if model_type == "rule":
-                # 评分系统
                 scores, probabilities = calculate_all_horses_scores(race.get('race_id'), runners, user_weights)
                 for i, runner in enumerate(runners):
                     if i < len(probabilities):
                         runner['win_probability'] = probabilities[i]
             else:
-                # ML 模型
                 model_key = 'lightgbm' if model_type == 'lightgbm' else 'xgboost' if model_type == 'xgboost' else 'ensemble'
                 ml_probs = get_model_predictions(race.get('race_id'), runners, model_key)
                 for i, runner in enumerate(runners):
@@ -3281,42 +3283,33 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
             
             if not sorted_runners:
-                st.error(f"DEBUG: {race_date} 第{race_no}场 - 无 runners")
+                st.error(f"🔥 跳过: 无 sorted_runners")
                 continue
             
             # 预测冠军
             predicted_winner = sorted_runners[0].get('horse_name')
             predicted_score = sorted_runners[0].get('win_probability', 0)
-            predicted_top3 = [r.get('horse_name') for r in sorted_runners[:3]]
+            st.error(f"🔥 预测冠军: '{predicted_winner}' (概率: {predicted_score})")
             
-            # 调试：显示预测信息
-            st.error(f"DEBUG: {race_date} 第{race_no}场 - 预测冠军: '{predicted_winner}', 概率: {predicted_score}")
-            
-            # 获取实际结果（从 past_performances 表）
-            actual_winner = None
-            actual_top3 = []
-            
+            # 获取实际冠军
             try:
-                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&select=horse_name,position&order=position.asc"
+                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&position=eq.1&select=horse_name"
                 perf_response = requests.get(perf_url, headers=get_supabase_headers(use_secret=True))
-                if perf_response.status_code == 200:
-                    perf_data = perf_response.json()
-                    if not perf_data:
-                        st.error(f"DEBUG: {race_date} 第{race_no}场 - 无实际结果")
-                        continue
-                    for p in perf_data:
-                        pos = p.get('position')
-                        if pos == 1:
-                            actual_winner = p.get('horse_name')
-                        if pos and pos <= 3:
-                            actual_top3.append(p.get('horse_name'))
-                    st.error(f"DEBUG: {race_date} 第{race_no}场 - 实际冠军: '{actual_winner}'")
+                if perf_response.status_code == 200 and perf_response.json():
+                    actual_winner = perf_response.json()[0].get('horse_name')
+                    st.error(f"🔥 实际冠军: '{actual_winner}'")
                 else:
-                    st.error(f"DEBUG: {race_date} 第{race_no}场 - API返回 {perf_response.status_code}")
+                    st.error(f"🔥 未找到实际冠军")
                     continue
             except Exception as e:
-                st.error(f"DEBUG: 获取实际结果失败: {e}")
+                st.error(f"🔥 获取实际冠军失败: {e}")
                 continue
+            
+            if predicted_winner == actual_winner:
+                correct_predictions += 1
+                st.error(f"🔥 ✅ 匹配成功！")
+            else:
+                st.error(f"🔥 ❌ 匹配失败: '{predicted_winner}' vs '{actual_winner}'")
             
             # 记录调试明细
             result["debug_details"].append({
