@@ -336,7 +336,18 @@ app.post('/api/odds/final', async (req, res) => {
     
     res.json({ updated: targetRaces.length });
 });
-
+// ========================================
+// 手动触发清理端点
+app.post('/api/cleanup', async (req, res) => {
+    console.log('[API] 手动触发数据库清理');
+    try {
+        const result = await supabase.rpc('manual_cleanup');
+        res.json({ success: true, result: result });
+    } catch (error) {
+        console.error('清理失败:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 // ==================== 健康检查 ====================
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
