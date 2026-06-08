@@ -3189,7 +3189,11 @@ def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -
     return result
 #-----------
 def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> Dict:
-    """运行单个模型的回测（直接从 past_performances 获取赛事）"""
+    """运行单个模型的回测"""
+    
+    # 强制显示调试信息
+    st.error(f"🔥 回测函数被调用: {start_date} -> {end_date}, 模型: {model_type}")
+    
     result = {
         "模型": "评分系统" if model_type == "rule" else model_type.upper(),
         "测试场次": 0,
@@ -3206,14 +3210,17 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
     try:
         headers = get_supabase_headers(use_secret=True)
         
-        # 直接从 past_performances 获取有数据的赛事（按日期去重）
+        # 直接从 past_performances 获取有数据的赛事
         perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances?select=race_date,venue,race_no&race_date=gte.{start_date}&race_date=lte.{end_date}&order=race_date.asc,race_no.asc&limit=50000"
         response = requests.get(perf_races_url, headers=headers)
+        
+        st.error(f"🔥 API 响应状态码: {response.status_code}")
         
         if response.status_code != 200:
             return result
         
         perf_data = response.json()
+        st.error(f"🔥 获取到 {len(perf_data)} 条 past_performances 记录")
         
         # 去重获取唯一的赛事
         unique_races = {}
@@ -3224,6 +3231,9 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         
         races = list(unique_races.values())
         result["测试场次"] = len(races)
+        st.error(f"🔥 去重后得到 {len(races)} 场赛事")
+        
+        # ... 后续代码 ...
         
         # ... 后续遍历 races 的代码保持不变 ...
         
