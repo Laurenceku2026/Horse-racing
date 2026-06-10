@@ -1489,28 +1489,343 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
 
 #-------
 def render_user_management():
-    """用户管理界面"""
+    """用户管理界面（完整版：系统统计 + 用户列表 + 用户管理 + 操作 + 批量操作）"""
+    
+    # ==================== 辅助函数 ====================
+    def get_all_users_from_auth() -> List[Dict]:
+        """从 Supabase Auth 获取所有用户列表（管理员用）"""
+        try:
+            url = f"{SUPABASE_URL}/auth/v1/admin/users"
+            headers = get_supabase_headers(use_secret=True)
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                users = response.json().get("users", [])
+                return users
+            return []
+        except Exception as e:
+            print(f"获取用户列表失败: {e}")
+            return []
+    
+    def get_user_auth_details_from_api(user_id: str) -> Dict:
+        """获取单个用户的认证详细信息"""
+        try:
+            url = f"{SUPABASE_URL}/auth/v1/admin/users/{user_id}"
+            headers = get_supabase_headers(use_secret=True)
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    "created_at": data.get("created_at", ""),
+                    "last_sign_in_at": data.get("last_sign_in_at", ""),
+                    "email_confirmed_at": data.get("email_confirmed_at", "")
+                }
+        except Exception as e:
+            print(f"获取用户认证信息失败: {e}")
+        
+        return {"created_at": "", "last_sign_in_at": "", "email_confirmed_at": ""}
+    
+    def get_user_stock_summary_racing(user_id: str) -> Dict:
+        """获取用户的股票池摘要（针对赛马App）"""
+        try:
+            headers = get_supabase_headers(use_secret=True)
+            
+            # 查询用户设置
+            settings_url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
+            settings_response = requests.get(settings_url, headers=headers)
+            
+            return {
+                "has_settings": 1 if settings_response.status_code == 200 and settings_response.json() else 0,
+                "recommended_count": 0,  # 赛马App没有推荐池
+                "backtest_count": 0,     # 赛马App没有回测池
+                "live_count": 0          # 赛马App没有实操池
+            }
+        except Exception as e:
+            print(f"获取用户摘要失败: {e}")
+            return {"has_settings": 0, "recommended_count": 0, "backtest_count": 0, "live_count": 0}
+    
+    def admin_send_password_reset(email: str) -> Tuple[bool, str]:
+        """发送密码重置邮件"""
+        try:
+            url = f"{SUPABASE_URL}/auth/v1/recover"
+            headers = {
+                "apikey": SUPABASE_PUBLISHABLE_KEY,
+                "Content-Type": "application/json"
+            }
+            data = {"email": email}
+            response = requests.post(url, headers=headers, json=data)
+            
+            if response.status_code == 200:
+                return True, f"密码重置邮件已发送至 {email}"
+            else:
+                return False, f"发送失败: {response.text}"
+        except Exception as e:
+            return False, f"发送失败: {str(e)}"
+    
+    def admin_delete_user_from_auth(user_id: str, user_email: str) -> Tuple[bool, str]:
+        """管理员删除用户（Auth + 相关表）"""
+        try:
+            headers = get_supabase_headers(use_secret=True)
+            
+            # 1. 删除 user_settings_racing 记录
+            settings_url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
+            requests.delete(settings_url, headers=headers)
+            
+            # 2. 删除用户预设板块（如果有）
+            preset_url = f"{SUPABASE_URL}/rest/v1/user_preset_sectors?user_id=eq.{user_id}"
+            requests.delete(preset_url, headers=headers)
+            
+            # 3. 删除用户热点板块缓存
+            hot_url = f"{SUPABASE_URL}/rest/v1/user_hot_sectors?user_id=eq.{user_id}"
+            requests.delete(hot_url, headers=headers)
+            
+            # 4. 删除用户龙头股缓存
+            leader_url = f"{SUPABASE_URL}/rest/v1/user_leader_stocks_cache?user_id=eq.{user_id}"
+            requests.delete(leader_url, headers=headers)
+            
+            # 5. 删除用户板块成分股
+            stocks_url = f"{SUPABASE_URL}/rest/v1/user_sector_stocks?user_id=eq.{user_id}"
+            requests.delete(stocks_url, headers=headers)
+            
+            # 6. 删除 Auth 用户
+            auth_url = f"{SUPABASE_URL}/auth/v1/admin/users/{user_id}"
+            auth_response = requests.delete(auth_url, headers=headers)
+            
+            if auth_response.status_code in [200, 204]:
+                return True, f"用户 {user_email} 已删除"
+            else:
+                return False, f"删除Auth用户失败: {auth_response.text}"
+                
+        except Exception as e:
+            return False, f"删除失败: {str(e)}"
+    
+    def admin_reset_user_trials_racing(user_id: str, new_trials: int = FREE_TRIAL_LIMIT) -> Tuple[bool, str]:
+        """重置用户的免费次数"""
+        try:
+            success = update_user_profile(user_id, {"free_trials_remaining": new_trials})
+            if success:
+                return True, f"已重置免费次数为 {new_trials}"
+            return False, "重置失败"
+        except Exception as e:
+            return False, f"重置失败: {str(e)}"
+    
+    def admin_set_subscription_racing(user_id: str, tier: str, months: int = 1) -> Tuple[bool, str]:
+        """设置用户订阅等级"""
+        try:
+            data = {"subscription_tier": tier}
+            if tier == "pro":
+                expires_at = (datetime.now() + timedelta(days=30 * months)).isoformat()
+                data["subscription_expires_at"] = expires_at
+            else:
+                data["subscription_expires_at"] = None
+            
+            success = update_user_profile(user_id, data)
+            if success:
+                return True, f"用户订阅已设置为 {tier}"
+            return False, "设置失败"
+        except Exception as e:
+            return False, f"设置失败: {str(e)}"
+    
+    # ==================== 主界面 ====================
     st.markdown("### 👥 用户管理")
     
-    users = get_all_users()
+    # 获取所有用户（从 user_settings_racing 表获取已注册赛马App的用户）
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/user_settings_racing"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            db_users = response.json()
+        else:
+            st.error(f"获取用户数据失败: {response.status_code}")
+            db_users = []
+    except Exception as e:
+        st.error(f"获取用户数据失败: {e}")
+        db_users = []
     
-    if not users:
+    if not db_users:
         st.info("暂无用户数据")
         return
     
-    # 显示用户列表
-    display_users = []
-    for u in users:
-        display_users.append({
-            "邮箱": u.get('email', '未知'),
-            "订阅等级": "专业版" if u.get('subscription_tier') == 'pro' else "免费版",
-            "剩余次数": u.get('free_trials_remaining', 30),
-            "注册时间": u.get('created_at', '')[:10] if u.get('created_at') else '-'
+    # 获取 Auth 用户详细信息
+    auth_users = get_all_users_from_auth()
+    auth_user_map = {u.get("id"): u for u in auth_users}
+    
+    # 构建用户详细列表
+    users_with_details = []
+    for user in db_users:
+        user_id = user.get("user_id")
+        auth_info = auth_user_map.get(user_id, {})
+        stock_summary = get_user_stock_summary_racing(user_id)
+        
+        users_with_details.append({
+            "id": user_id,
+            "email": user.get("email", ""),
+            "subscription_tier": user.get("subscription_tier", "free"),
+            "free_trials_remaining": user.get("free_trials_remaining", FREE_TRIAL_LIMIT),
+            "subscription_expires_at": user.get("subscription_expires_at", "")[:10] if user.get("subscription_expires_at") else "-",
+            "created_at": auth_info.get("created_at", "")[:10] if auth_info.get("created_at") else "-",
+            "last_sign_in_at": auth_info.get("last_sign_in_at", "")[:10] if auth_info.get("last_sign_in_at") else "-",
+            "email_confirmed": "✅" if auth_info.get("email_confirmed_at") else "❌",
+            "has_settings": stock_summary["has_settings"]
         })
     
-    df_users = pd.DataFrame(display_users)
-    st.dataframe(df_users, use_container_width=True, hide_index=True)
-    st.caption(f"共 {len(users)} 位用户")
+    # ==================== 系统统计 ====================
+    st.markdown("#### 📊 系统统计")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("总用户数", len(users_with_details))
+    with col2:
+        pro_count = sum(1 for u in users_with_details if u["subscription_tier"] == "pro")
+        st.metric("专业版用户", pro_count)
+    with col3:
+        free_count = len(users_with_details) - pro_count
+        st.metric("免费版用户", free_count)
+    with col4:
+        total_settings = sum(u["has_settings"] for u in users_with_details)
+        st.metric("已配置用户", total_settings)
+    
+    st.markdown("---")
+    
+    # ==================== 用户列表 ====================
+    st.markdown("#### 📋 用户列表")
+    
+    df_users = pd.DataFrame(users_with_details)
+    display_columns = ["email", "subscription_tier", "free_trials_remaining", 
+                       "subscription_expires_at", "created_at", "last_sign_in_at",
+                       "email_confirmed"]
+    
+    # 确保所有列都存在
+    available_cols = [c for c in display_columns if c in df_users.columns]
+    
+    st.dataframe(
+        df_users[available_cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "email": "邮箱",
+            "subscription_tier": "订阅等级",
+            "free_trials_remaining": "剩余次数",
+            "subscription_expires_at": "到期时间",
+            "created_at": "注册时间",
+            "last_sign_in_at": "最后登录",
+            "email_confirmed": "邮箱确认"
+        }
+    )
+    
+    st.caption(f"共 {len(users_with_details)} 位用户")
+    
+    st.markdown("---")
+    
+    # ==================== 用户管理 ====================
+    st.markdown("#### 🔧 用户管理")
+    
+    user_options = [f"{u['email']} ({u['subscription_tier']})" for u in users_with_details]
+    selected_user_str = st.selectbox("选择用户", user_options, key="admin_select_user")
+    selected_email = selected_user_str.split(" ")[0]
+    selected_user = next((u for u in users_with_details if u["email"] == selected_email), None)
+    
+    if selected_user:
+        st.markdown(f"**当前用户**: {selected_user['email']}")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**📝 修改订阅**")
+            new_tier = st.selectbox(
+                "订阅等级", 
+                ["free", "pro"], 
+                index=0 if selected_user["subscription_tier"] == "free" else 1, 
+                key="admin_new_tier"
+            )
+            pro_months = 1
+            if new_tier == "pro":
+                pro_months = st.number_input("月数", min_value=1, max_value=12, value=1, key="admin_months")
+            
+            if st.button("更新订阅", key="admin_update_subscription", use_container_width=True):
+                success, msg = admin_set_subscription_racing(selected_user["id"], new_tier, pro_months)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        
+        with col2:
+            st.markdown("**🎫 免费次数**")
+            new_trials = st.number_input(
+                "设置剩余次数", 
+                min_value=0, 
+                max_value=100, 
+                value=int(selected_user["free_trials_remaining"]), 
+                key="admin_new_trials"
+            )
+            if st.button("重置次数", key="admin_reset_trials", use_container_width=True):
+                success, msg = admin_reset_user_trials_racing(selected_user["id"], new_trials)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        
+        st.markdown("**⚙️ 操作**")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("📧 发送重置邮件", key="admin_send_reset", use_container_width=True):
+                success, msg = admin_send_password_reset(selected_user["email"])
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+        
+        with col2:
+            if st.button("🔑 删除用户", key="admin_delete_user", use_container_width=True):
+                success, msg = admin_delete_user_from_auth(selected_user["id"], selected_user["email"])
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        
+        with col3:
+            if st.button("🔄 刷新数据", key="admin_refresh_user", use_container_width=True):
+                st.rerun()
+    
+    st.markdown("---")
+    
+    # ==================== 批量操作 ====================
+    st.markdown("#### 🔄 批量操作")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("重置所有免费用户次数", key="admin_reset_all_free", use_container_width=True):
+            count = 0
+            for user in users_with_details:
+                if user["subscription_tier"] == "free":
+                    admin_reset_user_trials_racing(user["id"], FREE_TRIAL_LIMIT)
+                    count += 1
+            st.success(f"已重置 {count} 位免费用户的次数")
+            st.rerun()
+    
+    with col2:
+        if st.button("导出用户数据(CSV)", key="admin_export_csv", use_container_width=True):
+            export_df = df_users[["email", "subscription_tier", "free_trials_remaining", 
+                                   "subscription_expires_at", "created_at", "last_sign_in_at"]]
+            csv = export_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="下载CSV", 
+                data=csv, 
+                file_name=f"users_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv", 
+                key="admin_download_csv"
+            )
+    
+    st.markdown("---")
+    st.caption("💡 提示：删除用户将同时删除该用户的所有相关数据（设置、板块、缓存等）")
 #----------------------------
 #-------------------------------
 def admin_sign_out():
