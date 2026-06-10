@@ -4020,7 +4020,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                 predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
                 predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
                 predicted_top3_names = [predicted_1st, predicted_2nd, predicted_3rd]
-                
+                predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}  # ⭐ 必须添加这行
                 # 获取实际结果（按名次排序）
                 runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
                 actual_1st = None
