@@ -4038,12 +4038,15 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                     if pos == 1:
                         actual_1st = horse_name
                         actual_top3_names.append(horse_name)
+                        actual_top3_set.add(horse_name)  # ⭐ 添加这一行
                     elif pos == 2:
                         actual_2nd = horse_name
                         actual_top3_names.append(horse_name)
+                        actual_top3_set.add(horse_name)  # ⭐ 添加这一行
                     elif pos == 3:
                         actual_3rd = horse_name
                         actual_top3_names.append(horse_name)
+                        actual_top3_set.add(horse_name)  # ⭐ 添加这一行
                 
                 # ★ 统计命中情况
                 # 统计各指标
@@ -4122,7 +4125,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                 result["ROI"] = (total_return - total_stake) / total_stake * 100
         
         if not result["cancelled"]:
-            st.success(f"✅ {result['模型']} 回測完成: {result['测试场次']} 場, 準確率 {result['准确率']:.1f}%, ROI {result['ROI']:+.1f}%")
+            st.success(f"✅ {result['模型']} 回測完成: {result['测试场次']} 場, 獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%")
         
     except Exception as e:
         st.error(f"ML回測失敗 ({model_type}): {e}")
