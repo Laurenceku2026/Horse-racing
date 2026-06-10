@@ -5483,7 +5483,7 @@ def get_official_race_dates_from_hkjc() -> List[str]:
         print(f"获取官方赛期失败: {e}")
         return []
 
-
+#----------------
 def get_db_latest_race_date() -> Optional[str]:
     """从 past_performances 表获取最新的赛事日期"""
     try:
@@ -5680,10 +5680,10 @@ def save_race_results_batch(results: List[Dict]) -> bool:
 #----------------
 def sync_all_data() -> Dict:
     """
-    智能同步所有数据
+    智能同步所有数据（备用方案：直接遍历日期范围）
     1. 从数据库获取最新日期
-    2. 从官网赛期表获取官方赛期列表
-    3. 只抓取缺失的赛期（不包括当天）
+    2. 从最新日期遍历到今天
+    3. 爬虫自动判断是否有赛事
     4. 批量写入，提高性能
     5. 清理超过 9000 行的旧数据
     """
@@ -5698,64 +5698,54 @@ def sync_all_data() -> Dict:
         db_latest_date = get_db_latest_race_date()
         print(f"数据库最新日期: {db_latest_date}")
         
-        # ==================== 第2步：获取官方赛期列表 ====================
-        with st.spinner("正在從官網獲取賽期表..."):
-            official_dates = get_all_race_dates(start_year=2025, end_year=2026)
-        
-        if not official_dates:
-            st.warning("無法獲取官方賽期列表，請檢查網絡連接")
-            result["error"] = "无法获取官方赛期列表"
-            return result
-        
-        print(f"官方赛期总数: {len(official_dates)}")
-        st.info(f"📅 從官網獲取到 {len(official_dates)} 個賽期")
-        
-        # ==================== 第3步：计算需要抓取的日期 ====================
-        today = datetime.now().strftime("%Y-%m-%d")
-        
-        # 排除当天（结果可能未完整公布）和未来日期
-        valid_dates = [d for d in official_dates if d < today]
-        
+        # ==================== 第2步：确定需要遍历的日期范围 ====================
         if db_latest_date:
-            # 只抓取数据库中没有的赛期
-            dates_to_fetch = [d for d in valid_dates if d > db_latest_date]
+            start_date = datetime.strptime(db_latest_date, '%Y-%m-%d') + timedelta(days=1)
         else:
-            # 数据库为空，抓取所有有效赛期
-            dates_to_fetch = valid_dates
+            # 如果没有数据，从 2025-01-01 开始
+            start_date = datetime(2025, 1, 1)
         
-        print(f"需要抓取的赛期: {dates_to_fetch}")
+        end_date = datetime.now()
         
-        if not dates_to_fetch:
+        # 排除当天（结果可能未完整公布）
+        end_date = end_date - timedelta(days=1)
+        
+        if start_date > end_date:
             result["success"] = True
             result["new_races"] = 0
             result["new_records"] = 0
             st.info("所有数据已是最新，无需更新")
             return result
         
-        st.info(f"📥 將抓取 {len(dates_to_fetch)} 個賽期的數據: {dates_to_fetch[:5]}...")
+        # 计算需要遍历的天数
+        total_days = (end_date - start_date).days + 1
+        st.info(f"📅 将检查 {start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')} 共 {total_days} 天")
         
-        # ==================== 第4步：增量抓取 ====================
+        # ==================== 第3步：遍历日期范围 ====================
         venues = ['ST', 'HV']
+        current = start_date
         total_new_races = 0
         total_new_records = 0
-        failed_dates = []
         
         # 创建进度条
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        for idx, date_str in enumerate(dates_to_fetch):
-            status_text.text(f"正在同步 {date_str}... ({idx+1}/{len(dates_to_fetch)})")
-            progress_bar.progress((idx + 1) / len(dates_to_fetch))
+        days_processed = 0
+        races_found = []
+        
+        while current <= end_date:
+            days_processed += 1
+            progress_bar.progress(days_processed / total_days)
             
-            # 转换日期格式为 URL 需要的 YYYY/MM/DD
-            url_date = date_str.replace('-', '/')
-            date_success = False
+            date_str = current.strftime("%Y/%m/%d")
+            display_date = current.strftime("%Y-%m-%d")
+            status_text.text(f"正在检查 {display_date}... ({days_processed}/{total_days})")
             
             for venue in venues:
                 for race_no in range(1, 13):
                     try:
-                        race_info, results = parse_race_result(url_date, venue, race_no)
+                        race_info, results = parse_race_result(date_str, venue, race_no)
                         
                         if results and len(results) > 0:
                             # 为每条记录添加赛事元数据
@@ -5770,45 +5760,49 @@ def sync_all_data() -> Dict:
                             if success:
                                 total_new_races += 1
                                 total_new_records += len(results)
-                                date_success = True
-                                print(f"✅ {date_str} {venue} 第{race_no}场: {len(results)} 条记录")
+                                races_found.append(f"{display_date} {venue} R{race_no}")
+                                print(f"✅ {display_date} {venue} 第{race_no}场: {len(results)} 条记录")
                             else:
-                                print(f"❌ {date_str} {venue} 第{race_no}场: 保存失败")
+                                print(f"❌ {display_date} {venue} 第{race_no}场: 保存失败")
                         
                         # 轻微延迟，避免请求过快
                         time.sleep(0.2)
                         
                     except Exception as e:
-                        print(f"⚠️ {date_str} {venue} 第{race_no}场: {e}")
+                        print(f"⚠️ {display_date} {venue} 第{race_no}场: {e}")
                         continue
             
-            if not date_success:
-                failed_dates.append(date_str)
+            current += timedelta(days=1)
         
         progress_bar.empty()
         status_text.empty()
         
-        # ==================== 第5步：报告失败日期 ====================
-        if failed_dates:
-            st.warning(f"以下日期未抓取到数据: {failed_dates}")
-        
+        # ==================== 第4步：显示结果 ====================
         result["success"] = True
         result["new_races"] = total_new_races
         result["new_records"] = total_new_records
         
-        # ==================== 第6步：清理超过 9000 行的旧数据 ====================
+        if races_found:
+            st.success(f"✅ 更新完成！新增 {total_new_races} 场赛事，{total_new_records} 条成绩记录")
+            
+            # 显示找到的赛事（最多显示 20 条）
+            if len(races_found) <= 20:
+                st.write("找到的赛事：")
+                for race in races_found:
+                    st.write(f"  - {race}")
+            else:
+                st.write(f"找到 {len(races_found)} 场赛事")
+        else:
+            st.info("未发现新数据")
+        
+        # ==================== 第5步：清理超过 9000 行的旧数据 ====================
         if total_new_records > 0:
             cleanup_result = cleanup_old_records(keep_count=9000)
             if cleanup_result.get("deleted", 0) > 0:
                 st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
         
-        # ==================== 第7步：清除缓存，刷新界面 ====================
+        # ==================== 第6步：清除缓存，刷新界面 ====================
         st.cache_data.clear()
-        
-        if total_new_races > 0:
-            st.success(f"✅ 更新完成！新增 {total_new_races} 场赛事，{total_new_records} 条成绩记录")
-        else:
-            st.info("未发现新数据")
         
         return result
         
