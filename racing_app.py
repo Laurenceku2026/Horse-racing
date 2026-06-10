@@ -3410,7 +3410,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             actual_2nd = None
             actual_3rd = None
             actual_top3_set = set()
-            
+            actual_top3_names = []      # ⭐ 添加这行（解决问题）
             for r in runners_data_sorted:
                 pos = r.get('position')
                 horse_id = r.get('horse_id')
