@@ -5185,14 +5185,14 @@ def save_race_result_to_db(record: Dict) -> bool:
         print(f"保存异常: {e}")
         return False
 
-
+#---------------
 def get_latest_race_date_from_db() -> Optional[str]:
-    """从数据库获取最新的赛事日期"""
+    """从 past_performances 表获取最新的赛事日期"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/races?order=race_date.desc&limit=1"
+        # ✅ 改为查询 past_performances 表
+        url = f"{SUPABASE_URL}/rest/v1/past_performances?order=race_date.desc&limit=1&select=race_date"
         response = requests.get(url, headers=headers)
-        
         if response.status_code == 200 and response.json():
             return response.json()[0].get('race_date')
         return None
