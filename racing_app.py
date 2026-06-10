@@ -1085,6 +1085,7 @@ def render_admin_panel():
                             success = save_table_data("past_performances", new_data)
                             if success:
                                 st.success(f"全量覆盖保存 {len(new_data)} 条记录成功！")
+                                st.cache_data.clear()  # ⭐ 清除缓存
                                 st.rerun()
                             else:
                                 st.error("保存失败")
@@ -1140,6 +1141,7 @@ def render_admin_panel():
                         if new_data:
                             result = incremental_sync_table("past_performances", new_data)
                             st.success(f"增量同步完成：新增 {result['inserted']} 条，更新 {result['updated']} 条，删除 {result['deleted']} 条")
+                            st.cache_data.clear()  # ⭐ 清除缓存
                             st.rerun()
                         else:
                             st.error("没有有效数据可同步")
@@ -1199,12 +1201,13 @@ def render_admin_panel():
         admin_sign_out()
         st.rerun()
 
-
+#---------------
 def get_table_data(table_name: str, limit: int = 500) -> List[Dict]:
-    """获取表数据"""
+    """获取表数据（确保包含 id 字段）"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/{table_name}?order=race_date.desc&limit={limit}"
+        # ⭐ 显式选择 id 字段
+        url = f"{SUPABASE_URL}/rest/v1/{table_name}?select=*&order=race_date.desc&limit={limit}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -1213,60 +1216,233 @@ def get_table_data(table_name: str, limit: int = 500) -> List[Dict]:
         print(f"获取表数据失败: {e}")
         return []
 
-
+#-------------
 def save_table_data(table_name: str, data: List[Dict]) -> bool:
-    """全量覆盖保存表数据"""
+    """
+    全量覆盖保存表数据
+    注意：此操作会删除表中的所有数据，然后插入新数据
+    """
     try:
         headers = get_supabase_headers(use_secret=True)
-        # 先清空表
-        supabase_request("DELETE", table_name, params="", access_token=None)
-        # 批量插入
-        for record in data:
-            response = supabase_request("POST", table_name, data=record, access_token=None)
-            if response.status_code not in [200, 201]:
-                print(f"插入失败: {response.text}")
+        
+        # 1. 先清空表（使用 DELETE 而非 TRUNCATE，避免权限问题）
+        delete_url = f"{SUPABASE_URL}/rest/v1/{table_name}"
+        delete_params = ""  # 删除所有记录
+        delete_response = requests.delete(delete_url, headers=headers, params=delete_params)
+        
+        if delete_response.status_code not in [200, 204]:
+            print(f"清空表失败: {delete_response.status_code} - {delete_response.text}")
+            return False
+        
+        print(f"已清空表 {table_name}")
+        
+        # 2. 批量插入新数据（分批插入，避免单次请求过大）
+        batch_size = 100
+        for i in range(0, len(data), batch_size):
+            batch = data[i:i+batch_size]
+            
+            # 清理每条记录中的 None 值和空字符串
+            clean_batch = []
+            for record in batch:
+                clean_record = {}
+                for k, v in record.items():
+                    # 跳过 id（让数据库自动生成）
+                    if k == 'id':
+                        continue
+                    # 处理空值
+                    if v is None or v == '':
+                        clean_record[k] = None
+                    else:
+                        clean_record[k] = v
+                clean_batch.append(clean_record)
+            
+            insert_response = requests.post(
+                f"{SUPABASE_URL}/rest/v1/{table_name}",
+                headers=headers,
+                json=clean_batch
+            )
+            
+            if insert_response.status_code not in [200, 201]:
+                print(f"批量插入失败 (批次 {i//batch_size + 1}): {insert_response.status_code} - {insert_response.text}")
                 return False
+            
+            print(f"批量插入成功: {len(clean_batch)} 条记录")
+        
+        # 3. 清除缓存，确保数据概览更新
+        st.cache_data.clear()
+        
         return True
+        
     except Exception as e:
         print(f"保存失败: {e}")
         return False
 
-
+#---------------
 def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
-    """增量同步表数据"""
+    """
+    增量同步表数据（修复版）
+    - 支持删除、更新、插入
+    - 自动处理 ID 类型转换
+    - 保存后清除缓存
+    """
     result = {"inserted": 0, "updated": 0, "deleted": 0}
     
     try:
-        # 获取现有数据
-        existing = get_table_data(table_name, limit=10000)
-        existing_ids = {str(r.get('id')) for r in existing if r.get('id')}
-        new_ids = {str(r.get('id')) for r in new_data if r.get('id')}
-        
-        # 需要删除的
-        to_delete = existing_ids - new_ids
-        # 需要新增的
-        to_insert = new_ids - existing_ids
-        
         headers = get_supabase_headers(use_secret=True)
         
-        # 删除
-        for record_id in to_delete:
-            supabase_request("DELETE", table_name, params=f"id=eq.{record_id}", access_token=None)
-            result["deleted"] += 1
+        # ==================== 1. 获取现有数据 ====================
+        existing = get_table_data(table_name, limit=10000)
         
-        # 插入新记录
-        for record in new_data:
-            if str(record.get('id')) in to_insert or not record.get('id'):
-                supabase_request("POST", table_name, data=record, access_token=None)
-                result["inserted"] += 1
+        # 提取现有 ID（统一转为字符串比较）
+        existing_ids = set()
+        existing_records_by_id = {}  # 用于快速查找
+        for r in existing:
+            rid = r.get('id')
+            if rid is not None:
+                rid_str = str(rid)
+                existing_ids.add(rid_str)
+                existing_records_by_id[rid_str] = r
+        
+        # 提取新数据的 ID（统一转为字符串）
+        new_ids = set()
+        new_records_by_id = {}
+        for r in new_data:
+            rid = r.get('id')
+            if rid is not None and rid != '':
+                rid_str = str(rid)
+                new_ids.add(rid_str)
+                new_records_by_id[rid_str] = r
             else:
-                # 更新现有记录
-                record_id = record.get('id')
-                if record_id:
-                    supabase_request("PATCH", table_name, data=record, params=f"id=eq.{record_id}", access_token=None)
+                # 没有 ID 的记录视为新增
+                new_records_by_id[f"new_{len(new_records_by_id)}"] = r
+        
+        print(f"现有记录数: {len(existing_ids)}, 新记录数: {len(new_ids)}")
+        
+        # ==================== 2. 计算差异 ====================
+        # 需要删除的（在旧数据中但不在新数据中）
+        to_delete = existing_ids - new_ids
+        # 需要新增的（在新数据中但不在旧数据中）
+        to_insert = new_ids - existing_ids
+        # 需要更新的（两边都有，内容可能变化）
+        to_update = existing_ids & new_ids
+        
+        print(f"需要删除: {len(to_delete)} 条")
+        print(f"需要更新: {len(to_update)} 条")
+        print(f"需要新增: {len(to_insert)} 条")
+        
+        # ==================== 3. 执行删除 ====================
+        for record_id in to_delete:
+            try:
+                delete_url = f"{SUPABASE_URL}/rest/v1/{table_name}?id=eq.{record_id}"
+                delete_response = requests.delete(delete_url, headers=headers)
+                if delete_response.status_code in [200, 204]:
+                    result["deleted"] += 1
+                else:
+                    print(f"删除失败 {record_id}: {delete_response.status_code} - {delete_response.text}")
+            except Exception as e:
+                print(f"删除异常 {record_id}: {e}")
+        
+        # ==================== 4. 执行更新 ====================
+        for record_id in to_update:
+            try:
+                new_record = new_records_by_id.get(record_id)
+                if not new_record:
+                    continue
+                
+                # 清理记录：移除 None 值和空字符串
+                clean_record = {}
+                for k, v in new_record.items():
+                    # 跳过 id（不让更新 id）
+                    if k == 'id':
+                        continue
+                    if v is None or v == '':
+                        clean_record[k] = None
+                    else:
+                        clean_record[k] = v
+                
+                # 检查是否有实际变化（可选优化）
+                old_record = existing_records_by_id.get(record_id, {})
+                has_change = False
+                for k in clean_record:
+                    if str(old_record.get(k)) != str(clean_record[k]):
+                        has_change = True
+                        break
+                
+                if not has_change:
+                    # 无变化，跳过
+                    continue
+                
+                update_url = f"{SUPABASE_URL}/rest/v1/{table_name}?id=eq.{record_id}"
+                update_response = requests.patch(update_url, headers=headers, json=clean_record)
+                if update_response.status_code in [200, 204]:
                     result["updated"] += 1
+                else:
+                    print(f"更新失败 {record_id}: {update_response.status_code} - {update_response.text}")
+            except Exception as e:
+                print(f"更新异常 {record_id}: {e}")
+        
+        # ==================== 5. 执行新增 ====================
+        for record_id in to_insert:
+            try:
+                new_record = new_records_by_id.get(record_id)
+                if not new_record:
+                    continue
+                
+                # 清理记录：移除 id（让数据库自动生成）和 None 值
+                clean_record = {}
+                for k, v in new_record.items():
+                    if k == 'id':
+                        continue
+                    if v is None or v == '':
+                        clean_record[k] = None
+                    else:
+                        clean_record[k] = v
+                
+                insert_response = requests.post(
+                    f"{SUPABASE_URL}/rest/v1/{table_name}",
+                    headers=headers,
+                    json=clean_record
+                )
+                if insert_response.status_code in [200, 201]:
+                    result["inserted"] += 1
+                else:
+                    print(f"新增失败: {insert_response.status_code} - {insert_response.text}")
+            except Exception as e:
+                print(f"新增异常: {e}")
+        
+        # ==================== 6. 处理无 ID 的新记录 ====================
+        # 查找没有 ID 的记录（纯新增）
+        for key, new_record in new_records_by_id.items():
+            if key.startswith("new_"):  # 这是我们标记的无 ID 记录
+                try:
+                    clean_record = {}
+                    for k, v in new_record.items():
+                        if k == 'id':
+                            continue
+                        if v is None or v == '':
+                            clean_record[k] = None
+                        else:
+                            clean_record[k] = v
+                    
+                    insert_response = requests.post(
+                        f"{SUPABASE_URL}/rest/v1/{table_name}",
+                        headers=headers,
+                        json=clean_record
+                    )
+                    if insert_response.status_code in [200, 201]:
+                        result["inserted"] += 1
+                    else:
+                        print(f"新增失败 (无ID): {insert_response.status_code}")
+                except Exception as e:
+                    print(f"新增异常 (无ID): {e}")
+        
+        # ==================== 7. 清除缓存，确保数据概览更新 ====================
+        st.cache_data.clear()
+        
+        print(f"增量同步完成: 新增 {result['inserted']}, 更新 {result['updated']}, 删除 {result['deleted']}")
         
         return result
+        
     except Exception as e:
         print(f"增量同步失败: {e}")
         return result
