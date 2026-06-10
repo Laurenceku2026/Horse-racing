@@ -3410,7 +3410,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             actual_2nd = None
             actual_3rd = None
             actual_top3_set = set()
-            actual_top3_names = []      # ⭐ 添加这行（解决问题）
+            actual_top3_names = []      # 保留但可以不使用
+            
             for r in runners_data_sorted:
                 pos = r.get('position')
                 horse_id = r.get('horse_id')
@@ -3424,8 +3425,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 elif pos == 3:
                     actual_3rd = horse_name
                     actual_top3_set.add(horse_name)
-                    # ⭐ 添加这一行
-                    actual_top3_set = set(actual_top3_names)
+                    # ⭐ 不要添加 actual_top3_set = set(actual_top3_names) 这行
             
             # 统计各指标
             is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
