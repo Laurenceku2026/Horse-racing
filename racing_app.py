@@ -3985,44 +3985,6 @@ def render_backtest_page(show_title: bool = True):
     
     # ==================== 模型对比回测（新增）====================
     st.markdown("## 📊 模型對比回測")
-    st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
-    
-    # 预设日期范围按钮
-    col_preset1, col_preset2, col_preset3, col_preset4 = st.columns(4)
-    
-    with col_preset1:
-        if st.button("📅 近3個月", use_container_width=True, key="preset_3m"):
-            today = datetime.now()
-            st.session_state.backtest_start_date = (today - timedelta(days=90)).date()
-            st.session_state.backtest_end_date = today.date()
-            st.rerun()
-    
-    with col_preset2:
-        if st.button("📅 近6個月", use_container_width=True, key="preset_6m"):
-            today = datetime.now()
-            st.session_state.backtest_start_date = (today - timedelta(days=180)).date()
-            st.session_state.backtest_end_date = today.date()
-            st.rerun()
-    
-    with col_preset3:
-        if st.button("📅 近1年", use_container_width=True, key="preset_1y"):
-            today = datetime.now()
-            st.session_state.backtest_start_date = (today - timedelta(days=365)).date()
-            st.session_state.backtest_end_date = today.date()
-            st.rerun()
-    
-    with col_preset4:
-        if st.button("📅 近2年", use_container_width=True, key="preset_2y"):
-            today = datetime.now()
-            st.session_state.backtest_start_date = (today - timedelta(days=730)).date()
-            st.session_state.backtest_end_date = today.date()
-            st.rerun()
-    
-    # 初始化 session_state 中的日期（如果没有）
-    if "backtest_start_date" not in st.session_state:
-        st.session_state.backtest_start_date = (datetime.now() - timedelta(days=180)).date()
-    if "backtest_end_date" not in st.session_state:
-        st.session_state.backtest_end_date = datetime.now().date()
     
     # 自定义日期选择器
     col1, col2, col3 = st.columns([1, 1, 1])
