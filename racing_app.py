@@ -337,6 +337,7 @@ def init_session_state():
         "show_paywall": False,
         "payment_url": None,
         "payment_type": None,
+        "stop_backtest": False,  # ⭐ 新增：回测取消标志
         # 删除 current_page，因为不再需要页面路由
     }
     for key, value in defaults.items():
@@ -3258,10 +3259,7 @@ def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -
 #-----------
 def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> Dict:
     """
-    回测函数（优化版）
-    - 批量获取数据，避免 N+1 查询
-    - 使用内存缓存，时间旅行原则
-    - 支持评分系统 (rule) 和 ML 模型 (预留接口)
+    回测函数（优化版 + 支持取消）
     """
     result = {
         "模型": "评分系统" if model_type == "rule" else model_type.upper(),
@@ -3274,6 +3272,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         "总投入": 0,
         "ROI": 0,
         "debug_details": [],
+        "cancelled": False,  # 新增：标记是否被取消
     }
     
     try:
@@ -3309,8 +3308,14 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 7. 遍历每场赛事（时间旅行：只使用该场日期之前的数据）
+        # 7. 遍历每场赛事
         for idx, race in enumerate(races):
+            # ⭐⭐⭐ 取消检查点 ⭐⭐⭐
+            if st.session_state.get("stop_backtest", False):
+                st.warning("⚠️ 回测已被用户取消")
+                result["cancelled"] = True
+                break
+            
             race_date = race['race_date']
             venue = race['venue']
             race_no = race['race_no']
@@ -3318,13 +3323,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             
             status_text.text(f"正在回测: {race_date} 第{race_no}场 ({idx+1}/{result['测试场次']})")
             progress_bar.progress((idx + 1) / result['测试场次'])
-
-            # 在循环内部添加（每次迭代后）
-            if st.session_state.get("stop_backtest", False):
-                st.warning("回测已取消")
-                st.session_state.stop_backtest = False
-                break
-            # 7.1 获取该场赛事的出赛马匹（从 all_performances 中筛选）
+            
+            # 获取该场赛事的出赛马匹
             runners_data = [p for p in all_performances 
                            if p['race_date'] == race_date 
                            and p['venue'] == venue 
@@ -3333,7 +3333,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             if not runners_data:
                 continue
             
-            # 7.2 构建 runners 列表并计算评分
+            # 构建 runners 列表并计算评分
             runners = []
             for r in runners_data:
                 horse_id = r.get('horse_id')
@@ -3342,21 +3342,18 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 
                 horse_name = name_cache.get(horse_id, r.get('horse_name', ''))
                 
-                # ★ 关键：获取该马匹在 race_date 之前的往绩（时间旅行原则）
+                # 获取该马匹在 race_date 之前的往绩
                 all_past = horse_cache.get(horse_id, [])
                 past_before_race = [p for p in all_past 
                                    if p.get('race_date', '') < race_date]
-                
-                # 取最近 10 场
                 past_before_race = past_before_race[:10]
                 
                 # 计算基础评分
                 basic_score = calculate_basic_score_fast(past_before_race, distance)
                 
-                # 计算场次评分（使用排位数据）
+                # 计算场次评分
                 draw = r.get('draw')
                 if draw and isinstance(draw, (int, float)) and 1 <= draw <= 14:
-                    # 内档有利，1档100分，14档20分
                     draw_score = max(20, 100 - (draw - 1) * 6)
                 else:
                     draw_score = 50
@@ -3374,30 +3371,26 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 else:
                     odds_score = 50
                 
-                # 综合评分（使用默认权重）
                 combined_score = basic_score * 0.30 + draw_score * 0.40 + odds_score * 0.30
-                win_probability = combined_score / 100
                 
                 runners.append({
                     "horse_id": horse_id,
                     "horse_name": horse_name,
                     "horse_no": r.get('horse_no'),
-                    "draw": draw,
-                    "odds_win": odds,
                     "finishing_position": r.get('position'),
                     "combined_score": combined_score,
-                    "win_probability": win_probability,
+                    "odds_win": odds,
                 })
             
             if not runners:
                 continue
             
-            # 7.3 按综合评分排序，找出预测冠军和预测前三
+            # 排序找出预测冠军
             runners.sort(key=lambda x: x.get('combined_score', 0), reverse=True)
             predicted_winner = runners[0].get('horse_name') if runners else None
             predicted_top3_names = [r.get('horse_name') for r in runners[:3]]
             
-            # 7.4 获取实际冠军和实际前三
+            # 获取实际结果
             actual_winner = None
             actual_top3_names = []
             for r in runners_data:
@@ -3409,7 +3402,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 if pos and pos <= 3:
                     actual_top3_names.append(horse_name)
             
-            # 7.5 记录调试信息
+            # 统计
             is_correct = (predicted_winner == actual_winner) if predicted_winner and actual_winner else False
             top3_hit_count = len(set(predicted_top3_names) & set(actual_top3_names))
             
@@ -3421,10 +3414,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 "前三命中数": top3_hit_count
             })
             
-            # 7.6 更新统计
             if is_correct:
                 correct_predictions += 1
-                # 模拟投注（假设每场投注 100 元）
                 total_stake += 100
                 odds = runners[0].get('odds_win', 3.0)
                 try:
@@ -3441,7 +3432,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         status_text.empty()
         
         # 9. 计算最终结果
-        if result["测试场次"] > 0:
+        if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["准确率"] = correct_predictions / result["测试场次"] * 100
             result["前三名命中"] = top3_hits
@@ -3451,11 +3442,15 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             if total_stake > 0:
                 result["ROI"] = (total_return - total_stake) / total_stake * 100
         
-        st.success(f"✅ 回测完成: {result['测试场次']} 场, 准确率 {result['准确率']:.1f}%, ROI {result['ROI']:+.1f}%")
+        if not result["cancelled"]:
+            st.success(f"✅ 回测完成: {result['测试场次']} 场, 准确率 {result['准确率']:.1f}%, ROI {result['ROI']:+.1f}%")
         
     except Exception as e:
         st.error(f"回测失败: {e}")
         print(f"回测失败 ({model_type}): {e}")
+    
+    # 重置取消标志
+    st.session_state.stop_backtest = False
     
     return result
 #------------
@@ -3989,126 +3984,199 @@ def render_backtest_page(show_title: bool = True):
         st.markdown("## 📊 回測")
     
     # ==================== 模型对比回测（新增）====================
-    st.markdown("## 📊 回測對比")
+    st.markdown("## 📊 模型對比回測")
     st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
     
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        enable_rule = st.checkbox("评分系统", value=True, key="backtest_rule")
-    with col2:
-        enable_lgb = st.checkbox("LightGBM", value=True, key="backtest_lgb")
-    with col3:
-        enable_xgb = st.checkbox("XGBoost", value=True, key="backtest_xgb")
-    with col4:
-        enable_ensemble = st.checkbox("集成模型", value=True, key="backtest_ensemble")
+    # 预设日期范围按钮
+    col_preset1, col_preset2, col_preset3, col_preset4 = st.columns(4)
     
-    col1, col2, col3 = st.columns(3)
+    with col_preset1:
+        if st.button("📅 近3個月", use_container_width=True, key="preset_3m"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=90)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    with col_preset2:
+        if st.button("📅 近6個月", use_container_width=True, key="preset_6m"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=180)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    with col_preset3:
+        if st.button("📅 近1年", use_container_width=True, key="preset_1y"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=365)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    with col_preset4:
+        if st.button("📅 近2年", use_container_width=True, key="preset_2y"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=730)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    # 初始化 session_state 中的日期（如果没有）
+    if "backtest_start_date" not in st.session_state:
+        st.session_state.backtest_start_date = (datetime.now() - timedelta(days=180)).date()
+    if "backtest_end_date" not in st.session_state:
+        st.session_state.backtest_end_date = datetime.now().date()
+    
+    # 自定义日期选择器
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         backtest_start = st.date_input(
             "開始日期", 
-            value=datetime.now() - timedelta(days=90),
-            key="backtest_start_date"
+            value=st.session_state.backtest_start_date,
+            key="backtest_start_date_input"
         )
     with col2:
         backtest_end = st.date_input(
             "結束日期", 
-            value=datetime.now(),
-            key="backtest_end_date"
+            value=st.session_state.backtest_end_date,
+            key="backtest_end_date_input"
         )
     with col3:
+        st.markdown("<br>", unsafe_allow_html=True)  # 占位对齐
         run_backtest_btn = st.button("▶️ 運行模型對比回測", type="primary", use_container_width=True)
-
-    # 替换原有的 run_backtest_for_model 调用为新的逻辑
     
+    # 模型选择复选框
+    st.markdown("**🤖 選擇要對比的模型**")
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    
+    with col_m1:
+        enable_rule = st.checkbox("评分系统", value=True, key="backtest_rule")
+    with col_m2:
+        enable_lgb = st.checkbox("LightGBM", value=False, key="backtest_lgb", 
+                                 disabled=not LGB_AVAILABLE,
+                                 help="需要安装 lightgbm 库" if not LGB_AVAILABLE else "")
+    with col_m3:
+        enable_xgb = st.checkbox("XGBoost", value=False, key="backtest_xgb",
+                                 disabled=not XGB_AVAILABLE,
+                                 help="需要安装 xgboost 库" if not XGB_AVAILABLE else "")
+    with col_m4:
+        enable_ensemble = st.checkbox("集成模型", value=False, key="backtest_ensemble",
+                                      disabled=(not LGB_AVAILABLE and not XGB_AVAILABLE),
+                                      help="需要安装 lightgbm 或 xgboost 库" if (not LGB_AVAILABLE and not XGB_AVAILABLE) else "")
+    
+    # 显示可用库提示
+    if not LGB_AVAILABLE and not XGB_AVAILABLE:
+        st.info("💡 提示：LightGBM 和 XGBoost 库未安装。要启用 ML 模型回测，请运行：\n```\npip install lightgbm xgboost\n```")
+    
+    st.markdown("---")
+    
+    # 运行回测
     if run_backtest_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning("免費次數已用完，請升級到專業版")
         else:
-            with st.spinner("正在運行模型對比回測..."):
-                results = []
+            # 验证日期范围
+            if backtest_start > backtest_end:
+                st.error("開始日期不能晚於結束日期")
+            else:
+                # 显示回测信息
+                days_diff = (backtest_end - backtest_start).days
+                st.info(f"📊 回測期間: {backtest_start} 至 {backtest_end} (共 {days_diff} 天)")
                 
-                # 评分系统 - 使用新的优化函数
-                if enable_rule:
-                    result = run_backtest_for_model(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="rule"
-                    )
-                    results.append(result)
-                
-                # LightGBM - 使用新的 ML 回测函数
-                if enable_lgb:
-                    result = run_ml_backtest(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="lightgbm"
-                    )
-                    results.append(result)
-                
-                # XGBoost
-                if enable_xgb:
-                    result = run_ml_backtest(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="xgboost"
-                    )
-                    results.append(result)
-                
-                # 集成模型
-                if enable_ensemble:
-                    result = run_ml_backtest(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="ensemble"
-                    )
-                    results.append(result)
-            
-            # ... 后续显示结果的代码保持不变 ...
-                
-                if results:
-                    st.markdown("#### 📈 模型對比結果")
+                with st.spinner("正在運行模型對比回測..."):
+                    results = []
                     
-                    # 显示对比表格
-                    compare_df = pd.DataFrame(results)
-                    st.dataframe(
-                        compare_df.style.format({
-                            '准确率': '{:.1f}%',
-                            '前三名命中率': '{:.1f}%',
-                            'ROI': '{:+.1f}%',
-                            '总回报': '${:.0f}'
-                        }),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    # 评分系统
+                    if enable_rule:
+                        result = run_backtest_for_model(
+                            start_date=backtest_start.strftime("%Y-%m-%d"),
+                            end_date=backtest_end.strftime("%Y-%m-%d"),
+                            model_type="rule"
+                        )
+                        results.append(result)
                     
-                    # 绘制对比图表
-                    fig = go.Figure()
-                    for model in results:
-                        fig.add_trace(go.Bar(
-                            name=model['模型'],
-                            x=['准确率', '前三名命中率', 'ROI'],
-                            y=[model['准确率'], model['前三名命中率'], model['ROI']],
-                            text=[f"{model['准确率']:.1f}%", f"{model['前三名命中率']:.1f}%", f"{model['ROI']:+.1f}%"],
-                            textposition='auto'
-                        ))
-                    fig.update_layout(title="模型性能对比", barmode='group', height=400)
-                    st.plotly_chart(fig, use_container_width=True)
+                    # LightGBM
+                    if enable_lgb and LGB_AVAILABLE:
+                        result = run_ml_backtest(
+                            start_date=backtest_start.strftime("%Y-%m-%d"),
+                            end_date=backtest_end.strftime("%Y-%m-%d"),
+                            model_type="lightgbm"
+                        )
+                        results.append(result)
                     
-                    # ==================== 调试表格（显示前10场的预测 vs 实际）====================
-                    st.markdown("#### 🔍 調試資訊（前10場預測 vs 實際）")
+                    # XGBoost
+                    if enable_xgb and XGB_AVAILABLE:
+                        result = run_ml_backtest(
+                            start_date=backtest_start.strftime("%Y-%m-%d"),
+                            end_date=backtest_end.strftime("%Y-%m-%d"),
+                            model_type="xgboost"
+                        )
+                        results.append(result)
                     
-                    # 获取评分系统的回测明细
-                    rule_result = next((r for r in results if r['模型'] == '评分系统'), None)
-                    if rule_result and 'debug_details' in rule_result:
-                        debug_df = pd.DataFrame(rule_result['debug_details'][:10])
-                        st.dataframe(debug_df, use_container_width=True, hide_index=True)
+                    # 集成模型
+                    if enable_ensemble and (LGB_AVAILABLE or XGB_AVAILABLE):
+                        result = run_ml_backtest(
+                            start_date=backtest_start.strftime("%Y-%m-%d"),
+                            end_date=backtest_end.strftime("%Y-%m-%d"),
+                            model_type="ensemble"
+                        )
+                        results.append(result)
+                    
+                    if results:
+                        st.markdown("#### 📈 模型對比結果")
+                        
+                        # 检查是否有被取消的回测
+                        cancelled_results = [r for r in results if r.get("cancelled", False)]
+                        if cancelled_results:
+                            st.warning(f"⚠️ 部分回测被取消: {len(cancelled_results)} 个模型未完成")
+                        
+                        # 过滤掉被取消的结果用于对比
+                        completed_results = [r for r in results if not r.get("cancelled", False)]
+                        
+                        if completed_results:
+                            # 显示对比表格
+                            compare_df = pd.DataFrame(completed_results)
+                            # 选择要显示的列
+                            display_columns = ["模型", "测试场次", "预测正确", "准确率", "前三名命中", "前三名命中率", "总投入", "总回报", "ROI"]
+                            available_cols = [c for c in display_columns if c in compare_df.columns]
+                            compare_df = compare_df[available_cols]
+                            
+                            st.dataframe(
+                                compare_df.style.format({
+                                    '准确率': '{:.1f}%',
+                                    '前三名命中率': '{:.1f}%',
+                                    'ROI': '{:+.1f}%',
+                                    '总回报': '${:.0f}',
+                                    '总投入': '${:.0f}'
+                                }),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                            
+                            # 绘制对比图表
+                            fig = go.Figure()
+                            for model in completed_results:
+                                fig.add_trace(go.Bar(
+                                    name=model['模型'],
+                                    x=['准确率', '前三名命中率', 'ROI'],
+                                    y=[model.get('准确率', 0), model.get('前三名命中率', 0), model.get('ROI', 0)],
+                                    text=[f"{model.get('准确率', 0):.1f}%", f"{model.get('前三名命中率', 0):.1f}%", f"{model.get('ROI', 0):+.1f}%"],
+                                    textposition='auto'
+                                ))
+                            fig.update_layout(title="模型性能对比", barmode='group', height=400)
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # 调试表格（显示前10场预测详情）
+                            st.markdown("#### 🔍 調試資訊（前10場預測 vs 實際）")
+                            rule_result = next((r for r in completed_results if r['模型'] == '评分系统'), None)
+                            if rule_result and 'debug_details' in rule_result and rule_result['debug_details']:
+                                debug_df = pd.DataFrame(rule_result['debug_details'][:10])
+                                st.dataframe(debug_df, use_container_width=True, hide_index=True)
+                            else:
+                                st.info("暂无调试数据")
+                        else:
+                            st.warning("所有回测均被取消或失败")
                     else:
-                        st.info("暂无调试数据，请确保 run_backtest_for_model 返回 debug_details")
-                    
-                else:
-                    st.warning("请至少选择一个模型")
-    
-    st.markdown("---")
+                        st.warning("请至少选择一个模型")
+        
+        st.markdown("---")
     
     # ... 原有的单场回测和全天回测代码保持不变 ...
     # ==================== 原有的单场回测代码保持不变 ====================
