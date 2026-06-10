@@ -3299,15 +3299,19 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         
         if result["测试场次"] == 0:
             st.warning("未找到任何賽事")
-            return result
+            progress_bar.empty()  # 如果前面创建了进度条
+            status_text.empty()
+            return result  # ⭐ 提前返回，避免后续代码使用未初始化的变量
         
         # 4. 获取马名缓存
         name_cache = get_horse_name_cache()
         
         # 5. 初始化统计变量
         correct_predictions = 0
-        total_top3_hits = 0      # 累计命中匹数（每场最多3）
-        total_tce_correct = 0    # 三重彩顺序正确场次
+        total_top3_hits = 0
+        total_tce_correct = 0
+        total_stake = 0          # ⭐ 必须初始化
+        total_return = 0         # ⭐ 必须初始化
         
         # 6. 创建进度条
         progress_bar = st.progress(0)
@@ -3873,8 +3877,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
         correct_predictions = 0
         total_top3_hits = 0
         total_tce_correct = 0
-        total_stake = 0
-        total_return = 0
+        total_stake = 0          # ⭐ 确保这行存在
+        total_return = 0         # ⭐ 确保这行存在
         
         # 8. 创建进度条
         progress_bar = st.progress(0)
