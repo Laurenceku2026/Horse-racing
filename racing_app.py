@@ -17,7 +17,7 @@ import plotly.express as px
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from supabase import create_client, Client
-
+from bs4 import BeautifulSoup
 # ==================== 页面配置 ====================
 st.set_page_config(
     page_title="香港赛马AI分析系统",
@@ -5245,14 +5245,122 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
         print(f"清理旧记录失败: {e}")
     
     return result
+#----------------
+# ==================== 智能赛期获取（从官网下拉菜单）====================
+
+def get_official_race_dates_from_hkjc() -> List[str]:
+    """
+    从香港赛马会官网解析下拉菜单，获取所有可用赛期日期
+    返回：日期列表，格式 YYYY-MM-DD
+    """
+    race_dates = []
+    
+    try:
+        # 使用一个已知有数据的日期作为入口（如最近一场赛事）
+        url = "https://racing.hkjc.com/zh-hk/local/information/localresults?racedate=2026/06/07"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 查找赛期下拉菜单（通常是一个 select 元素）
+        # 方法1：查找 name="selectDate" 或 id="selectDate" 的 select
+        select_elem = soup.find('select', {'name': 'selectDate'})
+        if not select_elem:
+            select_elem = soup.find('select', {'id': 'selectDate'})
+        
+        if select_elem:
+            for option in select_elem.find_all('option'):
+                value = option.get('value', '')
+                if value and value.strip():
+                    # value 格式可能是 YYYY/MM/DD 或 YYYY-MM-DD
+                    # 统一转换为 YYYY-MM-DD
+                    if '/' in value:
+                        date_str = value.replace('/', '-')
+                    else:
+                        date_str = value
+                    
+                    # 只保留有效日期格式
+                    if re.match(r'\d{4}-\d{2}-\d{2}', date_str):
+                        race_dates.append(date_str)
+        else:
+            # 方法2：如果没有下拉菜单，尝试从页面链接中提取
+            # 查找所有包含 racedate= 的链接
+            for link in soup.find_all('a', href=True):
+                href = link['href']
+                match = re.search(r'racedate=(\d{4}/\d{2}/\d{2})', href)
+                if match:
+                    date_str = match.group(1).replace('/', '-')
+                    if date_str not in race_dates:
+                        race_dates.append(date_str)
+        
+        # 去重并排序
+        race_dates = sorted(list(set(race_dates)))
+        
+        print(f"从官网获取到 {len(race_dates)} 个赛期: {race_dates[:5]}...")
+        return race_dates
+        
+    except Exception as e:
+        print(f"获取官方赛期失败: {e}")
+        return []
 
 
+def get_db_latest_race_date() -> Optional[str]:
+    """从 past_performances 表获取最新的赛事日期"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/past_performances?order=race_date.desc&limit=1&select=race_date"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200 and response.json():
+            return response.json()[0].get('race_date')
+        return None
+    except Exception as e:
+        print(f"获取数据库最新日期失败: {e}")
+        return None
+
+
+def save_race_results_batch(results: List[Dict]) -> bool:
+    """
+    批量保存一场赛事的全部结果到 past_performances 表
+    使用 upsert 避免重复
+    """
+    if not results:
+        return True
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 构建 upsert 请求（如果有重复则更新）
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/past_performances",
+            headers={
+                **headers,
+                "Prefer": "resolution=merge-duplicates"  # 关键：重复时更新
+            },
+            json=results
+        )
+        
+        if response.status_code in [200, 201]:
+            print(f"批量保存成功: {len(results)} 条记录")
+            return True
+        else:
+            print(f"批量保存失败: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"批量保存异常: {e}")
+        return False
+#----------------
 def sync_all_data() -> Dict:
     """
-    智能同步所有数据（增量更新）
-    1. 检查 Supabase 中最新的赛事日期
-    2. 只抓取缺失的日期数据
-    3. 保持总数据量不超过 9000 行
+    智能同步所有数据（智能增量更新）
+    1. 从数据库获取最新日期
+    2. 从官网获取官方赛期列表
+    3. 只抓取缺失的赛期（不包括当天）
+    4. 批量写入，提高性能
+    5. 清理超过 9000 行的旧数据
     """
     result = {"success": False, "new_races": 0, "new_records": 0, "error": None}
     
@@ -5261,73 +5369,84 @@ def sync_all_data() -> Dict:
         return result
     
     try:
-        # 1. 获取当前数据库中最新的赛事日期
-        latest_date_str = get_latest_race_date_from_db()
+        # ==================== 第1步：获取数据库最新日期 ====================
+        db_latest_date = get_db_latest_race_date()
+        print(f"数据库最新日期: {db_latest_date}")
         
-        # 2. 确定需要同步的起始日期
-        if latest_date_str:
-            latest_date = datetime.strptime(latest_date_str, '%Y-%m-%d')
-            start_date = latest_date + timedelta(days=1)
-            # 如果最新日期是今天或未来，不需要同步
-            if start_date > datetime.now():
-                result["success"] = True
-                result["new_races"] = 0
-                result["new_records"] = 0
-                return result
+        # ==================== 第2步：获取官方赛期列表 ====================
+        official_dates = get_official_race_dates_from_hkjc()
+        
+        if not official_dates:
+            result["error"] = "无法获取官方赛期列表，请检查网络"
+            return result
+        
+        print(f"官方赛期总数: {len(official_dates)}")
+        
+        # ==================== 第3步：计算需要抓取的日期 ====================
+        today = datetime.now().strftime("%Y-%m-%d")
+        
+        # 排除当天（结果可能未完整公布）
+        official_dates_exclude_today = [d for d in official_dates if d < today]
+        
+        if db_latest_date:
+            # 只抓取数据库中没有的赛期
+            dates_to_fetch = [d for d in official_dates_exclude_today if d > db_latest_date]
         else:
-            # 没有数据，从 2025-01-01 开始
-            start_date = datetime(2025, 1, 1)
+            # 数据库为空，抓取所有赛期（排除当天）
+            dates_to_fetch = official_dates_exclude_today
         
-        end_date = datetime.now()
+        print(f"需要抓取的赛期: {dates_to_fetch}")
         
-        # 3. 遍历日期范围，抓取缺失的数据
+        if not dates_to_fetch:
+            result["success"] = True
+            result["new_races"] = 0
+            result["new_records"] = 0
+            st.info("所有数据已是最新，无需更新")
+            return result
+        
+        # ==================== 第4步：增量抓取 ====================
+        venues = ['ST', 'HV']
         total_new_races = 0
         total_new_records = 0
         
-        current = start_date
-        venues = ['ST', 'HV']
-        
+        # 创建进度条
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 计算总天数
-        total_days = (end_date - start_date).days + 1
-        days_processed = 0
-        
-        while current <= end_date:
-            days_processed += 1
-            progress_bar.progress(days_processed / total_days)
+        for idx, date_str in enumerate(dates_to_fetch):
+            status_text.text(f"正在同步 {date_str}... ({idx+1}/{len(dates_to_fetch)})")
+            progress_bar.progress((idx + 1) / len(dates_to_fetch))
             
-            if current.weekday() in [5, 6]:  # 周六或周日
-                date_str = current.strftime("%Y/%m/%d")
-                status_text.text(f"正在同步 {current.strftime('%Y-%m-%d')}...")
-                
-                for venue in venues:
-                    for race_no in range(1, 13):
-                        try:
-                            race_info, results = parse_race_result(date_str, venue, race_no)
+            # 转换日期格式为 URL 需要的 YYYY/MM/DD
+            url_date = date_str.replace('-', '/')
+            
+            for venue in venues:
+                for race_no in range(1, 13):
+                    try:
+                        race_info, results = parse_race_result(url_date, venue, race_no)
+                        
+                        if results and len(results) > 0:
+                            # 为每条记录添加赛事元数据
+                            for record in results:
+                                record['race_class'] = race_info.get('race_class', '')
+                                record['distance'] = race_info.get('distance', 0)
+                                record['going'] = race_info.get('going', '')
+                                record['sectional_times'] = json.dumps(race_info.get('sectional_times', []))
                             
-                            if results:
-                                # 保存每条记录
-                                for record in results:
-                                    # 添加赛事信息
-                                    record['race_class'] = race_info.get('race_class', '')
-                                    record['distance'] = race_info.get('distance', 0)
-                                    record['going'] = race_info.get('going', '')
-                                    record['sectional_times'] = json.dumps(race_info.get('sectional_times', []))
-                                    
-                                    success = save_race_result_to_db(record)
-                                    if success:
-                                        total_new_records += 1
-                                
+                            # ✅ 批量保存（一次请求保存整场）
+                            success = save_race_results_batch(results)
+                            if success:
                                 total_new_races += 1
-                        except Exception as e:
-                            print(f"同步失败 {date_str} {venue} 第{race_no}场: {e}")
-                            continue
-                    
-                    time.sleep(1)  # 避免请求过快
-            
-            current += timedelta(days=1)
+                                total_new_records += len(results)
+                                print(f"✅ {date_str} {venue} 第{race_no}场: {len(results)} 条记录")
+                            else:
+                                print(f"❌ {date_str} {venue} 第{race_no}场: 保存失败")
+                        
+                        time.sleep(0.3)  # 轻微延迟，避免请求过快
+                        
+                    except Exception as e:
+                        print(f"⚠️ {date_str} {venue} 第{race_no}场: {e}")
+                        continue
         
         progress_bar.empty()
         status_text.empty()
@@ -5336,16 +5455,21 @@ def sync_all_data() -> Dict:
         result["new_races"] = total_new_races
         result["new_records"] = total_new_records
         
-        # 4. 清理超过 9000 行的旧数据
+        # ==================== 第5步：清理超过 9000 行的旧数据 ====================
         if total_new_records > 0:
             cleanup_result = cleanup_old_records(keep_count=9000)
             if cleanup_result.get("deleted", 0) > 0:
                 st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
         
+        # ==================== 第6步：清除缓存，刷新界面 ====================
+        st.cache_data.clear()
+        st.success(f"✅ 更新完成！新增 {total_new_races} 场赛事，{total_new_records} 条成绩记录")
+        
         return result
         
     except Exception as e:
         result["error"] = str(e)
+        st.error(f"更新失败: {e}")
         return result
 
 
