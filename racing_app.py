@@ -4105,6 +4105,13 @@ def render_backtest_page(show_title: bool = True):
     
     # ==================== 模型对比回测（新增）====================
     st.markdown("## 📊 模型對比回測")
+    st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
+    
+    # ⭐ 添加 session_state 初始化（放在日期选择器之前）
+    if "backtest_start_date" not in st.session_state:
+        st.session_state.backtest_start_date = (datetime.now() - timedelta(days=180)).date()
+    if "backtest_end_date" not in st.session_state:
+        st.session_state.backtest_end_date = datetime.now().date()
     
     # 自定义日期选择器
     col1, col2, col3 = st.columns([1, 1, 1])
