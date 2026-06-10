@@ -3259,29 +3259,35 @@ def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -
 #-----------
 def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> Dict:
     """
-    回测函数（优化版 + 支持取消）
+    回测函数（优化版）
+    - 批量获取数据，避免 N+1 查询
+    - ROI 修正：每场都投注 100 元
+    - 前三名命中匹数率（而非场次率）
+    - 增加预测第2、第3名用于详细表格
     """
     result = {
         "模型": "评分系统" if model_type == "rule" else model_type.upper(),
         "测试场次": 0,
         "预测正确": 0,
-        "前三名命中": 0,
+        "前三名命中匹数": 0,      # ✅ 已添加
+        "前三名顺序正确": 0,       # ✅ 已添加
         "准确率": 0,
-        "前三名命中率": 0,
-        "总回报": 0,
+        "前三名命中匹数率": 0,     # ✅ 已添加
+        "前三名顺序正确率": 0,     # ✅ 已添加
         "总投入": 0,
+        "总回报": 0,
         "ROI": 0,
         "debug_details": [],
-        "cancelled": False,  # 新增：标记是否被取消
+        "cancelled": False,
     }
     
     try:
         # 1. 批量获取所有数据
-        with st.spinner(f"📥 正在加载 {start_date} 至 {end_date} 的历史数据..."):
+        with st.spinner(f"📥 正在加載 {start_date} 至 {end_date} 的歷史數據..."):
             all_performances = get_performances_batch(start_date, end_date)
         
         if not all_performances:
-            st.error("未获取到任何数据")
+            st.error("未獲取到任何數據")
             return result
         
         # 2. 构建马匹往绩缓存
@@ -3292,7 +3298,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         result["测试场次"] = len(races)
         
         if result["测试场次"] == 0:
-            st.warning("未找到任何赛事")
+            st.warning("未找到任何賽事")
             return result
         
         # 4. 获取马名缓存
@@ -3300,9 +3306,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         
         # 5. 初始化统计变量
         correct_predictions = 0
-        top3_hits = 0
-        total_stake = 0
-        total_return = 0
+        total_top3_hits = 0      # 累计命中匹数（每场最多3）
+        total_tce_correct = 0    # 三重彩顺序正确场次
         
         # 6. 创建进度条
         progress_bar = st.progress(0)
@@ -3310,9 +3315,9 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         
         # 7. 遍历每场赛事
         for idx, race in enumerate(races):
-            # ⭐⭐⭐ 取消检查点 ⭐⭐⭐
+            # 取消检查点
             if st.session_state.get("stop_backtest", False):
-                st.warning("⚠️ 回测已被用户取消")
+                st.warning("⚠️ 回測已被用戶取消")
                 result["cancelled"] = True
                 break
             
@@ -3321,7 +3326,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             race_no = race['race_no']
             distance = race.get('distance', 1200)
             
-            status_text.text(f"正在回测: {race_date} 第{race_no}场 ({idx+1}/{result['测试场次']})")
+            status_text.text(f"正在回測: {race_date} 第{race_no}場 ({idx+1}/{result['测试场次']})")
             progress_bar.progress((idx + 1) / result['测试场次'])
             
             # 获取该场赛事的出赛马匹
@@ -3385,47 +3390,81 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             if not runners:
                 continue
             
-            # 排序找出预测冠军
+            # ★ 排序找出预测前三名（按综合评分降序）
             runners.sort(key=lambda x: x.get('combined_score', 0), reverse=True)
-            predicted_winner = runners[0].get('horse_name') if runners else None
-            predicted_top3_names = [r.get('horse_name') for r in runners[:3]]
+            predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
+            predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
+            predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
+            predicted_top3_names = [predicted_1st, predicted_2nd, predicted_3rd]
             
-            # 获取实际结果
-            actual_winner = None
+            # 获取实际结果（按名次排序）
+            runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
+            actual_1st = None
+            actual_2nd = None
+            actual_3rd = None
             actual_top3_names = []
-            for r in runners_data:
+            
+            for r in runners_data_sorted:
                 pos = r.get('position')
                 horse_id = r.get('horse_id')
                 horse_name = name_cache.get(horse_id, r.get('horse_name', ''))
                 if pos == 1:
-                    actual_winner = horse_name
-                if pos and pos <= 3:
+                    actual_1st = horse_name
+                    actual_top3_names.append(horse_name)
+                elif pos == 2:
+                    actual_2nd = horse_name
+                    actual_top3_names.append(horse_name)
+                elif pos == 3:
+                    actual_3rd = horse_name
                     actual_top3_names.append(horse_name)
             
-            # 统计
-            is_correct = (predicted_winner == actual_winner) if predicted_winner and actual_winner else False
-            top3_hit_count = len(set(predicted_top3_names) & set(actual_top3_names))
+            # ★ 统计命中情况
+            # 第1名正确
+            is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
             
-            result["debug_details"].append({
-                "场次": f"{race_date} 第{race_no}场",
-                "预测冠军": predicted_winner,
-                "实际冠军": actual_winner,
-                "是否正确": "✅" if is_correct else "❌",
-                "前三命中数": top3_hit_count
-            })
+            # 前三名命中匹数（预测集合与实际集合的交集数量）
+            hits = len(set(predicted_top3_names) & set(actual_top3_names))
+            total_top3_hits += hits
             
+            # 前三名顺序是否正确（三重彩标准）
+            tce_correct = (predicted_1st == actual_1st and 
+                          predicted_2nd == actual_2nd and 
+                          predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
+            if tce_correct:
+                total_tce_correct += 1
+            
+            # ★ ROI 计算：每场都投注 100 元
+            total_stake_per_race = 100
             if is_correct:
-                correct_predictions += 1
-                total_stake += 100
                 odds = runners[0].get('odds_win', 3.0)
                 try:
                     odds = float(odds) if odds else 3.0
                 except:
                     odds = 3.0
-                total_return += 100 * odds
+                return_per_race = 100 * odds
+            else:
+                return_per_race = 0
             
-            if top3_hit_count > 0:
-                top3_hits += 1
+            # 记录调试详情（包含预测第2、第3名）
+            result["debug_details"].append({
+                "赛期": race_date,
+                "场次": race_no,
+                "预测第1名": predicted_1st or "-",
+                "预测第2名": predicted_2nd or "-",
+                "预测第3名": predicted_3rd or "-",
+                "实际第1名": actual_1st or "-",
+                "实际第2名": actual_2nd or "-",
+                "实际第3名": actual_3rd or "-",
+                "第1名正确": "✅" if is_correct else "❌",
+                "前3名命中": hits,
+                "前3名顺序正确": "✅" if tce_correct else "❌"
+            })
+            
+            # 更新累计统计
+            if is_correct:
+                correct_predictions += 1
+            total_stake += total_stake_per_race
+            total_return += return_per_race
         
         # 8. 清理进度条
         progress_bar.empty()
@@ -3435,19 +3474,24 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["准确率"] = correct_predictions / result["测试场次"] * 100
-            result["前三名命中"] = top3_hits
-            result["前三名命中率"] = top3_hits / result["测试场次"] * 100
+            
+            result["前三名命中匹数"] = total_top3_hits
+            result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * 3) * 100
+            
+            result["前三名顺序正确"] = total_tce_correct
+            result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
+            
             result["总投入"] = total_stake
             result["总回报"] = total_return
             if total_stake > 0:
                 result["ROI"] = (total_return - total_stake) / total_stake * 100
         
         if not result["cancelled"]:
-            st.success(f"✅ 回测完成: {result['测试场次']} 场, 准确率 {result['准确率']:.1f}%, ROI {result['ROI']:+.1f}%")
+            st.success(f"✅ 回測完成: {result['测试场次']} 場, 準確率 {result['准确率']:.1f}%, ROI {result['ROI']:+.1f}%")
         
     except Exception as e:
-        st.error(f"回测失败: {e}")
-        print(f"回测失败 ({model_type}): {e}")
+        st.error(f"回測失敗: {e}")
+        print(f"回測失敗 ({model_type}): {e}")
     
     # 重置取消标志
     st.session_state.stop_backtest = False
@@ -3675,32 +3719,38 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
     
     return X_df, y_series
 
-
+#--------------------
 def train_model_on_data(X_train: pd.DataFrame, y_train: pd.Series, model_type: str):
     """
     在指定数据上训练模型
     model_type: 'lightgbm', 'xgboost', 'ensemble'
+    
+    性能优化：n_estimators 从 100 降到 50，训练时间减半
     """
     if model_type == 'lightgbm' and LGB_AVAILABLE:
         model = lgb.LGBMClassifier(
-            n_estimators=100,
+            n_estimators=50,      # 从 100 降到 50
             max_depth=5,
             learning_rate=0.1,
             random_state=42,
-            verbose=-1
+            verbose=-1,
+            subsample=0.8,        # 新增：每棵树使用 80% 样本，防止过拟合
+            colsample_bytree=0.8  # 新增：每棵树使用 80% 特征
         )
         model.fit(X_train, y_train)
         return model
     
     elif model_type == 'xgboost' and XGB_AVAILABLE:
         model = xgb.XGBClassifier(
-            n_estimators=100,
+            n_estimators=50,      # 从 100 降到 50
             max_depth=5,
             learning_rate=0.1,
             random_state=42,
             use_label_encoder=False,
             eval_metric='logloss',
-            verbosity=0
+            verbosity=0,
+            subsample=0.8,        # 新增：每棵树使用 80% 样本
+            colsample_bytree=0.8  # 新增：每棵树使用 80% 特征
         )
         model.fit(X_train, y_train)
         return model
@@ -3712,15 +3762,27 @@ def train_model_on_data(X_train: pd.DataFrame, y_train: pd.Series, model_type: s
         
         if LGB_AVAILABLE:
             lgb_model = lgb.LGBMClassifier(
-                n_estimators=100, max_depth=5, learning_rate=0.1,
-                random_state=42, verbose=-1
+                n_estimators=50,   # 从 100 降到 50
+                max_depth=5,
+                learning_rate=0.1,
+                random_state=42,
+                verbose=-1,
+                subsample=0.8,
+                colsample_bytree=0.8
             )
             lgb_model.fit(X_train, y_train)
         
         if XGB_AVAILABLE:
             xgb_model = xgb.XGBClassifier(
-                n_estimators=100, max_depth=5, learning_rate=0.1,
-                random_state=42, use_label_encoder=False, eval_metric='logloss', verbosity=0
+                n_estimators=50,   # 从 100 降到 50
+                max_depth=5,
+                learning_rate=0.1,
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric='logloss',
+                verbosity=0,
+                subsample=0.8,
+                colsample_bytree=0.8
             )
             xgb_model.fit(X_train, y_train)
         
@@ -3752,31 +3814,35 @@ def predict_with_model(model, features: Dict, model_type: str) -> float:
 #----------
 def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
     """
-    ML 模型回测（时间滑窗版本）
+    ML 模型回测（时间滑窗版本 + 修正指标）
     - 使用截止日期前的数据训练模型
     - 预测该日期当天的赛事
     - 滚动进行，确保无数据泄露
+    - 包含训练进度提示
     """
     result = {
         "模型": "LightGBM" if model_type == "lightgbm" else "XGBoost" if model_type == "xgboost" else "集成模型",
         "测试场次": 0,
         "预测正确": 0,
-        "前三名命中": 0,
+        "前三名命中匹数": 0,
+        "前三名顺序正确": 0,
         "准确率": 0,
-        "前三名命中率": 0,
-        "总回报": 0,
+        "前三名命中匹数率": 0,
+        "前三名顺序正确率": 0,
         "总投入": 0,
+        "总回报": 0,
         "ROI": 0,
         "debug_details": [],
+        "cancelled": False,
     }
     
     try:
         # 1. 批量获取所有数据
-        with st.spinner(f"📥 正在加载 {start_date} 至 {end_date} 的历史数据..."):
+        with st.spinner(f"📥 正在加載 {start_date} 至 {end_date} 的歷史數據..."):
             all_performances = get_performances_batch(start_date, end_date)
         
         if not all_performances:
-            st.error("未获取到任何数据")
+            st.error("未獲取到任何數據")
             return result
         
         # 2. 构建马匹往绩缓存
@@ -3805,7 +3871,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
         
         # 7. 初始化统计变量
         correct_predictions = 0
-        top3_hits = 0
+        total_top3_hits = 0
+        total_tce_correct = 0
         total_stake = 0
         total_return = 0
         
@@ -3815,36 +3882,44 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
         
         # 9. 时间滑窗回测
         for idx, current_date in enumerate(sorted_dates):
-            status_text.text(f"正在回测: {current_date} ({idx+1}/{len(sorted_dates)})")
-            progress_bar.progress((idx + 1) / len(sorted_dates))
-
-            # 在循环内部添加（每次迭代后）
+            # 取消检查点
             if st.session_state.get("stop_backtest", False):
-                st.warning("回测已取消")
-                st.session_state.stop_backtest = False
+                st.warning("⚠️ 回測已被用戶取消")
+                result["cancelled"] = True
                 break
+            
+            status_text.text(f"正在處理日期: {current_date} ({idx+1}/{len(sorted_dates)})")
+            progress_bar.progress((idx + 1) / len(sorted_dates))
+            
             # 9.1 使用 current_date 之前的所有数据训练模型
+            # ⭐ 训练进度提示
+            status_text.text(f"正在訓練模型: {current_date} (準備訓練數據中...)")
+            
             train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
             
             if train_X is None or len(train_X) < 50:
-                # 训练数据不足，跳过该日
+                status_text.text(f"⚠️ {current_date} 訓練數據不足 ({len(train_X) if train_X is not None else 0} 條)，跳過")
                 continue
+            
+            # ⭐ 显示训练数据量
+            status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
             
             model = train_model_on_data(train_X, train_y, model_type)
             if model is None:
+                status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
                 continue
             
             # 9.2 预测 current_date 当天的所有赛事
             for race in races_by_date[current_date]:
+                # 内层循环取消检查点
+                if st.session_state.get("stop_backtest", False):
+                    break
+                
                 race_date = race['race_date']
                 venue = race['venue']
                 race_no = race['race_no']
                 distance = race.get('distance', 1200)
-                # 在循环内部添加（每次迭代后）
-                if st.session_state.get("stop_backtest", False):
-                    st.warning("回测已取消")
-                    st.session_state.stop_backtest = False
-                    break
+                
                 # 获取该场赛事的出赛马匹
                 runners_data = [p for p in all_performances 
                                if p['race_date'] == race_date 
@@ -3902,13 +3977,20 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                     # 预测
                     prob = predict_with_model(model, features, model_type)
                     
+                    # 获取赔率
+                    odds_raw = r.get('odds')
+                    try:
+                        odds = float(odds_raw) if odds_raw else 10
+                    except (ValueError, TypeError):
+                        odds = 10
+                    
                     runners.append({
                         "horse_id": horse_id,
                         "horse_name": horse_name,
                         "horse_no": r.get('horse_no'),
                         "finishing_position": r.get('position'),
                         "win_probability": prob,
-                        "odds_win": r.get('odds', 10)
+                        "odds_win": odds,
                     })
                 
                 if not runners:
@@ -3916,35 +3998,48 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                 
                 # 按胜率排序
                 runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
-                predicted_winner = runners[0].get('horse_name') if runners else None
-                predicted_top3_names = [r.get('horse_name') for r in runners[:3]]
                 
-                # 获取实际结果
-                actual_winner = None
+                # ★ 获取预测前三名
+                predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
+                predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
+                predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
+                predicted_top3_names = [predicted_1st, predicted_2nd, predicted_3rd]
+                
+                # 获取实际结果（按名次排序）
+                runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
+                actual_1st = None
+                actual_2nd = None
+                actual_3rd = None
                 actual_top3_names = []
-                for r in runners_data:
+                
+                for r in runners_data_sorted:
                     pos = r.get('position')
                     horse_id = r.get('horse_id')
                     horse_name = name_cache.get(horse_id, r.get('horse_name', ''))
                     if pos == 1:
-                        actual_winner = horse_name
-                    if pos and pos <= 3:
+                        actual_1st = horse_name
+                        actual_top3_names.append(horse_name)
+                    elif pos == 2:
+                        actual_2nd = horse_name
+                        actual_top3_names.append(horse_name)
+                    elif pos == 3:
+                        actual_3rd = horse_name
                         actual_top3_names.append(horse_name)
                 
-                # 统计
-                is_correct = (predicted_winner == actual_winner) if predicted_winner and actual_winner else False
-                top3_hit_count = len(set(predicted_top3_names) & set(actual_top3_names))
+                # ★ 统计命中情况
+                is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
+                hits = len(set(predicted_top3_names) & set(actual_top3_names))
+                total_top3_hits += hits
                 
-                result["debug_details"].append({
-                    "场次": f"{race_date} 第{race_no}场",
-                    "预测冠军": predicted_winner,
-                    "实际冠军": actual_winner,
-                    "是否正确": "✅" if is_correct else "❌"
-                })
+                tce_correct = (predicted_1st == actual_1st and 
+                               predicted_2nd == actual_2nd and 
+                               predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
+                if tce_correct:
+                    total_tce_correct += 1
                 
+                # ★ ROI 计算：每场都投注 100 元
+                total_stake += 100
                 if is_correct:
-                    correct_predictions += 1
-                    total_stake += 100
                     odds = runners[0].get('odds_win', 3.0)
                     try:
                         odds = float(odds) if odds else 3.0
@@ -3952,29 +4047,54 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                         odds = 3.0
                     total_return += 100 * odds
                 
-                if top3_hit_count > 0:
-                    top3_hits += 1
+                # 记录调试详情
+                result["debug_details"].append({
+                    "赛期": race_date,
+                    "场次": race_no,
+                    "预测第1名": predicted_1st or "-",
+                    "预测第2名": predicted_2nd or "-",
+                    "预测第3名": predicted_3rd or "-",
+                    "实际第1名": actual_1st or "-",
+                    "实际第2名": actual_2nd or "-",
+                    "实际第3名": actual_3rd or "-",
+                    "第1名正确": "✅" if is_correct else "❌",
+                    "前3名命中": hits,
+                    "前3名顺序正确": "✅" if tce_correct else "❌"
+                })
+                
+                # 更新统计
+                if is_correct:
+                    correct_predictions += 1
         
         # 10. 清理进度条
         progress_bar.empty()
         status_text.empty()
         
         # 11. 计算最终结果
-        if result["测试场次"] > 0:
+        if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["准确率"] = correct_predictions / result["测试场次"] * 100
-            result["前三名命中"] = top3_hits
-            result["前三名命中率"] = top3_hits / result["测试场次"] * 100
+            
+            result["前三名命中匹数"] = total_top3_hits
+            result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * 3) * 100
+            
+            result["前三名顺序正确"] = total_tce_correct
+            result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
+            
             result["总投入"] = total_stake
             result["总回报"] = total_return
             if total_stake > 0:
                 result["ROI"] = (total_return - total_stake) / total_stake * 100
         
-        st.success(f"✅ {result['模型']} 回测完成: {result['测试场次']} 场, 准确率 {result['准确率']:.1f}%")
+        if not result["cancelled"]:
+            st.success(f"✅ {result['模型']} 回測完成: {result['测试场次']} 場, 準確率 {result['准确率']:.1f}%, ROI {result['ROI']:+.1f}%")
         
     except Exception as e:
-        st.error(f"ML回测失败 ({model_type}): {e}")
-        print(f"ML回测失败: {e}")
+        st.error(f"ML回測失敗 ({model_type}): {e}")
+        print(f"ML回測失敗: {e}")
+    
+    # 重置取消标志
+    st.session_state.stop_backtest = False
     
     return result
 #-----------
@@ -4080,30 +4200,33 @@ def render_backtest_page(show_title: bool = True):
                             model_type="ensemble"
                         )
                         results.append(result)
-                    
+                    #-----
                     if results:
                         st.markdown("#### 📈 模型對比結果")
                         
                         # 检查是否有被取消的回测
                         cancelled_results = [r for r in results if r.get("cancelled", False)]
                         if cancelled_results:
-                            st.warning(f"⚠️ 部分回测被取消: {len(cancelled_results)} 个模型未完成")
+                            st.warning(f"⚠️ 部分回測被取消: {len(cancelled_results)} 個模型未完成")
                         
-                        # 过滤掉被取消的结果用于对比
+                        # 过滤掉被取消的结果
                         completed_results = [r for r in results if not r.get("cancelled", False)]
                         
                         if completed_results:
-                            # 显示对比表格
+                            # 显示对比表格（增加新指标）
                             compare_df = pd.DataFrame(completed_results)
-                            # 选择要显示的列
-                            display_columns = ["模型", "测试场次", "预测正确", "准确率", "前三名命中", "前三名命中率", "总投入", "总回报", "ROI"]
+                            display_columns = ["模型", "测试场次", "预测正确", "准确率", 
+                                              "前三名命中匹数", "前三名命中匹数率", 
+                                              "前三名顺序正确", "前三名顺序正确率",
+                                              "总投入", "总回报", "ROI"]
                             available_cols = [c for c in display_columns if c in compare_df.columns]
                             compare_df = compare_df[available_cols]
                             
                             st.dataframe(
                                 compare_df.style.format({
                                     '准确率': '{:.1f}%',
-                                    '前三名命中率': '{:.1f}%',
+                                    '前三名命中匹数率': '{:.1f}%',
+                                    '前三名顺序正确率': '{:.1f}%',
                                     'ROI': '{:+.1f}%',
                                     '总回报': '${:.0f}',
                                     '总投入': '${:.0f}'
@@ -4117,26 +4240,62 @@ def render_backtest_page(show_title: bool = True):
                             for model in completed_results:
                                 fig.add_trace(go.Bar(
                                     name=model['模型'],
-                                    x=['准确率', '前三名命中率', 'ROI'],
-                                    y=[model.get('准确率', 0), model.get('前三名命中率', 0), model.get('ROI', 0)],
-                                    text=[f"{model.get('准确率', 0):.1f}%", f"{model.get('前三名命中率', 0):.1f}%", f"{model.get('ROI', 0):+.1f}%"],
+                                    x=['準確率', '前三名命中率', '前三名順序正確率', 'ROI'],
+                                    y=[model.get('准确率', 0), 
+                                       model.get('前三名命中匹数率', 0), 
+                                       model.get('前三名顺序正确率', 0), 
+                                       model.get('ROI', 0)],
+                                    text=[f"{model.get('准确率', 0):.1f}%", 
+                                          f"{model.get('前三名命中匹数率', 0):.1f}%",
+                                          f"{model.get('前三名顺序正确率', 0):.1f}%",
+                                          f"{model.get('ROI', 0):+.1f}%"],
                                     textposition='auto'
                                 ))
-                            fig.update_layout(title="模型性能对比", barmode='group', height=400)
+                            fig.update_layout(title="模型性能對比", barmode='group', height=400)
                             st.plotly_chart(fig, use_container_width=True)
                             
-                            # 调试表格（显示前10场预测详情）
-                            st.markdown("#### 🔍 調試資訊（前10場預測 vs 實際）")
-                            rule_result = next((r for r in completed_results if r['模型'] == '评分系统'), None)
-                            if rule_result and 'debug_details' in rule_result and rule_result['debug_details']:
-                                debug_df = pd.DataFrame(rule_result['debug_details'][:10])
-                                st.dataframe(debug_df, use_container_width=True, hide_index=True)
-                            else:
-                                st.info("暂无调试数据")
+                            # ==================== 回测详细表格（按模型切换）====================
+                            st.markdown("#### 🔍 回測詳細")
+                            
+                            # 构建模型选择下拉框
+                            model_names = [r['模型'] for r in completed_results]
+                            if model_names:
+                                selected_detail_model = st.selectbox(
+                                    "選擇模型查看詳細預測結果",
+                                    options=model_names,
+                                    key="detail_model_select"
+                                )
+                                
+                                # 获取选中模型的详细数据
+                                selected_result = next((r for r in completed_results if r['模型'] == selected_detail_model), None)
+                                if selected_result and 'debug_details' in selected_result and selected_result['debug_details']:
+                                    detail_df = pd.DataFrame(selected_result['debug_details'])
+                                    st.dataframe(
+                                        detail_df,
+                                        use_container_width=True,
+                                        height=500,
+                                        hide_index=True,
+                                        column_config={
+                                            "赛期": st.column_config.TextColumn("賽期", width="small"),
+                                            "场次": st.column_config.NumberColumn("場次", width="small"),
+                                            "预测第1名": st.column_config.TextColumn("預測第1名", width="medium"),
+                                            "预测第2名": st.column_config.TextColumn("預測第2名", width="medium"),
+                                            "预测第3名": st.column_config.TextColumn("預測第3名", width="medium"),
+                                            "实际第1名": st.column_config.TextColumn("實際第1名", width="medium"),
+                                            "实际第2名": st.column_config.TextColumn("實際第2名", width="medium"),
+                                            "实际第3名": st.column_config.TextColumn("實際第3名", width="medium"),
+                                            "第1名正确": st.column_config.TextColumn("第1名正確", width="small"),
+                                            "前3名命中": st.column_config.NumberColumn("前3名命中", width="small"),
+                                            "前3名顺序正确": st.column_config.TextColumn("前3名順序正確", width="small"),
+                                        }
+                                    )
+                                    st.caption(f"📊 共 {len(detail_df)} 場賽事，可滾動查看所有場次")
+                                else:
+                                    st.info("暫無詳細數據")
                         else:
-                            st.warning("所有回测均被取消或失败")
+                            st.warning("所有回測均被取消或失敗")
                     else:
-                        st.warning("请至少选择一个模型")
+                        st.warning("請至少選擇一個模型")
         
         st.markdown("---")
     
