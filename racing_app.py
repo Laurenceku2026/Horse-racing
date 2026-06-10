@@ -5680,12 +5680,13 @@ def save_race_results_batch(results: List[Dict]) -> bool:
 #----------------
 def sync_all_data() -> Dict:
     """
-    智能同步所有数据（备用方案：直接遍历日期范围）
+    智能同步所有数据（优化版）
     1. 从数据库获取最新日期
     2. 从最新日期遍历到今天
     3. 爬虫自动判断是否有赛事
     4. 批量写入，提高性能
-    5. 清理超过 9000 行的旧数据
+    5. 提前终止无效场次循环
+    6. 清理超过 9000 行的旧数据
     """
     result = {"success": False, "new_races": 0, "new_records": 0, "error": None}
     
@@ -5702,22 +5703,15 @@ def sync_all_data() -> Dict:
         if db_latest_date:
             start_date = datetime.strptime(db_latest_date, '%Y-%m-%d') + timedelta(days=1)
         else:
-            # 如果没有数据，从 2025-01-01 开始
             start_date = datetime(2025, 1, 1)
         
-        end_date = datetime.now()
-        
-        # 排除当天（结果可能未完整公布）
-        end_date = end_date - timedelta(days=1)
+        end_date = datetime.now() - timedelta(days=1)  # 排除当天
         
         if start_date > end_date:
             result["success"] = True
-            result["new_races"] = 0
-            result["new_records"] = 0
             st.info("所有数据已是最新，无需更新")
             return result
         
-        # 计算需要遍历的天数
         total_days = (end_date - start_date).days + 1
         st.info(f"📅 将检查 {start_date.strftime('%Y-%m-%d')} 至 {end_date.strftime('%Y-%m-%d')} 共 {total_days} 天")
         
@@ -5732,7 +5726,6 @@ def sync_all_data() -> Dict:
         status_text = st.empty()
         
         days_processed = 0
-        races_found = []
         
         while current <= end_date:
             days_processed += 1
@@ -5742,12 +5735,28 @@ def sync_all_data() -> Dict:
             display_date = current.strftime("%Y-%m-%d")
             status_text.text(f"正在检查 {display_date}... ({days_processed}/{total_days})")
             
+            date_has_races = False  # 标记当天是否有赛事
+            
             for venue in venues:
+                empty_count = 0  # ⭐ 连续空场次计数器
+                
                 for race_no in range(1, 13):
                     try:
+                        # ⭐ 提前终止：连续 3 场无数据，跳出循环
+                        if empty_count >= 3:
+                            print(f"  连续 3 场无数据，提前结束 {venue} 的检查")
+                            break
+                        
+                        # 显示当前检查的场次（可选，用于调试）
+                        # status_text.text(f"正在检查 {display_date} {venue} 第{race_no}场...")
+                        
                         race_info, results = parse_race_result(date_str, venue, race_no)
                         
                         if results and len(results) > 0:
+                            # 有数据，重置空场次计数
+                            empty_count = 0
+                            date_has_races = True
+                            
                             # 为每条记录添加赛事元数据
                             for record in results:
                                 record['race_class'] = race_info.get('race_class', '')
@@ -5760,17 +5769,27 @@ def sync_all_data() -> Dict:
                             if success:
                                 total_new_races += 1
                                 total_new_records += len(results)
-                                races_found.append(f"{display_date} {venue} R{race_no}")
                                 print(f"✅ {display_date} {venue} 第{race_no}场: {len(results)} 条记录")
                             else:
                                 print(f"❌ {display_date} {venue} 第{race_no}场: 保存失败")
-                        
-                        # 轻微延迟，避免请求过快
-                        time.sleep(0.2)
+                            
+                            # ⭐ 有数据时轻微延迟（避免请求过快）
+                            time.sleep(0.3)
+                        else:
+                            # 无数据，增加空场次计数
+                            empty_count += 1
+                            # ⭐ 无数据时不需要延迟，直接继续
                         
                     except Exception as e:
                         print(f"⚠️ {display_date} {venue} 第{race_no}场: {e}")
+                        empty_count += 1
                         continue
+            
+            # 更新状态显示
+            if date_has_races:
+                status_text.text(f"✅ {display_date} 完成，发现赛事")
+            else:
+                status_text.text(f"⏭️ {display_date} 无赛事")
             
             current += timedelta(days=1)
         
@@ -5782,26 +5801,19 @@ def sync_all_data() -> Dict:
         result["new_races"] = total_new_races
         result["new_records"] = total_new_records
         
-        if races_found:
+        if total_new_races > 0:
             st.success(f"✅ 更新完成！新增 {total_new_races} 场赛事，{total_new_records} 条成绩记录")
-            
-            # 显示找到的赛事（最多显示 20 条）
-            if len(races_found) <= 20:
-                st.write("找到的赛事：")
-                for race in races_found:
-                    st.write(f"  - {race}")
-            else:
-                st.write(f"找到 {len(races_found)} 场赛事")
         else:
             st.info("未发现新数据")
         
-        # ==================== 第5步：清理超过 9000 行的旧数据 ====================
+        # ==================== 第5步：清理旧数据 ====================
         if total_new_records > 0:
-            cleanup_result = cleanup_old_records(keep_count=9000)
-            if cleanup_result.get("deleted", 0) > 0:
-                st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
+            with st.spinner("正在清理旧数据..."):
+                cleanup_result = cleanup_old_records(keep_count=9000)
+                if cleanup_result.get("deleted", 0) > 0:
+                    st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
         
-        # ==================== 第6步：清除缓存，刷新界面 ====================
+        # ==================== 第6步：清除缓存 ====================
         st.cache_data.clear()
         
         return result
