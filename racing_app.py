@@ -4107,18 +4107,49 @@ def render_backtest_page(show_title: bool = True):
     if show_title:
         st.markdown("## 📊 回測")
     
-    # ==================== 模型对比回测（新增）====================
+    # ==================== 模型对比回测 ====================
     st.markdown("## 📊 模型對比回測")
     st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
     
-    # ⭐ 添加 session_state 初始化（放在日期选择器之前）
+    # 初始化 session_state 中的日期
     if "backtest_start_date" not in st.session_state:
         st.session_state.backtest_start_date = (datetime.now() - timedelta(days=180)).date()
     if "backtest_end_date" not in st.session_state:
         st.session_state.backtest_end_date = datetime.now().date()
     
-    # 自定义日期选择器
-    col1, col2, col3 = st.columns([1, 1, 1])
+    # 预设日期范围按钮
+    col_preset1, col_preset2, col_preset3, col_preset4 = st.columns(4)
+    
+    with col_preset1:
+        if st.button("📅 近3個月", use_container_width=True, key="preset_3m"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=90)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    with col_preset2:
+        if st.button("📅 近6個月", use_container_width=True, key="preset_6m"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=180)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    with col_preset3:
+        if st.button("📅 近1年", use_container_width=True, key="preset_1y"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=365)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    with col_preset4:
+        if st.button("📅 近2年", use_container_width=True, key="preset_2y"):
+            today = datetime.now()
+            st.session_state.backtest_start_date = (today - timedelta(days=730)).date()
+            st.session_state.backtest_end_date = today.date()
+            st.rerun()
+    
+    # 日期选择器
+    col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         backtest_start = st.date_input(
             "開始日期", 
@@ -4132,8 +4163,12 @@ def render_backtest_page(show_title: bool = True):
             key="backtest_end_date_input"
         )
     with col3:
-        st.markdown("<br>", unsafe_allow_html=True)  # 占位对齐
+        st.markdown("<br>", unsafe_allow_html=True)
         run_backtest_btn = st.button("▶️ 運行模型對比回測", type="primary", use_container_width=True)
+    
+    # 更新 session_state
+    st.session_state.backtest_start_date = backtest_start
+    st.session_state.backtest_end_date = backtest_end
     
     # 模型选择复选框
     st.markdown("**🤖 選擇要對比的模型**")
@@ -4142,7 +4177,7 @@ def render_backtest_page(show_title: bool = True):
     with col_m1:
         enable_rule = st.checkbox("评分系统", value=True, key="backtest_rule")
     with col_m2:
-        enable_lgb = st.checkbox("LightGBM", value=False, key="backtest_lgb", 
+        enable_lgb = st.checkbox("LightGBM", value=False, key="backtest_lgb",
                                  disabled=not LGB_AVAILABLE,
                                  help="需要安装 lightgbm 库" if not LGB_AVAILABLE else "")
     with col_m3:
@@ -4211,7 +4246,7 @@ def render_backtest_page(show_title: bool = True):
                             model_type="ensemble"
                         )
                         results.append(result)
-                    #-----
+                    
                     if results:
                         st.markdown("#### 📈 模型對比結果")
                         
@@ -4224,7 +4259,7 @@ def render_backtest_page(show_title: bool = True):
                         completed_results = [r for r in results if not r.get("cancelled", False)]
                         
                         if completed_results:
-                            # 显示对比表格（增加新指标）
+                            # 显示对比表格
                             compare_df = pd.DataFrame(completed_results)
                             display_columns = ["模型", "测试场次", "预测正确", "准确率", 
                                               "前三名命中匹数", "前三名命中匹数率", 
@@ -4265,62 +4300,49 @@ def render_backtest_page(show_title: bool = True):
                             fig.update_layout(title="模型性能對比", barmode='group', height=400)
                             st.plotly_chart(fig, use_container_width=True)
                             
-                            # ==================== 回测详细表格（按模型切换）====================
+                            # ==================== 回测详细表格（一次性显示所有模型）====================
                             st.markdown("#### 🔍 回測詳細")
+                            st.caption("每個模型獨立窗口，可滾動查看所有場次")
                             
-                            # 构建模型选择下拉框
-                            model_names = [r['模型'] for r in completed_results]
-                            if model_names:
-                                selected_detail_model = st.selectbox(
-                                    "選擇模型查看詳細預測結果",
-                                    options=model_names,
-                                    key="detail_model_select"
-                                )
+                            # 遍历每个模型，用 expander 显示详细表格
+                            for model_result in completed_results:
+                                model_name = model_result['模型']
+                                debug_details = model_result.get('debug_details', [])
+                                test_races = model_result.get('测试场次', 0)
                                 
-                                # 获取选中模型的详细数据
-                                selected_result = next((r for r in completed_results if r['模型'] == selected_detail_model), None)
-                                if selected_result and 'debug_details' in selected_result and selected_result['debug_details']:
-                                    detail_df = pd.DataFrame(selected_result['debug_details'])
-                                    st.dataframe(
-                                        detail_df,
-                                        use_container_width=True,
-                                        height=500,
-                                        hide_index=True,
-                                        column_config={
-                                            "赛期": st.column_config.TextColumn("賽期", width="small"),
-                                            "场次": st.column_config.NumberColumn("場次", width="small"),
-                                            "预测第1名": st.column_config.TextColumn("預測第1名", width="medium"),
-                                            "预测第2名": st.column_config.TextColumn("預測第2名", width="medium"),
-                                            "预测第3名": st.column_config.TextColumn("預測第3名", width="medium"),
-                                            "实际第1名": st.column_config.TextColumn("實際第1名", width="medium"),
-                                            "实际第2名": st.column_config.TextColumn("實際第2名", width="medium"),
-                                            "实际第3名": st.column_config.TextColumn("實際第3名", width="medium"),
-                                            "第1名正确": st.column_config.TextColumn("第1名正確", width="small"),
-                                            "前3名命中": st.column_config.NumberColumn("前3名命中", width="small"),
-                                            "前3名顺序正确": st.column_config.TextColumn("前3名順序正確", width="small"),
-                                        }
-                                    )
-                                    st.caption(f"📊 共 {len(detail_df)} 場賽事，可滾動查看所有場次")
+                                if debug_details:
+                                    with st.expander(f"📊 {model_name}（共 {len(debug_details)} 場 / 測試場次: {test_races}）", expanded=False):
+                                        detail_df = pd.DataFrame(debug_details)
+                                        st.dataframe(
+                                            detail_df,
+                                            use_container_width=True,
+                                            height=400,
+                                            hide_index=True,
+                                            column_config={
+                                                "赛期": st.column_config.TextColumn("賽期", width="small"),
+                                                "场次": st.column_config.NumberColumn("場次", width="small"),
+                                                "预测第1名": st.column_config.TextColumn("預測第1名", width="medium"),
+                                                "预测第2名": st.column_config.TextColumn("預測第2名", width="medium"),
+                                                "预测第3名": st.column_config.TextColumn("預測第3名", width="medium"),
+                                                "实际第1名": st.column_config.TextColumn("實際第1名", width="medium"),
+                                                "实际第2名": st.column_config.TextColumn("實際第2名", width="medium"),
+                                                "实际第3名": st.column_config.TextColumn("實際第3名", width="medium"),
+                                                "第1名正确": st.column_config.TextColumn("第1名正確", width="small"),
+                                                "前3名命中": st.column_config.NumberColumn("前3名命中", width="small"),
+                                                "前3名顺序正确": st.column_config.TextColumn("前3名順序正確", width="small"),
+                                            }
+                                        )
+                                        st.caption(f"📊 共 {len(detail_df)} 場賽事，可滾動查看所有場次")
                                 else:
-                                    st.info("暫無詳細數據")
+                                    with st.expander(f"📊 {model_name}（暫無詳細數據）", expanded=False):
+                                        st.info(f"該模型暫無詳細預測數據，可能原因：\n- 回測被取消\n- 數據不足無法預測\n- 模型訓練失敗")
                         else:
                             st.warning("所有回測均被取消或失敗")
                     else:
                         st.warning("請至少選擇一個模型")
-        
-        st.markdown("---")
     
-    # ... 原有的单场回测和全天回测代码保持不变 ...
-    # ==================== 原有的单场回测代码保持不变 ====================
-    # 获取用户权重
-    user_weights = {
-        "basic": 0.30,
-        "race": 0.40,
-        "odds": 0.30,
-        "temperature": 0.8,
-        "odds_mix_ratio": 0.6
-    }
-    #--------------
+    st.markdown("---")
+    
     # ==================== 单场回测 ====================
     st.markdown("### 🏇 單場回測")
     st.caption("選擇一場已完成賽事，AI預測 vs 實際結果")
@@ -4343,7 +4365,7 @@ def render_backtest_page(show_title: bool = True):
         selected_idx = st.selectbox("選擇賽事", range(len(race_options)), format_func=lambda x: race_options[x], key="backtest_race_select")
         selected_race = historical_races[selected_idx]
         
-        # 模型选择（新增）
+        # 模型选择
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             single_model = st.selectbox(
@@ -4371,12 +4393,18 @@ def render_backtest_page(show_title: bool = True):
                 model_type = model_map.get(single_model, "rule")
                 
                 with st.spinner(f"正在運行回測（{single_model}）..."):
-                    # 使用新的回测函数
-                    result = run_backtest_for_model(
-                        start_date=selected_race.get('race_date'),
-                        end_date=selected_race.get('race_date'),
-                        model_type=model_type
-                    )
+                    if model_type == "rule":
+                        result = run_backtest_for_model(
+                            start_date=selected_race.get('race_date'),
+                            end_date=selected_race.get('race_date'),
+                            model_type=model_type
+                        )
+                    else:
+                        result = run_ml_backtest(
+                            start_date=selected_race.get('race_date'),
+                            end_date=selected_race.get('race_date'),
+                            model_type=model_type
+                        )
                     
                     if result.get("测试场次", 0) > 0:
                         st.markdown("---")
@@ -4394,15 +4422,19 @@ def render_backtest_page(show_title: bool = True):
                         with col3:
                             st.metric("準確率", f"{result.get('准确率', 0):.1f}%")
                         with col4:
-                            st.metric("前三名命中率", f"{result.get('前三名命中率', 0):.1f}%")
+                            st.metric("前三名命中匹數率", f"{result.get('前三名命中匹数率', 0):.1f}%")
                         
-                        st.info(f"🏆 預測冠軍: {result.get('预测冠军', '未知') if result.get('预测正确', 0) > 0 else '未命中'}")
+                        # 显示详细预测
+                        if result.get('debug_details'):
+                            st.markdown("#### 📋 預測詳情")
+                            detail_df = pd.DataFrame(result['debug_details'])
+                            st.dataframe(detail_df, use_container_width=True, hide_index=True)
                     else:
                         st.error(f"回測失敗: {result.get('error', '未知錯誤')}")
     
     st.markdown("---")
     
-    # ==================== 原有的全天回测代码保持不变 ====================
+    # ==================== 全天回测 ====================
     st.markdown("### 📅 全天回測")
     st.caption("選擇一個賽日，測試AI對全天賽事的預測準確率")
     
@@ -4435,6 +4467,13 @@ def render_backtest_page(show_title: bool = True):
                     st.warning("免費次數已用完，請升級到專業版")
                 else:
                     with st.spinner("正在運行全天回測..."):
+                        user_weights = {
+                            "basic": 0.30,
+                            "race": 0.40,
+                            "odds": 0.30,
+                            "temperature": 0.8,
+                            "odds_mix_ratio": 0.6
+                        }
                         full_result = run_full_day_backtest(selected_date, user_weights)
                         
                         if full_result.get("success"):
@@ -4480,8 +4519,10 @@ def render_backtest_page(show_title: bool = True):
         - 綜合評分最高的馬匹為AI預測冠軍
         
         **評估指標**：
-        - **勝出預測準確率**：AI預測冠軍 = 實際冠軍的比例
-        - **前三名命中率**：AI預測前三名中包含實際前三名的比例
+        - **準確率**：AI預測冠軍 = 實際冠軍的比例
+        - **前三名命中匹數率**：預測前三名中，實際跑入前三名的匹數比例
+        - **前三名順序正確率**：預測1-2-3名順序完全正確的比例（三重彩標準）
+        - **ROI**：總回報 / 總投入 × 100%，每場投注100元
         
         **注意事項**：
         - 回測結果僅供參考，不代表未來表現
