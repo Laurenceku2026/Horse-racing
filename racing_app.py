@@ -4029,7 +4029,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                 actual_2nd = None
                 actual_3rd = None
                 actual_top3_names = []
-                
+                actual_top3_names = []  # ⭐ 必须定义这个列表
+                actual_top3_set = set()  # ⭐ 必须定义这个集合
                 for r in runners_data_sorted:
                     pos = r.get('position')
                     horse_id = r.get('horse_id')
@@ -4045,6 +4046,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                         actual_top3_names.append(horse_name)
                 
                 # ★ 统计命中情况
+                # 统计各指标
                 # 统计各指标
                 is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
                 
