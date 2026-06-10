@@ -4855,7 +4855,7 @@ def calculate_trainer_score(trainer_id: int, venue: str) -> float:
         print(f"获取练马师评分失败: {e}")
         return 50.0
 
-
+#-------------
 def calculate_race_score(
     horse_id: int,
     venue: str,
@@ -4975,7 +4975,7 @@ def get_horse_past_performances(horse_id: int, limit: int = 10) -> List[Dict]:
         print(f"获取马匹往绩失败: {e}")
         return []
 
-
+#---------------
 def get_horse_weight_comfort_range(horse_id: int) -> Tuple[int, int]:
     """获取马匹的负磅舒适区"""
     past = get_horse_past_performances(horse_id, limit=20)
@@ -5199,44 +5199,166 @@ def batch_analyze_incidents(incidents: List[str]) -> List[Dict]:
             results.append(result)
     
     return results
+#-----------
+# ==================== 批量获取马匹往绩（优化版）====================
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_horses_performances_batch(horse_ids: tuple) -> Dict[str, List[Dict]]:
+    """
+    批量获取多匹马的历史往绩
+    参数：
+        horse_ids: 马匹ID元组，如 ('H001', 'H002', ...)
+    返回：
+        { horse_id: [往绩记录列表] }
+    """
+    if not horse_ids:
+        return {}
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 构建 IN 查询
+        ids_str = ','.join([f"'{hid}'" for hid in horse_ids])
+        url = f"{SUPABASE_URL}/rest/v1/past_performances?horse_id=in.({ids_str})&order=race_date.desc&limit=10000"
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"批量获取失败: {response.status_code}")
+            return {}
+        
+        data = response.json()
+        
+        # 构建缓存
+        cache = {}
+        for p in data:
+            hid = p.get('horse_id')
+            if not hid:
+                continue
+            if hid not in cache:
+                cache[hid] = []
+            cache[hid].append(p)
+        
+        # 对每个马匹的往绩按日期排序（最新的在前）
+        for hid in cache:
+            cache[hid].sort(key=lambda x: x.get('race_date', ''), reverse=True)
+        
+        print(f"批量获取 {len(horse_ids)} 匹马，共 {len(data)} 条记录")
+        return cache
+        
+    except Exception as e:
+        print(f"批量获取异常: {e}")
+        return {}
+
+
+def get_horse_past_performances_optimized(horse_id: str, cache: Dict[str, List[Dict]], limit: int = 10) -> List[Dict]:
+    """
+    从缓存中获取马匹往绩（优化版）
+    参数：
+        horse_id: 马匹ID
+        cache: 批量获取的缓存字典
+        limit: 返回最近 N 场
+    """
+    if not horse_id or horse_id not in cache:
+        return []
+    
+    performances = cache.get(horse_id, [])
+    return performances[:limit]
 #-----------------
 def calculate_all_horses_scores(
     race_id: int,
     runners: List[Dict],
     user_weights: Dict
 ) -> Tuple[List[Dict], List[float]]:
-    """计算一场赛事所有马匹的评分和胜率"""
+    """
+    计算一场赛事所有马匹的评分和胜率（优化版）
+    - 批量获取所有马匹的往绩（1次请求）
+    - 从缓存读取，避免 N+1 查询
+    """
     if not runners:
         return [], []
     
+    # ==================== 第1步：批量获取所有马匹的往绩 ====================
+    # 收集所有 horse_id
+    horse_ids = []
+    for runner in runners:
+        horse_id = runner.get("horse_id")
+        if horse_id:
+            horse_ids.append(horse_id)
+    
+    # 去重并转为元组（用于缓存）
+    unique_horse_ids = tuple(set(horse_ids))
+    
+    # 批量获取（只有1次HTTP请求）
+    perf_cache = get_horses_performances_batch(unique_horse_ids)
+    
+    # ==================== 第2步：计算每匹马的评分 ====================
     scores = []
     basic_scores = []
     race_scores = []
     odds_scores = []
     
     for runner in runners:
-        # 获取赔率，处理 None 情况
+        horse_id = runner.get("horse_id")
+        if not horse_id:
+            # 没有 horse_id 的马匹，使用默认评分
+            basic_scores.append(50.0)
+            race_scores.append(50.0)
+            odds_scores.append(50.0)
+            scores.append({
+                "horse_id": None,
+                "basic_score": 50.0,
+                "race_score": 50.0,
+                "odds_score": 50.0,
+                "combined_score": 50.0,
+                "win_probability": 50.0
+            })
+            continue
+        
+        # 从缓存获取往绩（不查询数据库）
+        past_performances = get_horse_past_performances_optimized(horse_id, perf_cache, limit=10)
+        
+        # 获取赔率
         odds_win = runner.get("odds_win")
         if odds_win is None or odds_win == '':
-            odds_win = 10.0  # 默认赔率
+            odds_win = 10.0
         
-        result = calculate_horse_score(
-            horse_id=runner.get("horse_id"),
-            race_id=race_id,
-            venue=runner.get("venue", "ST"),
-            distance=runner.get("distance", 1200),
-            draw=runner.get("draw"),
-            actual_weight=runner.get("actual_weight"),
-            jockey_id=runner.get("jockey_id"),
-            trainer_id=runner.get("trainer_id"),
-            odds_win=odds_win,
-            user_weights=user_weights
+        # 获取赛事信息
+        venue = runner.get("venue", "ST")
+        distance = runner.get("distance", 1200)
+        draw = runner.get("draw")
+        actual_weight = runner.get("actual_weight")
+        jockey_id = runner.get("jockey_id")
+        trainer_id = runner.get("trainer_id")
+        
+        # 计算基础评分
+        basic_score = calculate_basic_score_fast(past_performances, distance)
+        
+        # 计算场次评分
+        weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_performances)
+        race_score = calculate_race_score_optimized(
+            horse_id, venue, distance, draw, actual_weight,
+            jockey_id, trainer_id, weight_comfort_range, past_performances
         )
-        scores.append(result)
-        basic_scores.append(result["basic_score"])
-        race_scores.append(result["race_score"])
-        odds_scores.append(result["odds_score"])
+        
+        # 赔率评分
+        odds_score = calculate_odds_score(odds_win)
+        
+        scores.append({
+            "horse_id": horse_id,
+            "basic_score": round(basic_score, 2),
+            "race_score": round(race_score, 2),
+            "odds_score": round(odds_score, 2),
+            "combined_score": round(basic_score * user_weights.get("basic", 0.30) + 
+                                   race_score * user_weights.get("race", 0.40) + 
+                                   odds_score * user_weights.get("odds", 0.30), 2),
+        })
+        
+        basic_scores.append(basic_score)
+        race_scores.append(race_score)
+        odds_scores.append(odds_score)
     
+    # ==================== 第3步：计算胜率 ====================
     probabilities = calculate_win_probabilities(
         basic_scores, race_scores, odds_scores,
         user_weights, user_weights.get("odds_mix_ratio", 0.6)
@@ -5246,6 +5368,122 @@ def calculate_all_horses_scores(
         scores[i]["win_probability"] = round(prob * 100, 2)
     
     return scores, probabilities
+
+
+def get_horse_weight_comfort_range_from_cache(horse_id: str, past_performances: List[Dict]) -> Tuple[int, int]:
+    """从缓存的往绩中获取马匹的负磅舒适区（不查询数据库）"""
+    winning_weights = []
+    for p in past_performances:
+        pos = p.get('finishing_position', 0)
+        weight = p.get('actual_weight', 0)
+        if pos in [1, 2, 3] and weight > 0:
+            winning_weights.append(weight)
+    
+    WEIGHT_COMFORT_RANGE = 5
+    if len(winning_weights) >= 3:
+        mean_weight = sum(winning_weights) / len(winning_weights)
+        return (int(mean_weight - WEIGHT_COMFORT_RANGE), int(mean_weight + WEIGHT_COMFORT_RANGE))
+    return (118, 128)
+
+
+def calculate_race_score_optimized(
+    horse_id: str,
+    venue: str,
+    distance: int,
+    draw: int,
+    actual_weight: int,
+    jockey_id: int,
+    trainer_id: int,
+    weight_comfort_range: Tuple[int, int],
+    past_performances: List[Dict]
+) -> float:
+    """
+    计算场次评分（优化版，使用已获取的往绩）
+    """
+    # 同马场往绩
+    same_course = calculate_same_course_score_from_cache(horse_id, venue, past_performances)
+    
+    # 同路程往绩
+    same_distance = calculate_same_distance_score_from_cache(horse_id, distance, past_performances)
+    
+    # 档位优势
+    draw_score = get_draw_score(draw, venue, distance)
+    
+    # 负磅优势
+    weight_score = get_weight_advantage_score(actual_weight, weight_comfort_range)
+    
+    # 骑师评分（仍然需要查询，但可以后续优化）
+    jockey_score = calculate_jockey_score(jockey_id)
+    
+    # 练马师评分
+    trainer_score = calculate_trainer_score(trainer_id, venue)
+    
+    RACE_SCORE_WEIGHTS = {
+        "same_course": 0.25,
+        "same_distance": 0.25,
+        "draw_advantage": 0.15,
+        "weight_advantage": 0.10,
+        "jockey_score": 0.15,
+        "trainer_score": 0.10
+    }
+    
+    total_score = (
+        same_course * RACE_SCORE_WEIGHTS["same_course"] +
+        same_distance * RACE_SCORE_WEIGHTS["same_distance"] +
+        draw_score * RACE_SCORE_WEIGHTS["draw_advantage"] +
+        weight_score * RACE_SCORE_WEIGHTS["weight_advantage"] +
+        jockey_score * RACE_SCORE_WEIGHTS["jockey_score"] +
+        trainer_score * RACE_SCORE_WEIGHTS["trainer_score"]
+    )
+    return round(total_score, 2)
+
+
+def calculate_same_course_score_from_cache(horse_id: str, venue: str, past_performances: List[Dict]) -> float:
+    """从缓存的往绩中计算同马场评分"""
+    venue_performances = [p for p in past_performances if p.get('venue') == venue]
+    if not venue_performances:
+        return 50.0
+    
+    recent = venue_performances[:3] if len(venue_performances) >= 3 else venue_performances
+    scores = []
+    for p in recent:
+        pos = p.get('finishing_position', 0)
+        if pos == 1:
+            scores.append(100)
+        elif pos == 2:
+            scores.append(85)
+        elif pos == 3:
+            scores.append(70)
+        elif 4 <= pos <= 5:
+            scores.append(55)
+        else:
+            scores.append(35)
+    
+    return sum(scores) / len(scores) if scores else 50.0
+
+
+def calculate_same_distance_score_from_cache(horse_id: str, distance: int, past_performances: List[Dict]) -> float:
+    """从缓存的往绩中计算同路程评分"""
+    distance_performances = [p for p in past_performances if p.get('distance') == distance]
+    if not distance_performances:
+        return 50.0
+    
+    recent = distance_performances[:3] if len(distance_performances) >= 3 else distance_performances
+    scores = []
+    for p in recent:
+        pos = p.get('finishing_position', 0)
+        if pos == 1:
+            scores.append(100)
+        elif pos == 2:
+            scores.append(85)
+        elif pos == 3:
+            scores.append(70)
+        elif 4 <= pos <= 5:
+            scores.append(55)
+        else:
+            scores.append(35)
+    
+    return sum(scores) / len(scores) if scores else 50.0
 
 
 # ==================== 6. 数据库写入函数 ====================
