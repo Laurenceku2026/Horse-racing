@@ -14,6 +14,7 @@ import time
 import hmac
 import plotly.graph_objects as go
 import plotly.express as px
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from supabase import create_client, Client
@@ -5528,12 +5529,160 @@ def save_race_results_batch(results: List[Dict]) -> bool:
     except Exception as e:
         print(f"批量保存异常: {e}")
         return False
+#-------
+# ==================== 从赛期表获取官方赛期 ====================
+
+def get_race_dates_from_fixture(year: int, month: int) -> List[str]:
+    """
+    从香港赛马会赛期表页面获取指定月份的所有赛期日期
+    参数：
+        year: 年份，如 2026
+        month: 月份，如 6
+    返回：
+        日期列表，格式 YYYY-MM-DD
+    """
+    race_dates = []
+    
+    try:
+        url = f"https://racing.hkjc.com/zh-hk/local/information/fixture?calyear={year}&calmonth={month}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        response.encoding = 'utf-8'
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 查找所有包含日期数字的单元格
+        all_tds = soup.find_all('td')
+        
+        for td in all_tds:
+            # 获取单元格文本
+            td_text = td.get_text(strip=True)
+            
+            # 检查是否是纯数字日期（1-31）
+            if td_text.isdigit() and 1 <= int(td_text) <= 31:
+                day = int(td_text)
+                
+                # 检查这个单元格内是否包含赛事信息
+                # 有赛事信息（如"班"、"米"等）的才是赛马日
+                full_text = td.get_text()
+                has_race_info = False
+                
+                race_indicators = ['班', '米', '賽', '草地', '泥地', '讓賽', '盃', '級賽']
+                for indicator in race_indicators:
+                    if indicator in full_text:
+                        has_race_info = True
+                        break
+                
+                # 检查是否有 class 包含 race/fixture 等关键字
+                if td.get('class'):
+                    class_str = ' '.join(td.get('class'))
+                    if re.search(r'race|fixture|event', class_str, re.I):
+                        has_race_info = True
+                
+                if has_race_info:
+                    date_str = f"{year}-{month:02d}-{day:02d}"
+                    race_dates.append(date_str)
+        
+        return sorted(list(set(race_dates)))
+        
+    except Exception as e:
+        print(f"获取 {year}-{month} 赛期表失败: {e}")
+        return []
+
+
+def get_all_race_dates(start_year: int = 2025, end_year: int = None) -> List[str]:
+    """
+    获取指定年份范围内所有月份的赛期
+    """
+    if end_year is None:
+        end_year = datetime.now().year
+    
+    all_dates = []
+    
+    for year in range(start_year, end_year + 1):
+        for month in range(1, 13):
+            # 不获取未来太远的月份
+            if year == end_year and month > datetime.now().month + 1:
+                break
+            
+            dates = get_race_dates_from_fixture(year, month)
+            all_dates.extend(dates)
+            
+            # 避免请求过快
+            time.sleep(0.3)
+    
+    return sorted(list(set(all_dates)))
+
+
+def get_db_latest_race_date() -> Optional[str]:
+    """从 past_performances 表获取最新的赛事日期"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/past_performances?order=race_date.desc&limit=1&select=race_date"
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200 and response.json():
+            return response.json()[0].get('race_date')
+        return None
+    except Exception as e:
+        print(f"获取数据库最新日期失败: {e}")
+        return None
+
+
+def save_race_results_batch(results: List[Dict]) -> bool:
+    """
+    批量保存一场赛事的全部结果到 past_performances 表
+    """
+    if not results:
+        return True
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 清理每条记录
+        clean_results = []
+        for record in results:
+            clean_record = {}
+            for k, v in record.items():
+                # 跳过 id（让数据库自动生成）
+                if k == 'id':
+                    continue
+                # 处理空值
+                if v is None or v == '':
+                    clean_record[k] = None
+                else:
+                    clean_record[k] = v
+            clean_results.append(clean_record)
+        
+        # 批量 upsert
+        response = requests.post(
+            f"{SUPABASE_URL}/rest/v1/past_performances",
+            headers={
+                **headers,
+                "Prefer": "resolution=merge-duplicates"
+            },
+            json=clean_results
+        )
+        
+        if response.status_code in [200, 201]:
+            print(f"批量保存成功: {len(results)} 条记录")
+            return True
+        else:
+            print(f"批量保存失败: {response.status_code} - {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"批量保存异常: {e}")
+        return False
 #----------------
 def sync_all_data() -> Dict:
     """
-    智能同步所有数据（智能增量更新）
+    智能同步所有数据
     1. 从数据库获取最新日期
-    2. 从官网获取官方赛期列表
+    2. 从官网赛期表获取官方赛期列表
     3. 只抓取缺失的赛期（不包括当天）
     4. 批量写入，提高性能
     5. 清理超过 9000 行的旧数据
@@ -5550,26 +5699,29 @@ def sync_all_data() -> Dict:
         print(f"数据库最新日期: {db_latest_date}")
         
         # ==================== 第2步：获取官方赛期列表 ====================
-        official_dates = get_official_race_dates_from_hkjc()
+        with st.spinner("正在從官網獲取賽期表..."):
+            official_dates = get_all_race_dates(start_year=2025, end_year=2026)
         
         if not official_dates:
-            result["error"] = "无法获取官方赛期列表，请检查网络"
+            st.warning("無法獲取官方賽期列表，請檢查網絡連接")
+            result["error"] = "无法获取官方赛期列表"
             return result
         
         print(f"官方赛期总数: {len(official_dates)}")
+        st.info(f"📅 從官網獲取到 {len(official_dates)} 個賽期")
         
         # ==================== 第3步：计算需要抓取的日期 ====================
         today = datetime.now().strftime("%Y-%m-%d")
         
-        # 排除当天（结果可能未完整公布）
-        official_dates_exclude_today = [d for d in official_dates if d < today]
+        # 排除当天（结果可能未完整公布）和未来日期
+        valid_dates = [d for d in official_dates if d < today]
         
         if db_latest_date:
             # 只抓取数据库中没有的赛期
-            dates_to_fetch = [d for d in official_dates_exclude_today if d > db_latest_date]
+            dates_to_fetch = [d for d in valid_dates if d > db_latest_date]
         else:
-            # 数据库为空，抓取所有赛期（排除当天）
-            dates_to_fetch = official_dates_exclude_today
+            # 数据库为空，抓取所有有效赛期
+            dates_to_fetch = valid_dates
         
         print(f"需要抓取的赛期: {dates_to_fetch}")
         
@@ -5580,10 +5732,13 @@ def sync_all_data() -> Dict:
             st.info("所有数据已是最新，无需更新")
             return result
         
+        st.info(f"📥 將抓取 {len(dates_to_fetch)} 個賽期的數據: {dates_to_fetch[:5]}...")
+        
         # ==================== 第4步：增量抓取 ====================
         venues = ['ST', 'HV']
         total_new_races = 0
         total_new_records = 0
+        failed_dates = []
         
         # 创建进度条
         progress_bar = st.progress(0)
@@ -5595,6 +5750,7 @@ def sync_all_data() -> Dict:
             
             # 转换日期格式为 URL 需要的 YYYY/MM/DD
             url_date = date_str.replace('-', '/')
+            date_success = False
             
             for venue in venues:
                 for race_no in range(1, 13):
@@ -5609,43 +5765,57 @@ def sync_all_data() -> Dict:
                                 record['going'] = race_info.get('going', '')
                                 record['sectional_times'] = json.dumps(race_info.get('sectional_times', []))
                             
-                            # ✅ 批量保存（一次请求保存整场）
+                            # 批量保存
                             success = save_race_results_batch(results)
                             if success:
                                 total_new_races += 1
                                 total_new_records += len(results)
+                                date_success = True
                                 print(f"✅ {date_str} {venue} 第{race_no}场: {len(results)} 条记录")
                             else:
                                 print(f"❌ {date_str} {venue} 第{race_no}场: 保存失败")
                         
-                        time.sleep(0.3)  # 轻微延迟，避免请求过快
+                        # 轻微延迟，避免请求过快
+                        time.sleep(0.2)
                         
                     except Exception as e:
                         print(f"⚠️ {date_str} {venue} 第{race_no}场: {e}")
                         continue
+            
+            if not date_success:
+                failed_dates.append(date_str)
         
         progress_bar.empty()
         status_text.empty()
+        
+        # ==================== 第5步：报告失败日期 ====================
+        if failed_dates:
+            st.warning(f"以下日期未抓取到数据: {failed_dates}")
         
         result["success"] = True
         result["new_races"] = total_new_races
         result["new_records"] = total_new_records
         
-        # ==================== 第5步：清理超过 9000 行的旧数据 ====================
+        # ==================== 第6步：清理超过 9000 行的旧数据 ====================
         if total_new_records > 0:
             cleanup_result = cleanup_old_records(keep_count=9000)
             if cleanup_result.get("deleted", 0) > 0:
                 st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
         
-        # ==================== 第6步：清除缓存，刷新界面 ====================
+        # ==================== 第7步：清除缓存，刷新界面 ====================
         st.cache_data.clear()
-        st.success(f"✅ 更新完成！新增 {total_new_races} 场赛事，{total_new_records} 条成绩记录")
+        
+        if total_new_races > 0:
+            st.success(f"✅ 更新完成！新增 {total_new_races} 场赛事，{total_new_records} 条成绩记录")
+        else:
+            st.info("未发现新数据")
         
         return result
         
     except Exception as e:
         result["error"] = str(e)
         st.error(f"更新失败: {e}")
+        print(f"更新异常: {e}")
         return result
 
 
