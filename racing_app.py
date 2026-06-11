@@ -1481,7 +1481,36 @@ def render_admin_panel():
                 st.rerun()
         else:
             st.info("暂无映射数据")
-    
+    #-----------------
+    # ==================== 预计算评分 ====================
+    st.markdown("---")
+    with st.expander("⚡ 预计算评分（加速智能投注）", expanded=False):
+        st.markdown("预计算未来赛事的评分，保存到缓存，大幅提升智能投注页面加载速度")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            precompute_date = st.date_input(
+                "选择日期",
+                value=datetime.now(),
+                key="precompute_date"
+            )
+        with col2:
+            precompute_venue = st.selectbox(
+                "选择场地",
+                options=["全部", "ST", "HV"],
+                key="precompute_venue"
+            )
+        
+        if st.button("🚀 开始预计算", type="primary", use_container_width=True):
+            with st.spinner(f"正在预计算 {precompute_date} 的赛事评分..."):
+                venue = None if precompute_venue == "全部" else precompute_venue
+                user_weights = {"basic": 0.30, "race": 0.40, "odds": 0.30}
+                result = precompute_all_races_for_date(
+                    precompute_date.strftime("%Y-%m-%d"),
+                    venue,
+                    user_weights
+                )
+                st.success(f"预计算完成：成功 {result['success']} 场，失败 {result['failed']} 场，共 {result['total']} 场")
     # ==================== 赔率采集状态监控 ====================
     st.markdown("---")
     with st.expander("📊 赔率采集状态监控", expanded=False):
@@ -2379,6 +2408,113 @@ def get_races_by_date(race_date: str) -> List[Dict]:
     except Exception as e:
         print(f"获取赛事列表失败: {e}")
         return []
+#-----
+# ==================== 评分缓存函数 ====================
+
+def get_scores_from_cache(race_date: str, race_no: int, venue: str) -> Tuple[List[Dict], List[float]]:
+    """从缓存表读取评分"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/race_runners_scores?race_date=eq.{race_date}&race_no=eq.{race_no}&venue=eq.{venue}&order=horse_no.asc"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200 and response.json():
+            data = response.json()
+            scores = []
+            probabilities = []
+            for item in data:
+                scores.append({
+                    "horse_id": item.get('horse_id'),
+                    "horse_no": item.get('horse_no'),
+                    "basic_score": item.get('basic_score', 50),
+                    "race_score": item.get('race_score', 50),
+                    "odds_score": item.get('odds_score', 50),
+                    "combined_score": item.get('overall_score', 50),
+                    "win_probability": item.get('win_probability', 50)
+                })
+                probabilities.append(item.get('win_probability', 50) / 100)
+            return scores, probabilities
+        return [], []
+    except Exception as e:
+        print(f"从缓存读取评分失败: {e}")
+        return [], []
+
+
+def save_scores_to_cache(race_date: str, race_no: int, venue: str, runners: List[Dict], scores: List[Dict]) -> bool:
+    """保存评分到缓存表"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        for i, runner in enumerate(runners):
+            if i >= len(scores):
+                continue
+            score = scores[i]
+            
+            data = {
+                "race_date": race_date,
+                "race_no": race_no,
+                "venue": venue,
+                "horse_no": runner.get('horse_no'),
+                "horse_id": runner.get('horse_id'),
+                "horse_name": runner.get('horse_name'),
+                "basic_score": score.get('basic_score'),
+                "race_score": score.get('race_score'),
+                "odds_score": score.get('odds_score'),
+                "overall_score": score.get('combined_score'),
+                "win_probability": score.get('win_probability'),
+                "calculated_at": datetime.now().isoformat()
+            }
+            
+            # 使用 upsert
+            url = f"{SUPABASE_URL}/rest/v1/race_runners_scores"
+            response = requests.post(url, headers=headers, json=data)
+            if response.status_code not in [200, 201]:
+                print(f"保存评分失败: {response.text}")
+        
+        return True
+    except Exception as e:
+        print(f"保存评分到缓存失败: {e}")
+        return False
+
+
+def precompute_race_scores(race_date: str, race_no: int, venue: str, user_weights: Dict = None) -> bool:
+    """预计算单场赛事的评分并保存到缓存"""
+    try:
+        if user_weights is None:
+            user_weights = {"basic": 0.30, "race": 0.40, "odds": 0.30}
+        
+        # 获取出赛马匹
+        runners = get_race_runners_with_details(race_date, venue, race_no)
+        if not runners:
+            return False
+        
+        # 计算评分
+        scores, probabilities = calculate_all_horses_scores(None, runners, user_weights)
+        
+        # 保存到缓存
+        return save_scores_to_cache(race_date, race_no, venue, runners, scores)
+        
+    except Exception as e:
+        print(f"预计算评分失败: {e}")
+        return False
+
+
+def precompute_all_races_for_date(race_date: str, venue: str = None, user_weights: Dict = None) -> Dict:
+    """预计算一天所有赛事的评分"""
+    result = {"success": 0, "failed": 0, "total": 0}
+    
+    venues_to_process = [venue] if venue else ['ST', 'HV']
+    
+    for v in venues_to_process:
+        for race_no in range(1, 13):
+            result["total"] += 1
+            if precompute_race_scores(race_date, race_no, v, user_weights):
+                result["success"] += 1
+                print(f"✅ 预计算成功: {race_date} {v} 第{race_no}场")
+            else:
+                result["failed"] += 1
+    
+    return result
 #-------------------------
 def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
     """
@@ -2934,8 +3070,26 @@ def render_smart_betting(show_title: bool = True):
     
     # 计算胜率
     if model_choice == "评分系统":
-        with st.spinner("正在計算馬匹勝率（評分系統）..."):
-            scores, probabilities = calculate_all_horses_scores(selected_race.get('race_id'), runners, user_weights)
+        # ⭐ 优先从缓存读取
+        scores, probabilities = get_scores_from_cache(
+            selected_race.get('race_date'), 
+            selected_race.get('race_no'), 
+            selected_race.get('venue')
+        )
+        
+        if not scores:
+            # 缓存没有，实时计算并保存
+            with st.spinner("正在計算馬匹勝率（評分系統）..."):
+                scores, probabilities = calculate_all_horses_scores(selected_race.get('race_id'), runners, user_weights)
+                # 保存到缓存
+                save_scores_to_cache(
+                    selected_race.get('race_date'),
+                    selected_race.get('race_no'),
+                    selected_race.get('venue'),
+                    runners,
+                    scores
+                )
+        
         for i, runner in enumerate(runners):
             if i < len(scores):
                 runner['overall_score'] = scores[i].get('combined_score', 0)
