@@ -1440,50 +1440,50 @@ def render_admin_panel():
     
     # ==================== Tab4: 马名映射管理 ====================
     with tab4:
-    st.markdown("### 🌐 中英文马名映射")
-    st.caption("管理马名的中英文对应关系，用于界面语言切换")
-    
-    # 强制清除函数缓存
-    get_horse_name_mapping.clear()
-    
-    # 获取当前映射
-    mapping_data = get_horse_name_mapping()
-    
-    if mapping_data:
-        # 调试：打印前3条确认
-        st.write("调试：", dict(list(mapping_data.items())[:3]))
+        st.markdown("### 🌐 中英文马名映射")
+        st.caption("管理马名的中英文对应关系，用于界面语言切换")
         
-        mapping_df = pd.DataFrame([
-            {"中文名": zh, "英文名": en} for zh, en in mapping_data.items()
-        ])
+        # 强制清除函数缓存
+        get_horse_name_mapping.clear()
         
-        # 使用 unique key 强制刷新编辑器
-        editor_key = f"mapping_editor_{hash(str(mapping_data))}"
+        # 获取当前映射
+        mapping_data = get_horse_name_mapping()
         
-        edited_mapping = st.data_editor(
-            mapping_df,
-            use_container_width=True,
-            hide_index=True,
-            key=editor_key,
-            column_config={
-                "中文名": st.column_config.TextColumn("中文名", disabled=True),
-                "英文名": st.column_config.TextColumn("英文名")
-            }
-        )
-        
-        if st.button("💾 保存映射", type="primary"):
-            for _, row in edited_mapping.iterrows():
-                zh = row["中文名"]
-                en = row["英文名"]
-                if zh and en:
-                    headers = get_supabase_headers(use_secret=True)
-                    url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?name_zh=eq.{zh}"
-                    requests.patch(url, headers=headers, json={"name_en": en})
-            st.success("映射已保存")
-            st.cache_data.clear()
-            st.rerun()
-    else:
-        st.info("暂无映射数据")
+        if mapping_data:
+            # 调试：打印前3条确认
+            st.write("调试：", dict(list(mapping_data.items())[:3]))
+            
+            mapping_df = pd.DataFrame([
+                {"中文名": zh, "英文名": en} for zh, en in mapping_data.items()
+            ])
+            
+            # 使用 unique key 强制刷新编辑器
+            editor_key = f"mapping_editor_{hash(str(mapping_data))}"
+            
+            edited_mapping = st.data_editor(
+                mapping_df,
+                use_container_width=True,
+                hide_index=True,
+                key=editor_key,
+                column_config={
+                    "中文名": st.column_config.TextColumn("中文名", disabled=True),
+                    "英文名": st.column_config.TextColumn("英文名")
+                }
+            )
+            
+            if st.button("💾 保存映射", type="primary"):
+                for _, row in edited_mapping.iterrows():
+                    zh = row["中文名"]
+                    en = row["英文名"]
+                    if zh and en:
+                        headers = get_supabase_headers(use_secret=True)
+                        url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?name_zh=eq.{zh}"
+                        requests.patch(url, headers=headers, json={"name_en": en})
+                st.success("映射已保存")
+                st.cache_data.clear()
+                st.rerun()
+        else:
+            st.info("暂无映射数据")
     
     # ==================== 赔率采集状态监控 ====================
     st.markdown("---")
