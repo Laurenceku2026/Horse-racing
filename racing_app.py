@@ -3180,7 +3180,7 @@ def render_smart_betting(show_title: bool = True):
             odds_win=odds_win,
             odds_place=odds_place,
             odds_qin=odds_qin,
-            odds_tri=odds_tri
+            odds_tri=odds_tri,
         )
         
         # ==================== 显示AI投注建议 ====================
