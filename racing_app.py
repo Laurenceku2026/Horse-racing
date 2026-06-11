@@ -1450,9 +1450,6 @@ def render_admin_panel():
         mapping_data = get_horse_name_mapping()
         
         if mapping_data:
-            # 调试：打印前3条确认
-            st.write("调试：", dict(list(mapping_data.items())[:3]))
-            
             mapping_df = pd.DataFrame([
                 {"中文名": zh, "英文名": en} for zh, en in mapping_data.items()
             ])
