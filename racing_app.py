@@ -1924,15 +1924,36 @@ def render_sidebar():
             
             st.markdown("---")
         
-        # 删除导航菜单（这段已删除）
-        # st.markdown("### 📍 導航")
-        # page = st.radio(...)
-        
         with st.expander(t()["about_header"], expanded=True):
             st.markdown(t()["about_text"])
         
         with st.expander(t()["guide_header"], expanded=False):
             st.markdown(t()["guide_text"])
+        
+        # ==================== 新增：彩池玩法 ====================
+        with st.expander("🎲 彩池玩法", expanded=False):
+            st.markdown("""
+            **單場彩池**
+            | 彩池 | 玩法 | 中獎條件 |
+            |------|------|----------|
+            | 獨贏 | 選1匹 | 跑第1名 |
+            | 位置 | 選1匹 | 跑入前3名 |
+            | 連贏 | 選2匹 | 前2名(不限順序) |
+            | 位置Q | 選2匹 | 前3名(不限順序) |
+            | 單T | 選3匹 | 前3名(不限順序) |
+            | 三重彩 | 選3匹 | 前3名(順序固定) |
+            | 四連環 | 選4匹 | 前4名(不限順序) |
+            | 四重彩 | 選4匹 | 前4名(順序固定) |
+            
+            **多場彩池**
+            | 彩池 | 玩法 | 中獎條件 |
+            |------|------|----------|
+            | 孖寶 | 指定2場 | 兩場都第1名 |
+            | 三寶 | 指定3場 | 三場都第1名 |
+            | 孖T | 指定2場 | 兩場前3名(不限順序) |
+            | 三T | 指定3場 | 三場前3名(不限順序) |
+            | 六環彩 | 指定6場 | 每場第1或第2名 |
+            """)
         
         with st.expander(t()["contact_header"], expanded=False):
             st.markdown(t()["contact_email"])
