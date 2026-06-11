@@ -3604,10 +3604,10 @@ def sync_single_race(race: Dict) -> bool:
                     top_horses = get_top_horses_by_probability(race_runners, limit=3)
                     
                     for horse in top_horses:
-                    if horse is None:
-                        continue
-                    prob = horse.get('win_probability', 0)
-                    odds_raw = horse.get('odds_win')
+                        if horse is None:
+                            continue
+                        prob = horse.get('win_probability', 0)
+                        odds_raw = horse.get('odds_win')
                         
                         # 安全转换赔率
                         try:
