@@ -2503,7 +2503,9 @@ def calculate_expected_value(probability: float, odds: float, stake: float) -> f
 
 def get_top_horses_by_probability(runners: List[Dict], limit: int = 3) -> List[Dict]:
     """按胜率排序，获取前N匹马"""
-    sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
+    # 过滤掉 None 值
+    valid_runners = [r for r in runners if r is not None]
+    sorted_runners = sorted(valid_runners, key=lambda x: x.get('win_probability', 0), reverse=True)
     return sorted_runners[:limit]
 
 #-----------------
@@ -3408,6 +3410,8 @@ def render_smart_betting(show_title: bool = True):
                 top_horses = sorted(race_runners, key=lambda x: x.get('win_probability', 0), reverse=True)[:2]
                 #-----------
                 for horse in top_horses:
+                    if horse is None:
+                        continue
                     prob = horse.get('win_probability', 0)
                     odds_raw = horse.get('odds_win')
                     
@@ -3600,8 +3604,10 @@ def sync_single_race(race: Dict) -> bool:
                     top_horses = get_top_horses_by_probability(race_runners, limit=3)
                     
                     for horse in top_horses:
-                        prob = horse.get('win_probability', 0)
-                        odds_raw = horse.get('odds_win')
+                    if horse is None:
+                        continue
+                    prob = horse.get('win_probability', 0)
+                    odds_raw = horse.get('odds_win')
                         
                         # 安全转换赔率
                         try:
