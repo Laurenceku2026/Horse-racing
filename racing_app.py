@@ -5203,7 +5203,6 @@ def render_backtest_page(show_title: bool = True):
         
     st.markdown("---")
     #---------------------
-    # 在模型对比回测的 completed_results 循环之后添加
     # ==================== 新增：策略回测选项卡 ====================
     st.markdown("## 📊 策略回測")
     st.caption("回測不同投注策略（獨贏、連贏）的歷史表現")
@@ -5214,7 +5213,7 @@ def render_backtest_page(show_title: bool = True):
     with col1:
         backtest_strategy_start = st.date_input(
             "回測開始日期",
-            value=datetime.now() - timedelta(days=180),
+            value=datetime.now() - timedelta(days=90),  # 改为90天
             key="strategy_backtest_start"
         )
     
@@ -5251,110 +5250,121 @@ def render_backtest_page(show_title: bool = True):
         if not consume_free_trial(st.session_state.user_id):
             st.warning("免費次數已用完，請升級到專業版")
         else:
-            with st.spinner("正在運行策略回測，請稍候..."):
-                from backtest_strategy import StrategyBacktester, get_races_on_date, get_historical_odds, get_historical_result
-                
-                # 获取回测日期范围内的所有赛日
-                start_date = backtest_strategy_start.strftime("%Y-%m-%d")
-                end_date = backtest_strategy_end.strftime("%Y-%m-%d")
-                
-                # 获取该范围内的所有赛事日期
-                all_races = []
-                current = backtest_strategy_start
-                while current <= backtest_strategy_end:
-                    races = get_races_on_date(current.strftime("%Y-%m-%d"))
-                    if races:
-                        all_races.append(current.strftime("%Y-%m-%d"))
-                    current += timedelta(days=1)
-                
-                if not all_races:
-                    st.warning("回測日期範圍內無賽事數據")
-                else:
-                    backtester = StrategyBacktester()
+            # 生成缓存键
+            cache_key = f"strategy_backtest_{strategy_type}_{backtest_strategy_start}_{backtest_strategy_end}_{min_ev_threshold}"
+            
+            # 检查是否已有缓存结果
+            if cache_key not in st.session_state:
+                with st.spinner("正在運行策略回測，請稍候..."):
+                    from backtest_strategy import StrategyBacktester, get_races_on_date, get_historical_odds, get_historical_result
                     
-                    if strategy_type == "獨贏策略":
-                        # 定义获取评分的函数（需要从现有系统获取）
-                        def get_scores_func(race_date, race_no):
-                            # 这里需要调用现有的评分系统
-                            # 简化版：返回模拟数据
-                            return [75, 68, 62, 58, 55, 52, 48, 45, 42, 40, 38, 35, 32, 30]
-                        
-                        summary = backtester.backtest_win_strategy(
-                            race_dates=all_races,
-                            get_scores_func=get_scores_func,
-                            get_odds_func=get_historical_odds,
-                            get_result_func=get_historical_result,
-                            min_ev_threshold=min_ev_threshold,
-                            stake_per_bet=100
-                        )
+                    # 获取回测日期范围内的所有赛日
+                    start_date = backtest_strategy_start.strftime("%Y-%m-%d")
+                    end_date = backtest_strategy_end.strftime("%Y-%m-%d")
+                    
+                    # 获取该范围内的所有赛事日期
+                    all_races = []
+                    current = backtest_strategy_start
+                    while current <= backtest_strategy_end:
+                        races = get_races_on_date(current.strftime("%Y-%m-%d"))
+                        if races:
+                            all_races.append(current.strftime("%Y-%m-%d"))
+                        current += timedelta(days=1)
+                    
+                    if not all_races:
+                        st.warning("回測日期範圍內無賽事數據")
                     else:
-                        def get_scores_func(race_date, race_no):
-                            return [75, 68, 62, 58, 55, 52, 48, 45, 42, 40, 38, 35, 32, 30]
+                        backtester = StrategyBacktester()
                         
-                        summary = backtester.backtest_qin_strategy(
-                            race_dates=all_races,
-                            get_scores_func=get_scores_func,
-                            get_odds_func=get_historical_odds,
-                            get_result_func=get_historical_result,
-                            min_ev_threshold=min_ev_threshold,
-                            stake_per_bet=100
-                        )
-                    
-                    # 显示回测结果
-                    st.markdown("#### 📈 策略回測結果")
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("總投注次數", summary.total_bets)
-                        st.metric("命中次數", summary.hit_count)
-                    with col2:
-                        st.metric("勝率", f"{summary.win_rate:.1f}%")
-                        st.metric("平均賠率", f"{summary.avg_odds:.1f}倍")
-                    with col3:
-                        st.metric("總投入", f"${summary.total_stake:,.0f}")
-                        st.metric("總回報", f"${summary.total_return:,.0f}")
-                    with col4:
-                        roi_color = "🟢" if summary.roi > 0 else "🔴"
-                        st.metric("ROI", f"{roi_color} {summary.roi:+.1f}%")
-                        st.metric("夏普比率", f"{summary.sharpe_ratio:.2f}")
-                    
-                    # 显示详细投注记录
-                    if summary.details:
-                        with st.expander("📋 詳細投注記錄", expanded=False):
-                            detail_df = pd.DataFrame([
-                                {
-                                    "日期": d.race_date,
-                                    "場次": d.race_no,
-                                    "類型": d.recommendation_type,
-                                    "內容": d.recommendation_content,
-                                    "賠率": d.odds,
-                                    "期望值": d.ev_calculated,
-                                    "命中": "✅" if d.actual_hit else "❌",
-                                    "回報": f"${d.actual_return:.0f}",
-                                    "盈虧": f"${d.profit:+.0f}"
-                                }
-                                for d in summary.details
-                            ])
-                            st.dataframe(detail_df, use_container_width=True, hide_index=True)
+                        if strategy_type == "獨贏策略":
+                            def get_scores_func(race_date, race_no):
+                                return [75, 68, 62, 58, 55, 52, 48, 45, 42, 40, 38, 35, 32, 30]
                             
-                            # 累计盈亏曲线
-                            cumulative = np.cumsum([d.profit for d in summary.details])
-                            fig = go.Figure()
-                            fig.add_trace(go.Scatter(
-                                x=list(range(len(cumulative))),
-                                y=cumulative,
-                                mode='lines',
-                                name='累計盈虧',
-                                fill='tozeroy',
-                                line=dict(color='#4facfe', width=2)
-                            ))
-                            fig.update_layout(
-                                title="策略累計盈虧曲線",
-                                xaxis_title="投注次數",
-                                yaxis_title="累計盈虧 (HK$)",
-                                height=300
+                            summary = backtester.backtest_win_strategy(
+                                race_dates=all_races,
+                                get_scores_func=get_scores_func,
+                                get_odds_func=get_historical_odds,
+                                get_result_func=get_historical_result,
+                                min_ev_threshold=min_ev_threshold,
+                                stake_per_bet=100
                             )
-                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            def get_scores_func(race_date, race_no):
+                                return [75, 68, 62, 58, 55, 52, 48, 45, 42, 40, 38, 35, 32, 30]
+                            
+                            summary = backtester.backtest_qin_strategy(
+                                race_dates=all_races,
+                                get_scores_func=get_scores_func,
+                                get_odds_func=get_historical_odds,
+                                get_result_func=get_historical_result,
+                                min_ev_threshold=min_ev_threshold,
+                                stake_per_bet=100
+                            )
+                        
+                        # 保存到缓存
+                        st.session_state[cache_key] = summary
+            else:
+                summary = st.session_state[cache_key]
+                st.info("📋 使用缓存的回测结果")
+            
+            # 显示回测结果（与之前相同）
+            if summary and summary.total_bets > 0:
+                st.markdown("#### 📈 策略回測結果")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("總投注次數", summary.total_bets)
+                    st.metric("命中次數", summary.hit_count)
+                with col2:
+                    st.metric("勝率", f"{summary.win_rate:.1f}%")
+                    st.metric("平均賠率", f"{summary.avg_odds:.1f}倍")
+                with col3:
+                    st.metric("總投入", f"${summary.total_stake:,.0f}")
+                    st.metric("總回報", f"${summary.total_return:,.0f}")
+                with col4:
+                    roi_color = "🟢" if summary.roi > 0 else "🔴"
+                    st.metric("ROI", f"{roi_color} {summary.roi:+.1f}%")
+                    st.metric("夏普比率", f"{summary.sharpe_ratio:.2f}")
+                
+                # 显示详细投注记录
+                if summary.details:
+                    with st.expander("📋 詳細投注記錄", expanded=False):
+                        detail_df = pd.DataFrame([
+                            {
+                                "日期": d.race_date,
+                                "場次": d.race_no,
+                                "類型": d.recommendation_type,
+                                "內容": d.recommendation_content,
+                                "賠率": d.odds,
+                                "期望值": d.ev_calculated,
+                                "命中": "✅" if d.actual_hit else "❌",
+                                "回報": f"${d.actual_return:.0f}",
+                                "盈虧": f"${d.profit:+.0f}"
+                            }
+                            for d in summary.details
+                        ])
+                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+                        
+                        # 累计盈亏曲线
+                        cumulative = np.cumsum([d.profit for d in summary.details])
+                        fig = go.Figure()
+                        fig.add_trace(go.Scatter(
+                            x=list(range(len(cumulative))),
+                            y=cumulative,
+                            mode='lines',
+                            name='累計盈虧',
+                            fill='tozeroy',
+                            line=dict(color='#4facfe', width=2)
+                        ))
+                        fig.update_layout(
+                            title="策略累計盈虧曲線",
+                            xaxis_title="投注次數",
+                            yaxis_title="累計盈虧 (HK$)",
+                            height=300
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("回測結果無效或無投注記錄")
     
     st.caption("📌 回測結果基於歷史數據，不構成投資建議")
 
