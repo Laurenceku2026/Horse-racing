@@ -3139,6 +3139,7 @@ def render_smart_betting(show_title: bool = True):
             st.write("暂无建议")
     
     # 高风险 - 单T
+    # 高风险 - 单T
     with col3:
         st.markdown("**🎯 高风险 - 單T**")
         if recommendations.get('tri') and recommendations['tri']:
@@ -3147,18 +3148,8 @@ def render_smart_betting(show_title: bool = True):
             st.write(f"賠率: {rec.odds}倍")
             st.write(f"預期ROI: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
-        #-----
         else:
             st.write("暂无建议")
-            
-            with cols[i]:
-                st.markdown(f"""
-                <div style="background:#f8f9fa; padding:0.8rem; border-radius:0.5rem;">
-                    <strong>🥇 {horse_name}</strong><br>
-                    勝率: {prob:.1f}% | 賠率: {odds:.1f}<br>
-                    建議注額: <strong>HK${stake:.0f}</strong>
-                </div>
-                """, unsafe_allow_html=True)
     
     # ==================== 连赢推荐（追加）====================
     st.markdown("#### 🔗 連贏推薦")
