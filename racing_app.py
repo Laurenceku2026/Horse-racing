@@ -977,234 +977,6 @@ def render_admin_login_form():
             st.session_state.show_admin_login = False
             st.rerun()
 
-# ==================== 管理员面板 ====================
-def render_admin_panel():
-    """管理员面板 - 数据编辑器 + 回测 + 用户管理"""
-    st.markdown(f"## ⚙️ {t()['admin_panel']}")
-    
-    # 创建选项卡
-    # 定义四个选项卡
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 数据编辑器", "📈 回测", "👥 用户管理", "🌐 马名映射"])
-    # ==================== Tab1: 数据编辑器 ====================
-    with tab1:
-        st.markdown("### 📋 数据库编辑器")
-        st.caption("💡 双击单元格编辑 | 表格底部有 '+' 按钮添加新行 | 支持 Excel/CSV 上传")
-        
-        # 加载当前数据
-        current_data = get_table_data("past_performances", limit=500)
-        
-        # 定义表格列
-        columns = [
-            "id", "race_date", "venue", "race_no", "position", "horse_no",
-            "horse_name", "horse_id", "jockey", "trainer", "actual_weight",
-            "body_weight", "draw", "lbw_raw", "running_position", "finish_time",
-            "finish_seconds", "odds", "closing_profile", "incident", "race_class",
-            "distance", "going", "sectional_times"
-        ]
-        
-        # 构建 DataFrame
-        if current_data:
-            df = pd.DataFrame(current_data)
-            # 只保留需要的列
-            df = df[[c for c in columns if c in df.columns]]
-        else:
-            df = pd.DataFrame(columns=columns)
-        
-        # 显示数据量
-        st.info(f"📊 当前数据量: {len(df)} 条记录")
-        
-        # 刷新按钮
-        col_refresh, _ = st.columns([1, 5])
-        with col_refresh:
-            if st.button("🔄 从数据库重新加载", use_container_width=True):
-                st.rerun()
-        
-        st.markdown("---")
-        
-        # 可编辑表格
-        with st.form(key="data_editor_form"):
-            #--------------
-            edited_df = st.data_editor(
-                df,
-                use_container_width=True,
-                height=500,
-                num_rows="dynamic",
-                key="racing_data_editor"
-            )
-            #----------------end
-            col_save1, col_save2, col_spacer = st.columns([1, 1, 3])
-            
-            with col_save1:
-                overwrite_submitted = st.form_submit_button("💾 全量覆盖保存", type="primary", use_container_width=True)
-            with col_save2:
-                incremental_submitted = st.form_submit_button("🔄 增量同步保存", use_container_width=True)
-            
-            # 全量覆盖保存
-            if overwrite_submitted:
-                if edited_df is None or len(edited_df) == 0:
-                    st.error("没有数据可保存")
-                else:
-                    with st.spinner("正在执行全量覆盖保存..."):
-                        new_data = []
-                        errors = 0
-                        
-                        for idx, row in edited_df.iterrows():
-                            try:
-                                if pd.isna(row['race_date']):
-                                    continue
-                                
-                                record = {
-                                    "race_date": row['race_date'].strftime('%Y-%m-%d') if hasattr(row['race_date'], 'strftime') else str(row['race_date']),
-                                    "venue": str(row['venue']) if pd.notna(row['venue']) else None,
-                                    "race_no": int(row['race_no']) if pd.notna(row['race_no']) else None,
-                                    "position": int(row['position']) if pd.notna(row['position']) else None,
-                                    "horse_no": str(row['horse_no']) if pd.notna(row['horse_no']) else None,
-                                    "horse_name": str(row['horse_name']) if pd.notna(row['horse_name']) else None,
-                                    "horse_id": str(row['horse_id']) if pd.notna(row['horse_id']) else None,
-                                    "jockey": str(row['jockey']) if pd.notna(row['jockey']) else None,
-                                    "trainer": str(row['trainer']) if pd.notna(row['trainer']) else None,
-                                    "actual_weight": int(row['actual_weight']) if pd.notna(row['actual_weight']) else None,
-                                    "body_weight": int(row['body_weight']) if pd.notna(row['body_weight']) else None,
-                                    "draw": int(row['draw']) if pd.notna(row['draw']) else None,
-                                    "lbw_raw": str(row['lbw_raw']) if pd.notna(row['lbw_raw']) else None,
-                                    "running_position": str(row['running_position']) if pd.notna(row['running_position']) else None,
-                                    "finish_time": str(row['finish_time']) if pd.notna(row['finish_time']) else None,
-                                    "finish_seconds": float(row['finish_seconds']) if pd.notna(row['finish_seconds']) else None,
-                                    "odds": float(row['odds']) if pd.notna(row['odds']) else None,
-                                    "closing_profile": str(row['closing_profile']) if pd.notna(row['closing_profile']) else None,
-                                    "incident": str(row['incident']) if pd.notna(row['incident']) else None,
-                                    "race_class": str(row['race_class']) if pd.notna(row['race_class']) else None,
-                                    "distance": int(row['distance']) if pd.notna(row['distance']) else None,
-                                    "going": str(row['going']) if pd.notna(row['going']) else None,
-                                    "sectional_times": str(row['sectional_times']) if pd.notna(row['sectional_times']) else None,
-                                }
-                                new_data.append(record)
-                            except Exception as e:
-                                errors += 1
-                        
-                        if errors > 0:
-                            st.warning(f"跳过 {errors} 行无效数据")
-                        
-                        if new_data:
-                            success = save_table_data("past_performances", new_data)
-                            if success:
-                                st.success(f"全量覆盖保存 {len(new_data)} 条记录成功！")
-                                st.cache_data.clear()  # ⭐ 清除缓存
-                                st.rerun()
-                            else:
-                                st.error("保存失败")
-                        else:
-                            st.error("没有有效数据可保存")
-            
-            # 增量同步保存
-            if incremental_submitted:
-                if edited_df is None or len(edited_df) == 0:
-                    st.error("没有数据可同步")
-                else:
-                    with st.spinner("正在执行增量同步..."):
-                        new_data = []
-                        errors = 0
-                        
-                        for idx, row in edited_df.iterrows():
-                            try:
-                                if pd.isna(row['race_date']):
-                                    continue
-                                
-                                record = {
-                                    "race_date": row['race_date'].strftime('%Y-%m-%d') if hasattr(row['race_date'], 'strftime') else str(row['race_date']),
-                                    "venue": str(row['venue']) if pd.notna(row['venue']) else None,
-                                    "race_no": int(row['race_no']) if pd.notna(row['race_no']) else None,
-                                    "position": int(row['position']) if pd.notna(row['position']) else None,
-                                    "horse_no": str(row['horse_no']) if pd.notna(row['horse_no']) else None,
-                                    "horse_name": str(row['horse_name']) if pd.notna(row['horse_name']) else None,
-                                    "horse_id": str(row['horse_id']) if pd.notna(row['horse_id']) else None,
-                                    "jockey": str(row['jockey']) if pd.notna(row['jockey']) else None,
-                                    "trainer": str(row['trainer']) if pd.notna(row['trainer']) else None,
-                                    "actual_weight": int(row['actual_weight']) if pd.notna(row['actual_weight']) else None,
-                                    "body_weight": int(row['body_weight']) if pd.notna(row['body_weight']) else None,
-                                    "draw": int(row['draw']) if pd.notna(row['draw']) else None,
-                                    "lbw_raw": str(row['lbw_raw']) if pd.notna(row['lbw_raw']) else None,
-                                    "running_position": str(row['running_position']) if pd.notna(row['running_position']) else None,
-                                    "finish_time": str(row['finish_time']) if pd.notna(row['finish_time']) else None,
-                                    "finish_seconds": float(row['finish_seconds']) if pd.notna(row['finish_seconds']) else None,
-                                    "odds": float(row['odds']) if pd.notna(row['odds']) else None,
-                                    "closing_profile": str(row['closing_profile']) if pd.notna(row['closing_profile']) else None,
-                                    "incident": str(row['incident']) if pd.notna(row['incident']) else None,
-                                    "race_class": str(row['race_class']) if pd.notna(row['race_class']) else None,
-                                    "distance": int(row['distance']) if pd.notna(row['distance']) else None,
-                                    "going": str(row['going']) if pd.notna(row['going']) else None,
-                                    "sectional_times": str(row['sectional_times']) if pd.notna(row['sectional_times']) else None,
-                                }
-                                new_data.append(record)
-                            except Exception as e:
-                                errors += 1
-                        
-                        if errors > 0:
-                            st.warning(f"跳过 {errors} 行无效数据")
-                        
-                        if new_data:
-                            result = incremental_sync_table("past_performances", new_data)
-                            st.success(f"增量同步完成：新增 {result['inserted']} 条，更新 {result['updated']} 条，删除 {result['deleted']} 条")
-                            st.cache_data.clear()  # ⭐ 清除缓存
-                            st.rerun()
-                        else:
-                            st.error("没有有效数据可同步")
-        
-        st.markdown("---")
-        
-        # Excel/CSV 上传区域
-        st.markdown("### 📎 Excel/CSV 文件上传")
-        st.caption("格式：CSV 或 Excel，列名需与数据库字段匹配")
-        
-        uploaded_file = st.file_uploader(
-            "选择文件",
-            type=['csv', 'xlsx', 'xls'],
-            key="racing_uploader",
-            help="上传 CSV 或 Excel 文件"
-        )
-        
-        if uploaded_file is not None:
-            import io
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
-                else:
-                    df_upload = pd.read_excel(uploaded_file)
-                
-                st.success(f"成功解析 {len(df_upload)} 行数据")
-                st.dataframe(df_upload.head(10), use_container_width=True)
-                
-                col_confirm, col_cancel = st.columns(2)
-                with col_confirm:
-                    if st.button("✅ 确认导入并覆盖", type="primary"):
-                        # 转换为记录列表
-                        upload_data = df_upload.to_dict(orient='records')
-                        success = save_table_data("past_performances", upload_data)
-                        if success:
-                            st.success(f"导入 {len(upload_data)} 条记录成功！")
-                            st.rerun()
-                        else:
-                            st.error("导入失败")
-                with col_cancel:
-                    if st.button("❌ 取消"):
-                        st.rerun()
-            except Exception as e:
-                st.error(f"文件解析失败: {e}")
-    
-    # ==================== Tab2: 回测 ====================
-    with tab2:
-        render_backtest_page(show_title=False)
-    
-    # ==================== Tab3: 用户管理 ====================
-    with tab3:
-        render_user_management()
-    
-    # 退出按钮
-    st.markdown("---")
-    if st.button("退出管理员模式", use_container_width=True):
-        admin_sign_out()
-        st.rerun()
-
 #---------------
 def get_table_data(table_name: str, limit: int = 500) -> List[Dict]:
     """获取表数据（确保包含 id 字段）"""
@@ -1451,10 +1223,225 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
         print(f"增量同步失败: {e}")
         return result
 #-------------
-# ==================== Tab4: 马名映射管理 ====================
+
+# ==================== 管理员面板 ====================
+def render_admin_panel():
+    """管理员面板 - 数据编辑器 + 回测 + 用户管理 + 马名映射"""
+    st.markdown(f"## ⚙️ {t()['admin_panel']}")
+    
+    # 创建选项卡
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 数据编辑器", "📈 回测", "👥 用户管理", "🌐 马名映射"])
+    
+    # ==================== Tab1: 数据编辑器 ====================
+    with tab1:
+        st.markdown("### 📋 数据库编辑器")
+        st.caption("💡 双击单元格编辑 | 表格底部有 '+' 按钮添加新行 | 支持 Excel/CSV 上传")
+        
+        # 加载当前数据
+        current_data = get_table_data("past_performances", limit=500)
+        
+        # 定义表格列
+        columns = [
+            "id", "race_date", "venue", "race_no", "position", "horse_no",
+            "horse_name", "horse_id", "jockey", "trainer", "actual_weight",
+            "body_weight", "draw", "lbw_raw", "running_position", "finish_time",
+            "finish_seconds", "odds", "closing_profile", "incident", "race_class",
+            "distance", "going", "sectional_times"
+        ]
+        
+        # 构建 DataFrame
+        if current_data:
+            df = pd.DataFrame(current_data)
+            df = df[[c for c in columns if c in df.columns]]
+        else:
+            df = pd.DataFrame(columns=columns)
+        
+        st.info(f"📊 当前数据量: {len(df)} 条记录")
+        
+        col_refresh, _ = st.columns([1, 5])
+        with col_refresh:
+            if st.button("🔄 从数据库重新加载", use_container_width=True):
+                st.rerun()
+        
+        st.markdown("---")
+        
+        with st.form(key="data_editor_form"):
+            edited_df = st.data_editor(
+                df,
+                use_container_width=True,
+                height=500,
+                num_rows="dynamic",
+                key="racing_data_editor"
+            )
+            
+            col_save1, col_save2, col_spacer = st.columns([1, 1, 3])
+            
+            with col_save1:
+                overwrite_submitted = st.form_submit_button("💾 全量覆盖保存", type="primary", use_container_width=True)
+            with col_save2:
+                incremental_submitted = st.form_submit_button("🔄 增量同步保存", use_container_width=True)
+            
+            if overwrite_submitted:
+                if edited_df is None or len(edited_df) == 0:
+                    st.error("没有数据可保存")
+                else:
+                    with st.spinner("正在执行全量覆盖保存..."):
+                        new_data = []
+                        errors = 0
+                        
+                        for idx, row in edited_df.iterrows():
+                            try:
+                                if pd.isna(row['race_date']):
+                                    continue
+                                
+                                record = {
+                                    "race_date": row['race_date'].strftime('%Y-%m-%d') if hasattr(row['race_date'], 'strftime') else str(row['race_date']),
+                                    "venue": str(row['venue']) if pd.notna(row['venue']) else None,
+                                    "race_no": int(row['race_no']) if pd.notna(row['race_no']) else None,
+                                    "position": int(row['position']) if pd.notna(row['position']) else None,
+                                    "horse_no": str(row['horse_no']) if pd.notna(row['horse_no']) else None,
+                                    "horse_name": str(row['horse_name']) if pd.notna(row['horse_name']) else None,
+                                    "horse_id": str(row['horse_id']) if pd.notna(row['horse_id']) else None,
+                                    "jockey": str(row['jockey']) if pd.notna(row['jockey']) else None,
+                                    "trainer": str(row['trainer']) if pd.notna(row['trainer']) else None,
+                                    "actual_weight": int(row['actual_weight']) if pd.notna(row['actual_weight']) else None,
+                                    "body_weight": int(row['body_weight']) if pd.notna(row['body_weight']) else None,
+                                    "draw": int(row['draw']) if pd.notna(row['draw']) else None,
+                                    "lbw_raw": str(row['lbw_raw']) if pd.notna(row['lbw_raw']) else None,
+                                    "running_position": str(row['running_position']) if pd.notna(row['running_position']) else None,
+                                    "finish_time": str(row['finish_time']) if pd.notna(row['finish_time']) else None,
+                                    "finish_seconds": float(row['finish_seconds']) if pd.notna(row['finish_seconds']) else None,
+                                    "odds": float(row['odds']) if pd.notna(row['odds']) else None,
+                                    "closing_profile": str(row['closing_profile']) if pd.notna(row['closing_profile']) else None,
+                                    "incident": str(row['incident']) if pd.notna(row['incident']) else None,
+                                    "race_class": str(row['race_class']) if pd.notna(row['race_class']) else None,
+                                    "distance": int(row['distance']) if pd.notna(row['distance']) else None,
+                                    "going": str(row['going']) if pd.notna(row['going']) else None,
+                                    "sectional_times": str(row['sectional_times']) if pd.notna(row['sectional_times']) else None,
+                                }
+                                new_data.append(record)
+                            except Exception as e:
+                                errors += 1
+                        
+                        if errors > 0:
+                            st.warning(f"跳过 {errors} 行无效数据")
+                        
+                        if new_data:
+                            success = save_table_data("past_performances", new_data)
+                            if success:
+                                st.success(f"全量覆盖保存 {len(new_data)} 条记录成功！")
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error("保存失败")
+                        else:
+                            st.error("没有有效数据可保存")
+            
+            if incremental_submitted:
+                if edited_df is None or len(edited_df) == 0:
+                    st.error("没有数据可同步")
+                else:
+                    with st.spinner("正在执行增量同步..."):
+                        new_data = []
+                        errors = 0
+                        
+                        for idx, row in edited_df.iterrows():
+                            try:
+                                if pd.isna(row['race_date']):
+                                    continue
+                                
+                                record = {
+                                    "race_date": row['race_date'].strftime('%Y-%m-%d') if hasattr(row['race_date'], 'strftime') else str(row['race_date']),
+                                    "venue": str(row['venue']) if pd.notna(row['venue']) else None,
+                                    "race_no": int(row['race_no']) if pd.notna(row['race_no']) else None,
+                                    "position": int(row['position']) if pd.notna(row['position']) else None,
+                                    "horse_no": str(row['horse_no']) if pd.notna(row['horse_no']) else None,
+                                    "horse_name": str(row['horse_name']) if pd.notna(row['horse_name']) else None,
+                                    "horse_id": str(row['horse_id']) if pd.notna(row['horse_id']) else None,
+                                    "jockey": str(row['jockey']) if pd.notna(row['jockey']) else None,
+                                    "trainer": str(row['trainer']) if pd.notna(row['trainer']) else None,
+                                    "actual_weight": int(row['actual_weight']) if pd.notna(row['actual_weight']) else None,
+                                    "body_weight": int(row['body_weight']) if pd.notna(row['body_weight']) else None,
+                                    "draw": int(row['draw']) if pd.notna(row['draw']) else None,
+                                    "lbw_raw": str(row['lbw_raw']) if pd.notna(row['lbw_raw']) else None,
+                                    "running_position": str(row['running_position']) if pd.notna(row['running_position']) else None,
+                                    "finish_time": str(row['finish_time']) if pd.notna(row['finish_time']) else None,
+                                    "finish_seconds": float(row['finish_seconds']) if pd.notna(row['finish_seconds']) else None,
+                                    "odds": float(row['odds']) if pd.notna(row['odds']) else None,
+                                    "closing_profile": str(row['closing_profile']) if pd.notna(row['closing_profile']) else None,
+                                    "incident": str(row['incident']) if pd.notna(row['incident']) else None,
+                                    "race_class": str(row['race_class']) if pd.notna(row['race_class']) else None,
+                                    "distance": int(row['distance']) if pd.notna(row['distance']) else None,
+                                    "going": str(row['going']) if pd.notna(row['going']) else None,
+                                    "sectional_times": str(row['sectional_times']) if pd.notna(row['sectional_times']) else None,
+                                }
+                                new_data.append(record)
+                            except Exception as e:
+                                errors += 1
+                        
+                        if errors > 0:
+                            st.warning(f"跳过 {errors} 行无效数据")
+                        
+                        if new_data:
+                            result = incremental_sync_table("past_performances", new_data)
+                            st.success(f"增量同步完成：新增 {result['inserted']} 条，更新 {result['updated']} 条，删除 {result['deleted']} 条")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("没有有效数据可同步")
+        
+        st.markdown("---")
+        
+        # Excel/CSV 上传区域
+        st.markdown("### 📎 Excel/CSV 文件上传")
+        st.caption("格式：CSV 或 Excel，列名需与数据库字段匹配")
+        
+        uploaded_file = st.file_uploader(
+            "选择文件",
+            type=['csv', 'xlsx', 'xls'],
+            key="racing_uploader",
+            help="上传 CSV 或 Excel 文件"
+        )
+        
+        if uploaded_file is not None:
+            import io
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    df_upload = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+                else:
+                    df_upload = pd.read_excel(uploaded_file)
+                
+                st.success(f"成功解析 {len(df_upload)} 行数据")
+                st.dataframe(df_upload.head(10), use_container_width=True)
+                
+                col_confirm, col_cancel = st.columns(2)
+                with col_confirm:
+                    if st.button("✅ 确认导入并覆盖", type="primary"):
+                        upload_data = df_upload.to_dict(orient='records')
+                        success = save_table_data("past_performances", upload_data)
+                        if success:
+                            st.success(f"导入 {len(upload_data)} 条记录成功！")
+                            st.rerun()
+                        else:
+                            st.error("导入失败")
+                with col_cancel:
+                    if st.button("❌ 取消"):
+                        st.rerun()
+            except Exception as e:
+                st.error(f"文件解析失败: {e}")
+    
+    # ==================== Tab2: 回测 ====================
+    with tab2:
+        render_backtest_page(show_title=False)
+    
+    # ==================== Tab3: 用户管理 ====================
+    with tab3:
+        render_user_management()
+    
+    # ==================== Tab4: 马名映射管理 ====================
     with tab4:
         st.markdown("### 🌐 中英文马名映射")
-        st.caption("管理马名的中英文对应关系，用于界面    语言切换")
+        st.caption("管理马名的中英文对应关系，用于界面语言切换")
         
         # 获取当前映射
         mapping_data = get_horse_name_mapping()
@@ -1475,12 +1462,10 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
             )
             
             if st.button("💾 保存映射", type="primary"):
-                # 更新映射表
                 for _, row in edited_mapping.iterrows():
                     zh = row["中文名"]
                     en = row["英文名"]
                     if zh and en:
-                        # 更新数据库
                         headers = get_supabase_headers(use_secret=True)
                         url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?name_zh=eq.{zh}"
                         requests.patch(url, headers=headers, json={"name_en": en})
@@ -1489,28 +1474,14 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
                 st.rerun()
         else:
             st.info("暂无映射数据")
-#--------------
-# ==================== 赔率采集状态监控 ====================
+    
+    # ==================== 赔率采集状态监控 ====================
+    st.markdown("---")
     with st.expander("📊 赔率采集状态监控", expanded=False):
         st.markdown("**最近7天赔率采集统计**")
         
         try:
             headers = get_supabase_headers(use_secret=True)
-            
-            # 查询最近7天各彩池的采集数量
-            sql_stats = """
-            SELECT 
-                DATE(recorded_at) as collect_date,
-                odds_type,
-                COUNT(*) as count
-            FROM odds_history 
-            WHERE recorded_at > NOW() - INTERVAL '7 days'
-            GROUP BY DATE(recorded_at), odds_type
-            ORDER BY collect_date DESC, odds_type
-            """
-            
-            # 注意：Supabase 不支持直接 SQL，需要使用 REST API 或 RPC
-            # 这里使用简化的统计方式
             url = f"{SUPABASE_URL}/rest/v1/odds_history?select=recorded_at,odds_type&recorded_at=gt.{datetime.now() - timedelta(days=7)}&limit=10000"
             response = requests.get(url, headers=headers)
             
@@ -1521,24 +1492,27 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
                     df_stats['recorded_at'] = pd.to_datetime(df_stats['recorded_at'])
                     df_stats['collect_date'] = df_stats['recorded_at'].dt.date
                     
-                    # 按日期和类型统计
                     pivot_stats = df_stats.groupby(['collect_date', 'odds_type']).size().unstack(fill_value=0)
                     st.dataframe(pivot_stats, use_container_width=True)
                     
-                    # 显示最近采集时间
                     latest = df_stats['recorded_at'].max()
                     st.success(f"✅ 最近采集时间: {latest.strftime('%Y-%m-%d %H:%M:%S')}")
                 else:
                     st.warning("⚠️ 最近7天无赔率采集数据")
             else:
                 st.error(f"查询失败: {response.status_code}")
-                
         except Exception as e:
             st.error(f"获取统计失败: {e}")
         
         st.markdown("---")
         st.markdown("**📋 各彩池说明**")
         st.caption("WIN=独赢 | PLA=位置 | QIN=连赢 | QPL=位置Q | TRI=单T | TCE=三重彩 | F4=四连环")
+    
+    # ==================== 退出按钮 ====================
+    st.markdown("---")
+    if st.button("退出管理员模式", use_container_width=True):
+        admin_sign_out()
+        st.rerun()
 #-------
 def render_user_management():
     """用户管理界面（完整版：系统统计 + 用户列表 + 用户管理 + 操作 + 批量操作）"""
