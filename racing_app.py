@@ -3143,25 +3143,6 @@ def render_smart_betting(show_title: bool = True):
             if i < len(ml_probs):
                 runner['win_probability'] = ml_probs[i]
                 runner['overall_score'] = ml_probs[i] * 100
-    else:
-        model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
-        with st.spinner(f"正在計算馬匹勝率（{model_choice}）..."):
-            ml_probs = get_model_predictions(selected_race.get('race_id'), runners, model_type)
-        t3 = time.time()
-        perf_log["计算胜率"] = t3 - t2
-        
-        for i, runner in enumerate(runners):
-            if i < len(ml_probs):
-                runner['win_probability'] = ml_probs[i]
-                runner['overall_score'] = ml_probs[i] * 100
-    else:
-        model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
-        with st.spinner(f"正在計算馬匹勝率（{model_choice}）..."):
-            ml_probs = get_model_predictions(selected_race.get('race_id'), runners, model_type)
-        for i, runner in enumerate(runners):
-            if i < len(ml_probs):
-                runner['win_probability'] = ml_probs[i]
-                runner['overall_score'] = ml_probs[i] * 100
     
     sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
     #--------------------
