@@ -2503,11 +2503,20 @@ def calculate_expected_value(probability: float, odds: float, stake: float) -> f
 
 def get_top_horses_by_probability(runners: List[Dict], limit: int = 3) -> List[Dict]:
     """按胜率排序，获取前N匹马"""
-    # 过滤掉 None 值
-    valid_runners = [r for r in runners if r is not None]
+    if not runners:
+        return []
+    
+    # 过滤掉 None 和空字典
+    valid_runners = []
+    for r in runners:
+        if r is not None and isinstance(r, dict):
+            valid_runners.append(r)
+    
+    if not valid_runners:
+        return []
+    
     sorted_runners = sorted(valid_runners, key=lambda x: x.get('win_probability', 0), reverse=True)
     return sorted_runners[:limit]
-
 #-----------------
 # ==================== ML 模型训练和预测 ====================
 # 尝试导入 ML 库
