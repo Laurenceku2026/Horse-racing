@@ -2506,7 +2506,7 @@ def get_top_horses_by_probability(runners: List[Dict], limit: int = 3) -> List[D
     if not runners:
         return []
     
-    # 过滤掉 None 和空字典
+    # 过滤掉 None 值
     valid_runners = []
     for r in runners:
         if r is not None and isinstance(r, dict):
@@ -3149,8 +3149,6 @@ def render_smart_betting(show_title: bool = True):
             st.caption(f"💡 {rec.reason}")
         else:
             st.write("暂无建议")
-            prob = horse.get('win_probability', 0) * 100
-            odds_raw = horse.get('odds_win')
             
             # 安全处理赔率
             try:
