@@ -3147,26 +3147,9 @@ def render_smart_betting(show_title: bool = True):
             st.write(f"賠率: {rec.odds}倍")
             st.write(f"預期ROI: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
+        #-----
         else:
             st.write("暂无建议")
-            
-            # 安全处理赔率
-            try:
-                odds = float(odds_raw) if odds_raw else 0
-            except (ValueError, TypeError):
-                odds = 0
-            
-            score = horse.get('overall_score', 0)
-            horse_id = horse.get('horse_id')
-            horse_name = name_cache.get(horse_id, '')
-            
-            # 安全计算凯利
-            if odds > 0:
-                kelly = calculate_kelly_fraction(prob / 100, odds)
-            else:
-                kelly = 0
-            
-            stake = bankroll * kelly * risk_multiplier if kelly > 0 else 0
             
             with cols[i]:
                 st.markdown(f"""
