@@ -1491,54 +1491,54 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
             st.info("暂无映射数据")
 #--------------
 # ==================== 赔率采集状态监控 ====================
-with st.expander("📊 赔率采集状态监控", expanded=False):
-    st.markdown("**最近7天赔率采集统计**")
-    
-    try:
-        headers = get_supabase_headers(use_secret=True)
+    with st.expander("📊 赔率采集状态监控", expanded=False):
+        st.markdown("**最近7天赔率采集统计**")
         
-        # 查询最近7天各彩池的采集数量
-        sql_stats = """
-        SELECT 
-            DATE(recorded_at) as collect_date,
-            odds_type,
-            COUNT(*) as count
-        FROM odds_history 
-        WHERE recorded_at > NOW() - INTERVAL '7 days'
-        GROUP BY DATE(recorded_at), odds_type
-        ORDER BY collect_date DESC, odds_type
-        """
-        
-        # 注意：Supabase 不支持直接 SQL，需要使用 REST API 或 RPC
-        # 这里使用简化的统计方式
-        url = f"{SUPABASE_URL}/rest/v1/odds_history?select=recorded_at,odds_type&recorded_at=gt.{datetime.now() - timedelta(days=7)}&limit=10000"
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if data:
-                df_stats = pd.DataFrame(data)
-                df_stats['recorded_at'] = pd.to_datetime(df_stats['recorded_at'])
-                df_stats['collect_date'] = df_stats['recorded_at'].dt.date
-                
-                # 按日期和类型统计
-                pivot_stats = df_stats.groupby(['collect_date', 'odds_type']).size().unstack(fill_value=0)
-                st.dataframe(pivot_stats, use_container_width=True)
-                
-                # 显示最近采集时间
-                latest = df_stats['recorded_at'].max()
-                st.success(f"✅ 最近采集时间: {latest.strftime('%Y-%m-%d %H:%M:%S')}")
-            else:
-                st.warning("⚠️ 最近7天无赔率采集数据")
-        else:
-            st.error(f"查询失败: {response.status_code}")
+        try:
+            headers = get_supabase_headers(use_secret=True)
             
-    except Exception as e:
-        st.error(f"获取统计失败: {e}")
-    
-    st.markdown("---")
-    st.markdown("**📋 各彩池说明**")
-    st.caption("WIN=独赢 | PLA=位置 | QIN=连赢 | QPL=位置Q | TRI=单T | TCE=三重彩 | F4=四连环")
+            # 查询最近7天各彩池的采集数量
+            sql_stats = """
+            SELECT 
+                DATE(recorded_at) as collect_date,
+                odds_type,
+                COUNT(*) as count
+            FROM odds_history 
+            WHERE recorded_at > NOW() - INTERVAL '7 days'
+            GROUP BY DATE(recorded_at), odds_type
+            ORDER BY collect_date DESC, odds_type
+            """
+            
+            # 注意：Supabase 不支持直接 SQL，需要使用 REST API 或 RPC
+            # 这里使用简化的统计方式
+            url = f"{SUPABASE_URL}/rest/v1/odds_history?select=recorded_at,odds_type&recorded_at=gt.{datetime.now() - timedelta(days=7)}&limit=10000"
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data:
+                    df_stats = pd.DataFrame(data)
+                    df_stats['recorded_at'] = pd.to_datetime(df_stats['recorded_at'])
+                    df_stats['collect_date'] = df_stats['recorded_at'].dt.date
+                    
+                    # 按日期和类型统计
+                    pivot_stats = df_stats.groupby(['collect_date', 'odds_type']).size().unstack(fill_value=0)
+                    st.dataframe(pivot_stats, use_container_width=True)
+                    
+                    # 显示最近采集时间
+                    latest = df_stats['recorded_at'].max()
+                    st.success(f"✅ 最近采集时间: {latest.strftime('%Y-%m-%d %H:%M:%S')}")
+                else:
+                    st.warning("⚠️ 最近7天无赔率采集数据")
+            else:
+                st.error(f"查询失败: {response.status_code}")
+                
+        except Exception as e:
+            st.error(f"获取统计失败: {e}")
+        
+        st.markdown("---")
+        st.markdown("**📋 各彩池说明**")
+        st.caption("WIN=独赢 | PLA=位置 | QIN=连赢 | QPL=位置Q | TRI=单T | TCE=三重彩 | F4=四连环")
 #-------
 def render_user_management():
     """用户管理界面（完整版：系统统计 + 用户列表 + 用户管理 + 操作 + 批量操作）"""
