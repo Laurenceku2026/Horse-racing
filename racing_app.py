@@ -1511,6 +1511,13 @@ def render_admin_panel():
                     user_weights
                 )
                 st.success(f"预计算完成：成功 {result['success']} 场，失败 {result['failed']} 场，共 {result['total']} 场")
+    #----------
+    # 清除评分缓存
+    with st.expander("🗑️ 清除缓存", expanded=False):
+        if st.button("清除评分缓存", use_container_width=True):
+            get_cached_race_scores.clear()
+            st.success("缓存已清除")
+            st.rerun()
     # ==================== 赔率采集状态监控 ====================
     st.markdown("---")
     with st.expander("📊 赔率采集状态监控", expanded=False):
@@ -2934,6 +2941,38 @@ def get_historical_draws_for_training(limit: int = 300) -> List[Dict]:
         print(f"获取训练数据失败: {e}")
         return []
 #--------------
+# ==================== 评分缓存（内存缓存）====================
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_race_scores(race_date: str, race_no: int, venue: str) -> Tuple[List[Dict], List[float]]:
+    """
+    缓存整场赛事的评分结果
+    - 首次调用时计算并缓存
+    - 后续调用直接返回缓存结果
+    - 缓存有效期 1 小时
+    """
+    try:
+        # 获取出赛马匹
+        runners = get_race_runners_with_details(race_date, venue, race_no)
+        if not runners:
+            return [], []
+        
+        # 用户权重
+        user_weights = {"basic": 0.30, "race": 0.40, "odds": 0.30}
+        
+        # 为没有赔率的马匹设置默认赔率（避免计算失败）
+        for runner in runners:
+            if not runner.get('odds_win') or runner.get('odds_win') <= 0:
+                runner['odds_win'] = 10.0
+        
+        # 计算评分
+        scores, probabilities = calculate_all_horses_scores(None, runners, user_weights)
+        
+        return scores, probabilities
+        
+    except Exception as e:
+        print(f"缓存评分失败: {e}")
+        return [], []
 # ==================== 智能投注主页面 ====================
 def render_smart_betting(show_title: bool = True):
     """智能投注页面：单场分析 + 全天优化 + 过关组合"""
@@ -3067,28 +3106,16 @@ def render_smart_betting(show_title: bool = True):
         "temperature": 0.8,
         "odds_mix_ratio": 0.6
     }
-    
+    #--------
     # 计算胜率
     if model_choice == "评分系统":
-        # ⭐ 优先从缓存读取
-        scores, probabilities = get_scores_from_cache(
-            selected_race.get('race_date'), 
-            selected_race.get('race_no'), 
-            selected_race.get('venue')
-        )
-        
-        if not scores:
-            # 缓存没有，实时计算并保存
-            with st.spinner("正在計算馬匹勝率（評分系統）..."):
-                scores, probabilities = calculate_all_horses_scores(selected_race.get('race_id'), runners, user_weights)
-                # 保存到缓存
-                save_scores_to_cache(
-                    selected_race.get('race_date'),
-                    selected_race.get('race_no'),
-                    selected_race.get('venue'),
-                    runners,
-                    scores
-                )
+        # ⭐ 使用缓存（首次计算，后续直接读取）
+        with st.spinner("正在計算馬匹勝率（評分系統）..."):
+            scores, probabilities = get_cached_race_scores(
+                selected_race.get('race_date'),
+                selected_race.get('race_no'),
+                selected_race.get('venue')
+            )
         
         for i, runner in enumerate(runners):
             if i < len(scores):
