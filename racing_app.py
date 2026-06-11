@@ -2386,6 +2386,18 @@ def render_home():
 # ============================================================
 
 # ==================== 辅助函数：获取赛日所有赛事 ====================
+# ==================== 缓存版本的数据获取函数 ====================
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_upcoming_races() -> List[Dict]:
+    """缓存未来14天的赛事列表"""
+    return get_upcoming_races()
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_race_runners(race_date: str, venue: str, race_no: int) -> List[Dict]:
+    """缓存出赛马匹数据"""
+    return get_race_runners_with_details(race_date, venue, race_no)
 #------------
 def get_upcoming_races() -> List[Dict]:
     """获取未来14天的赛事（从数据库读取）"""
@@ -2953,7 +2965,7 @@ def get_cached_race_scores(race_date: str, race_no: int, venue: str) -> Tuple[Li
     """
     try:
         # 获取出赛马匹
-        runners = get_race_runners_with_details(race_date, venue, race_no)
+        runners = get_cached_race_runners(race_date, venue, race_no)
         if not runners:
             return [], []
         
@@ -3051,8 +3063,8 @@ def render_smart_betting(show_title: bool = True):
                     st.rerun()
                 else:
                     st.info("未来14天暂无赛事")
-    
-    upcoming_races = get_upcoming_races()
+    #-----------------
+    upcoming_races = get_cached_upcoming_races()
     
     if not upcoming_races:
         st.info("📌 未來14天暫無賽事，請點擊「刷新賽程」同步最新賽程")
@@ -4260,7 +4272,7 @@ def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -
             race_no = race.get('race_no', 1)
             
             # 获取该赛事的出赛马匹
-            runners = get_race_runners_with_details(race_date, venue, race_no)
+            runners = get_cached_race_runners(race_date, venue, race_no)
             
             if not runners:
                 continue
