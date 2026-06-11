@@ -3173,15 +3173,16 @@ def render_smart_betting(show_title: bool = True):
         # 生成建议
         engine = BettingStrategyEngine()
         recommendations = engine.generate_all_recommendations(
-        t4 = time.time()
-        perf_log["策略引擎"] = t4 - t3
             scores=scores,
             horse_names=horse_names,
             odds_win=odds_win,
             odds_place=odds_place,
             odds_qin=odds_qin,
-            odds_tri=odds_tri,
+            odds_tri=odds_tri
         )
+        
+        t4 = time.time()
+        perf_log["策略引擎"] = t4 - t3
         
         # ==================== 显示AI投注建议 ====================
         st.markdown("#### 💡 AI 投注策略建议")
