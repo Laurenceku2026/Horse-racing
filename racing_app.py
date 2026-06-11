@@ -2976,9 +2976,13 @@ def get_cached_race_scores(race_date: str, race_no: int, venue: str) -> Tuple[Li
 # ==================== 智能投注主页面 ====================
 def render_smart_betting(show_title: bool = True):
     """智能投注页面：单场分析 + 全天优化 + 过关组合"""
+    import time
+    perf_log = {}
+    t0 = time.time()
+    
     if show_title:
         st.markdown("## 🎯 智能投注")
-        
+    perf_log["初始化"] = time.time() - t0    
     # ==================== 用户设置区域 ====================
     with st.expander("⚙️ 投注設置", expanded=True):
         col1, col2, col3, col4 = st.columns(4)
@@ -3029,6 +3033,8 @@ def render_smart_betting(show_title: bool = True):
     
     # ==================== 选择赛日 ====================
     st.markdown("### 📅 選擇賽日")
+    t1 = time.time()
+    perf_log["选择赛日"] = t1 - t0
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -3106,6 +3112,9 @@ def render_smart_betting(show_title: bool = True):
         "temperature": 0.8,
         "odds_mix_ratio": 0.6
     }
+    t2 = time.time()
+    perf_log["获取 runners"] = t2 - t1
+    perf_log["runners数量"] = len(runners)
     #--------
     # 计算胜率
     if model_choice == "评分系统":
@@ -3116,7 +3125,8 @@ def render_smart_betting(show_title: bool = True):
                 selected_race.get('race_no'),
                 selected_race.get('venue')
             )
-        
+    t3 = time.time()
+    perf_log["计算胜率"] = t3 - t2
         for i, runner in enumerate(runners):
             if i < len(scores):
                 runner['overall_score'] = scores[i].get('combined_score', 0)
@@ -3159,6 +3169,8 @@ def render_smart_betting(show_title: bool = True):
         # 生成建议
         engine = BettingStrategyEngine()
         recommendations = engine.generate_all_recommendations(
+        t4 = time.time()
+        perf_log["策略引擎"] = t4 - t3
             scores=scores,
             horse_names=horse_names,
             odds_win=odds_win,
@@ -3251,6 +3263,15 @@ def render_smart_betting(show_title: bool = True):
         })
     
     st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
+    t5 = time.time()
+    perf_log["显示表格"] = t5 - t4
+    # 最后输出性能报告
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**⏱️ 性能报告**")
+    for step, duration in perf_log.items():
+        st.sidebar.write(f"- {step}: {duration:.2f}秒")
+    st.sidebar.write(f"**总耗时: {time.time() - t0:.2f}秒**")
+    
     #------------
     # 投注建议 - 使用AI策略引擎
     st.markdown("#### 💡 AI 投注策略建议")
