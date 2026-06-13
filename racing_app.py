@@ -2118,7 +2118,7 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
 
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
-    """渲染马匹评分表格"""
+    """渲染马匹评分表格（列宽最小化）"""
     if df.empty:
         st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
         return
@@ -2128,16 +2128,16 @@ def render_horse_rating_table(df: pd.DataFrame):
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Horse_ID": st.column_config.TextColumn("Horse_ID", width="small"),
-            "馬名(中)": st.column_config.TextColumn("馬名(中)", width="medium"),
-            "馬名(英)": st.column_config.TextColumn("馬名(英)", width="medium"),
-            "性別": st.column_config.TextColumn("性別", width="small"),
-            "年齡": st.column_config.TextColumn("年齡", width="small"),
-            "平均體重": st.column_config.TextColumn("平均體重", width="small"),
-            "勝率": st.column_config.TextColumn("勝率", width="small"),
-            "入Q率": st.column_config.TextColumn("入Q率", width="small"),
-            "入T率": st.column_config.TextColumn("入T率", width="small"),
-            "基礎評分": st.column_config.NumberColumn("基礎評分", width="small", format="%.0f")
+            "Horse_ID": st.column_config.TextColumn("ID", width="90px"),
+            "馬名(中)": st.column_config.TextColumn("中文名", width="100px"),
+            "馬名(英)": st.column_config.TextColumn("英文名", width="120px"),
+            "性別": st.column_config.TextColumn("性別", width="40px"),
+            "年齡": st.column_config.TextColumn("年齡", width="40px"),
+            "平均體重": st.column_config.TextColumn("體重", width="60px"),
+            "勝率": st.column_config.TextColumn("勝率", width="55px"),
+            "入Q率": st.column_config.TextColumn("入Q率", width="55px"),
+            "入T率": st.column_config.TextColumn("入T率", width="55px"),
+            "基礎評分": st.column_config.NumberColumn("評分", width="60px", format="%.0f")
         }
     )
     
