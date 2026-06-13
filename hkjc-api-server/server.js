@@ -240,7 +240,7 @@ async function syncSingleRaceToSupabase(date, venue, raceNo) {
         const runners = raceDetails.runners || [];
         
         for (const runner of runners) {
-            const horseId = runner.horse?.id || runner.id || runner.horseId || '';
+            const horseId = (runner.horse && runner.horse.id) || runner.id || runner.horseId || '';
             const horseName = runner.name_en || runner.horseName || 'Unknown';
             const horseNo = parseInt(runner.no) || 0;
             const draw = parseInt(runner.barrierDrawNumber) || 0;
