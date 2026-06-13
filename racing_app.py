@@ -1164,7 +1164,7 @@ def render_admin_panel():
         st.caption("💡 双击单元格编辑 | 表格底部有 '+' 按钮添加新行 | 支持 Excel/CSV 上传")
         
         # 加载当前数据
-        current_data = get_table_data("past_performances_V2", limit=500)
+        current_data = get_table_data("past_performances_v2", limit=500)
         
         # 定义表格列
         columns = [
@@ -1253,7 +1253,7 @@ def render_admin_panel():
                             st.warning(f"跳过 {errors} 行无效数据")
                         
                         if new_data:
-                            success = save_table_data("past_performances_V2", new_data)
+                            success = save_table_data("past_performances_v2", new_data)
                             if success:
                                 st.success(f"全量覆盖保存 {len(new_data)} 条记录成功！")
                                 st.cache_data.clear()
@@ -1309,7 +1309,7 @@ def render_admin_panel():
                             st.warning(f"跳过 {errors} 行无效数据")
                         
                         if new_data:
-                            result = incremental_sync_table("past_performances_V2", new_data)
+                            result = incremental_sync_table("past_performances_v2", new_data)
                             st.success(f"增量同步完成：新增 {result['inserted']} 条，更新 {result['updated']} 条，删除 {result['deleted']} 条")
                             st.cache_data.clear()
                             st.rerun()
@@ -1344,7 +1344,7 @@ def render_admin_panel():
                 with col_confirm:
                     if st.button("✅ 确认导入并覆盖", type="primary"):
                         upload_data = df_upload.to_dict(orient='records')
-                        success = save_table_data("past_performances_V2", upload_data)
+                        success = save_table_data("past_performances_v2", upload_data)
                         if success:
                             st.success(f"导入 {len(upload_data)} 条记录成功！")
                             st.rerun()
@@ -1975,7 +1975,7 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
         
         
         # 2. 获取所有成绩记录，按 horse_id 分组
-        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=horse_id,position,body_weight,race_date&limit=50000"
+        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=horse_id,position,body_weight,race_date&limit=50000"
         perf_response = requests.get(perf_url, headers=headers)
         
         if perf_response.status_code != 200:
@@ -2122,9 +2122,9 @@ def render_home():
         horse_count = len(horses_response.json()) if horses_response.status_code == 200 else 0
         
         # 赛事数量
-        # 赛事总数（从 past_performances_V2 统计不同的赛事）
+        # 赛事总数（从 past_performances_v2 统计不同的赛事）
         try:
-            perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=race_date,venue,race_no&limit=50000"
+            perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date,venue,race_no&limit=50000"
             perf_races_response = requests.get(perf_races_url, headers=headers)
             if perf_races_response.status_code == 200:
                 perf_data = perf_races_response.json()
@@ -2139,14 +2139,14 @@ def render_home():
             race_count = 0
         
         # 成绩记录数量
-        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2"
+        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2"
         perf_response = requests.get(perf_url, headers=headers)
         perf_count = len(perf_response.json()) if perf_response.status_code == 200 else 0
         #------
-        # 获取最新和最旧赛事日期（从 past_performances_V2 表）
+        # 获取最新和最旧赛事日期（从 past_performances_v2 表）
         try:
             # 获取最新日期
-            perf_url_latest = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=race_date&order=race_date.desc&limit=1"
+            perf_url_latest = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date&order=race_date.desc&limit=1"
             perf_response_latest = requests.get(perf_url_latest, headers=headers)
             if perf_response_latest.status_code == 200 and perf_response_latest.json():
                 latest_date = perf_response_latest.json()[0]['race_date']
@@ -2154,7 +2154,7 @@ def render_home():
                 latest_date = 'N/A'
             
             # 获取最旧日期
-            perf_url_oldest = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=race_date&order=race_date.asc&limit=1"
+            perf_url_oldest = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date&order=race_date.asc&limit=1"
             perf_response_oldest = requests.get(perf_url_oldest, headers=headers)
             if perf_response_oldest.status_code == 200 and perf_response_oldest.json():
                 oldest_date = perf_response_oldest.json()[0]['race_date']
@@ -2165,9 +2165,9 @@ def render_home():
             latest_date = 'N/A'
             oldest_date = 'N/A'
         #----
-        # 骑师总数（从 past_performances_V2 统计）
+        # 骑师总数（从 past_performances_v2 统计）
         try:
-            jockeys_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=jockey&limit=50000"
+            jockeys_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=jockey&limit=50000"
             jockeys_response = requests.get(jockeys_url, headers=headers)
             if jockeys_response.status_code == 200:
                 jockey_data = jockeys_response.json()
@@ -2183,9 +2183,9 @@ def render_home():
             print(f"统计骑师失败: {e}")
             jockey_count = 0
         
-        # 练马师总数（从 past_performances_V2 统计）
+        # 练马师总数（从 past_performances_v2 统计）
         try:
-            trainers_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=trainer&limit=50000"
+            trainers_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=trainer&limit=50000"
             trainers_response = requests.get(trainers_url, headers=headers)
             if trainers_response.status_code == 200:
                 trainer_data = trainers_response.json()
@@ -2781,7 +2781,7 @@ except ImportError:
     SKLEARN_AVAILABLE = False
 
 
-def prepare_ml_features(horse_id: int, race_id: int, past_performances_V2: List[Dict]) -> Dict:
+def prepare_ml_features(horse_id: int, race_id: int, past_performances_v2: List[Dict]) -> Dict:
     """
     为 ML 模型准备特征
     返回特征字典
@@ -2789,9 +2789,9 @@ def prepare_ml_features(horse_id: int, race_id: int, past_performances_V2: List[
     features = {}
     
     # 1. 基础统计特征
-    if past_performances_V2:
-        recent_5 = past_performances_V2[:5] if len(past_performances_V2) >= 5 else past_performances_V2
-        recent_10 = past_performances_V2[:10] if len(past_performances_V2) >= 10 else past_performances_V2
+    if past_performances_v2:
+        recent_5 = past_performances_v2[:5] if len(past_performances_v2) >= 5 else past_performances_v2
+        recent_10 = past_performances_v2[:10] if len(past_performances_v2) >= 10 else past_performances_v2
         
         # 胜率、入Q率、入T率
         wins = sum(1 for p in recent_10 if p.get('position') == 1)
@@ -2853,7 +2853,7 @@ def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any
                     continue
                 
                 # 获取该马匹的历史往绩
-                past = get_horse_past_performances_V2(horse_id, limit=10)
+                past = get_horse_past_performances_v2(horse_id, limit=10)
                 features = prepare_ml_features(horse_id, race.get('race_id'), past)
                 
                 if features:
@@ -2912,7 +2912,7 @@ def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]
                 if not horse_id:
                     continue
                 
-                past = get_horse_past_performances_V2(horse_id, limit=10)
+                past = get_horse_past_performances_v2(horse_id, limit=10)
                 features = prepare_ml_features(horse_id, race.get('race_id'), past)
                 
                 if features:
@@ -2984,7 +2984,7 @@ def get_model_predictions(race_id: int, runners: List[Dict], model_type: str) ->
         
         for runner in runners:
             horse_id = runner.get('horse_id')
-            past = get_horse_past_performances_V2(horse_id, limit=10)
+            past = get_horse_past_performances_v2(horse_id, limit=10)
             features = prepare_ml_features(horse_id, race_id, past)
             
             if features:
@@ -3000,7 +3000,7 @@ def get_model_predictions(race_id: int, runners: List[Dict], model_type: str) ->
     
     for runner in runners:
         horse_id = runner.get('horse_id')
-        past = get_horse_past_performances_V2(horse_id, limit=10)
+        past = get_horse_past_performances_v2(horse_id, limit=10)
         features = prepare_ml_features(horse_id, race_id, past)
         
         if features:
@@ -4245,12 +4245,12 @@ def get_race_without_future_data(race_date: str, race_id: int) -> List[Dict]:
         for runner in runners:
             horse_id = runner.get('horse_id')
             if horse_id:
-                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?horse_id=eq.{horse_id}&race_date=lt.{race_date}&order=race_date.desc&limit=20"
+                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?horse_id=eq.{horse_id}&race_date=lt.{race_date}&order=race_date.desc&limit=20"
                 perf_response = requests.get(perf_url, headers=headers)
                 if perf_response.status_code == 200:
-                    runner['past_performances_V2'] = perf_response.json()
+                    runner['past_performances_v2'] = perf_response.json()
                 else:
-                    runner['past_performances_V2'] = []
+                    runner['past_performances_v2'] = []
         
         return runners
     except Exception as e:
@@ -4820,12 +4820,12 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_performances_batch(start_date: str, end_date: str) -> List[Dict]:
     """
-    批量获取日期范围内的所有 past_performances_V2 数据
+    批量获取日期范围内的所有 past_performances_v2 数据
     使用 st.cache_data 缓存，避免重复查询
     """
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?race_date=gte.{start_date}&race_date=lte.{end_date}&limit=50000"
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?race_date=gte.{start_date}&race_date=lte.{end_date}&limit=50000"
         response = requests.get(url, headers=headers)
         
         if response.status_code == 200:
@@ -4841,7 +4841,7 @@ def get_performances_batch(start_date: str, end_date: str) -> List[Dict]:
 def build_horse_performances_cache(performances: List[Dict]) -> Dict[str, List[Dict]]:
     """
     构建马匹往绩缓存
-    输入：所有 past_performances_V2 记录
+    输入：所有 past_performances_v2 记录
     输出：{ horse_id: [按日期降序排列的往绩列表] }
     """
     cache = {}
@@ -4886,16 +4886,16 @@ def get_races_from_performances(performances: List[Dict]) -> List[Dict]:
     return races
 
 
-def calculate_basic_score_fast(past_performances_V2: List[Dict], target_distance: int) -> float:
+def calculate_basic_score_fast(past_performances_v2: List[Dict], target_distance: int) -> float:
     """
     快速计算基础评分（使用已获取的往绩数据，不查询数据库）
     用于回测场景，避免 N+1 查询问题
     """
-    if not past_performances_V2:
+    if not past_performances_v2:
         return 50.0
     
     # 取最近 10 场（已经是按日期降序排列）
-    recent = past_performances_V2[:10]
+    recent = past_performances_v2[:10]
     total = len(recent)
     if total == 0:
         return 50.0
@@ -5933,38 +5933,38 @@ def get_stock_daily(ts_code: str, days: int = 120) -> pd.DataFrame:
 
 # ==================== 1. 基础评分函数 ====================
 
-def calculate_win_rate(past_performances_V2: List[Dict], recent_n: int = 10) -> float:
+def calculate_win_rate(past_performances_v2: List[Dict], recent_n: int = 10) -> float:
     """计算最近N场的胜率"""
-    if not past_performances_V2:
+    if not past_performances_v2:
         return 0.0
-    recent = past_performances_V2[-recent_n:] if len(past_performances_V2) >= recent_n else past_performances_V2
+    recent = past_performances_v2[-recent_n:] if len(past_performances_v2) >= recent_n else past_performances_v2
     wins = sum(1 for p in recent if p.get('finishing_position') == 1)
     return wins / len(recent) if recent else 0.0
 
 
-def calculate_place_rate(past_performances_V2: List[Dict], recent_n: int = 10) -> float:
+def calculate_place_rate(past_performances_v2: List[Dict], recent_n: int = 10) -> float:
     """计算最近N场的入Q率（前2名）"""
-    if not past_performances_V2:
+    if not past_performances_v2:
         return 0.0
-    recent = past_performances_V2[-recent_n:] if len(past_performances_V2) >= recent_n else past_performances_V2
+    recent = past_performances_v2[-recent_n:] if len(past_performances_v2) >= recent_n else past_performances_v2
     places = sum(1 for p in recent if p.get('finishing_position', 0) in [1, 2])
     return places / len(recent) if recent else 0.0
 
 
-def calculate_show_rate(past_performances_V2: List[Dict], recent_n: int = 10) -> float:
+def calculate_show_rate(past_performances_v2: List[Dict], recent_n: int = 10) -> float:
     """计算最近N场的入T率（前3名）"""
-    if not past_performances_V2:
+    if not past_performances_v2:
         return 0.0
-    recent = past_performances_V2[-recent_n:] if len(past_performances_V2) >= recent_n else past_performances_V2
+    recent = past_performances_v2[-recent_n:] if len(past_performances_v2) >= recent_n else past_performances_v2
     shows = sum(1 for p in recent if p.get('finishing_position', 0) in [1, 2, 3])
     return shows / len(recent) if recent else 0.0
 
 
-def calculate_rating_trend(past_performances_V2: List[Dict], recent_n: int = 5) -> float:
+def calculate_rating_trend(past_performances_v2: List[Dict], recent_n: int = 5) -> float:
     """计算官方评分趋势"""
-    if len(past_performances_V2) < 2:
+    if len(past_performances_v2) < 2:
         return 0.0
-    recent = past_performances_V2[-recent_n:] if len(past_performances_V2) >= recent_n else past_performances_V2
+    recent = past_performances_v2[-recent_n:] if len(past_performances_v2) >= recent_n else past_performances_v2
     ratings = [p.get('rating', 0) for p in recent if p.get('rating')]
     if len(ratings) < 2:
         return 0.0
@@ -5981,13 +5981,13 @@ def calculate_rating_trend(past_performances_V2: List[Dict], recent_n: int = 5) 
     return slope
 
 
-def calculate_avg_distance_rating(past_performances_V2: List[Dict], target_distance: int) -> float:
+def calculate_avg_distance_rating(past_performances_v2: List[Dict], target_distance: int) -> float:
     """计算在目标路程附近的平均表现评分"""
-    if not past_performances_V2:
+    if not past_performances_v2:
         return 50.0
     scores = []
     weights = []
-    for p in past_performances_V2:
+    for p in past_performances_v2:
         distance = p.get('distance', 0)
         if distance == 0:
             continue
@@ -6018,13 +6018,13 @@ def calculate_avg_distance_rating(past_performances_V2: List[Dict], target_dista
     return total_weighted_score / total_weight if total_weight > 0 else 50.0
 
 
-def calculate_basic_score(horse_id: int, target_distance: int, past_performances_V2: List[Dict]) -> float:
+def calculate_basic_score(horse_id: int, target_distance: int, past_performances_v2: List[Dict]) -> float:
     """计算基础评分（0-100）"""
-    win_rate = calculate_win_rate(past_performances_V2)
-    place_rate = calculate_place_rate(past_performances_V2)
-    show_rate = calculate_show_rate(past_performances_V2)
-    rating_trend = calculate_rating_trend(past_performances_V2)
-    distance_rating = calculate_avg_distance_rating(past_performances_V2, target_distance)
+    win_rate = calculate_win_rate(past_performances_v2)
+    place_rate = calculate_place_rate(past_performances_v2)
+    show_rate = calculate_show_rate(past_performances_v2)
+    rating_trend = calculate_rating_trend(past_performances_v2)
+    distance_rating = calculate_avg_distance_rating(past_performances_v2, target_distance)
     win_score = min(win_rate * 100, 100)
     place_score = min(place_rate * 100, 100)
     show_score = min(show_rate * 100, 100)
@@ -6068,9 +6068,9 @@ def get_weight_advantage_score(actual_weight: int, weight_comfort_range: Tuple[i
         return max(30, 85 - diff * 4)
 
 
-def calculate_same_course_score(horse_id: int, venue: str, past_performances_V2: List[Dict]) -> float:
+def calculate_same_course_score(horse_id: int, venue: str, past_performances_v2: List[Dict]) -> float:
     """计算同马场往绩评分"""
-    venue_performances = [p for p in past_performances_V2 if p.get('venue') == venue]
+    venue_performances = [p for p in past_performances_v2 if p.get('venue') == venue]
     if not venue_performances:
         return 50.0
     recent = venue_performances[-3:] if len(venue_performances) >= 3 else venue_performances
@@ -6092,9 +6092,9 @@ def calculate_same_course_score(horse_id: int, venue: str, past_performances_V2:
     return sum(scores) / len(scores)
 
 
-def calculate_same_distance_score(horse_id: int, distance: int, past_performances_V2: List[Dict]) -> float:
+def calculate_same_distance_score(horse_id: int, distance: int, past_performances_v2: List[Dict]) -> float:
     """计算同路程往绩评分"""
-    distance_performances = [p for p in past_performances_V2 if p.get('distance') == distance]
+    distance_performances = [p for p in past_performances_v2 if p.get('distance') == distance]
     if not distance_performances:
         return 50.0
     recent = distance_performances[-3:] if len(distance_performances) >= 3 else distance_performances
@@ -6157,11 +6157,11 @@ def calculate_race_score(
     jockey_id: int,
     trainer_id: int,
     weight_comfort_range: Tuple[int, int],
-    past_performances_V2: List[Dict]
+    past_performances_v2: List[Dict]
 ) -> float:
     """计算场次评分"""
-    same_course = calculate_same_course_score(horse_id, venue, past_performances_V2)
-    same_distance = calculate_same_distance_score(horse_id, distance, past_performances_V2)
+    same_course = calculate_same_course_score(horse_id, venue, past_performances_v2)
+    same_distance = calculate_same_distance_score(horse_id, distance, past_performances_v2)
     draw_score = get_draw_score(draw, venue, distance)
     weight_score = get_weight_advantage_score(actual_weight, weight_comfort_range)
     jockey_score = calculate_jockey_score(jockey_id)
@@ -6254,11 +6254,11 @@ def calculate_win_probabilities(
 
 # ==================== 5. 综合评分函数 ====================
 
-def get_horse_past_performances_V2(horse_id: int, limit: int = 10) -> List[Dict]:
+def get_horse_past_performances_v2(horse_id: int, limit: int = 10) -> List[Dict]:
     """从数据库获取马匹的历史往绩"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?horse_id=eq.{horse_id}&order=race_date.desc&limit={limit}"
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?horse_id=eq.{horse_id}&order=race_date.desc&limit={limit}"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
@@ -6270,7 +6270,7 @@ def get_horse_past_performances_V2(horse_id: int, limit: int = 10) -> List[Dict]
 #---------------
 def get_horse_weight_comfort_range(horse_id: int) -> Tuple[int, int]:
     """获取马匹的负磅舒适区"""
-    past = get_horse_past_performances_V2(horse_id, limit=20)
+    past = get_horse_past_performances_v2(horse_id, limit=20)
     winning_weights = []
     for p in past:
         pos = p.get('finishing_position', 0)
@@ -6297,12 +6297,12 @@ def calculate_horse_score(
     incident: str = ""  # 新增参数
 ) -> Dict:
     """计算马匹的综合评分（含 DeepSeek 事件分析）"""
-    past_performances_V2 = get_horse_past_performances_V2(horse_id)
-    basic_score = calculate_basic_score(horse_id, distance, past_performances_V2)
+    past_performances_v2 = get_horse_past_performances_v2(horse_id)
+    basic_score = calculate_basic_score(horse_id, distance, past_performances_v2)
     weight_comfort_range = get_horse_weight_comfort_range(horse_id)
     race_score = calculate_race_score(
         horse_id, venue, distance, draw, actual_weight,
-        jockey_id, trainer_id, weight_comfort_range, past_performances_V2
+        jockey_id, trainer_id, weight_comfort_range, past_performances_v2
     )
     odds_score = calculate_odds_score(odds_win)
     
@@ -6511,7 +6511,7 @@ def get_horses_performances_batch(horse_ids: tuple) -> Dict[str, List[Dict]]:
         
         # 构建 IN 查询
         ids_str = ','.join([f"'{hid}'" for hid in horse_ids])
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?horse_id=in.({ids_str})&order=race_date.desc&limit=10000"
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?horse_id=in.({ids_str})&order=race_date.desc&limit=10000"
         
         response = requests.get(url, headers=headers)
         
@@ -6543,7 +6543,7 @@ def get_horses_performances_batch(horse_ids: tuple) -> Dict[str, List[Dict]]:
         return {}
 
 
-def get_horse_past_performances_V2_optimized(horse_id: str, cache: Dict[str, List[Dict]], limit: int = 10) -> List[Dict]:
+def get_horse_past_performances_v2_optimized(horse_id: str, cache: Dict[str, List[Dict]], limit: int = 10) -> List[Dict]:
     """
     从缓存中获取马匹往绩（优化版）
     参数：
@@ -6608,7 +6608,7 @@ def calculate_all_horses_scores(
             continue
         
         # 从缓存获取往绩（不查询数据库）
-        past_performances_V2 = get_horse_past_performances_V2_optimized(horse_id, perf_cache, limit=10)
+        past_performances_v2 = get_horse_past_performances_v2_optimized(horse_id, perf_cache, limit=10)
         
         # 获取赔率
         odds_win = runner.get("odds_win")
@@ -6624,13 +6624,13 @@ def calculate_all_horses_scores(
         trainer_id = runner.get("trainer_id")
         
         # 计算基础评分
-        basic_score = calculate_basic_score_fast(past_performances_V2, distance)
+        basic_score = calculate_basic_score_fast(past_performances_v2, distance)
         
         # 计算场次评分
-        weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_performances_V2)
+        weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_performances_v2)
         race_score = calculate_race_score_optimized(
             horse_id, venue, distance, draw, actual_weight,
-            jockey_id, trainer_id, weight_comfort_range, past_performances_V2
+            jockey_id, trainer_id, weight_comfort_range, past_performances_v2
         )
         
         # 赔率评分
@@ -6662,10 +6662,10 @@ def calculate_all_horses_scores(
     return scores, probabilities
 
 
-def get_horse_weight_comfort_range_from_cache(horse_id: str, past_performances_V2: List[Dict]) -> Tuple[int, int]:
+def get_horse_weight_comfort_range_from_cache(horse_id: str, past_performances_v2: List[Dict]) -> Tuple[int, int]:
     """从缓存的往绩中获取马匹的负磅舒适区（不查询数据库）"""
     winning_weights = []
-    for p in past_performances_V2:
+    for p in past_performances_v2:
         pos = p.get('finishing_position', 0)
         weight = p.get('actual_weight', 0)
         if pos in [1, 2, 3] and weight > 0:
@@ -6687,16 +6687,16 @@ def calculate_race_score_optimized(
     jockey_id: int,
     trainer_id: int,
     weight_comfort_range: Tuple[int, int],
-    past_performances_V2: List[Dict]
+    past_performances_v2: List[Dict]
 ) -> float:
     """
     计算场次评分（优化版，使用已获取的往绩）
     """
     # 同马场往绩
-    same_course = calculate_same_course_score_from_cache(horse_id, venue, past_performances_V2)
+    same_course = calculate_same_course_score_from_cache(horse_id, venue, past_performances_v2)
     
     # 同路程往绩
-    same_distance = calculate_same_distance_score_from_cache(horse_id, distance, past_performances_V2)
+    same_distance = calculate_same_distance_score_from_cache(horse_id, distance, past_performances_v2)
     
     # 档位优势
     draw_score = get_draw_score(draw, venue, distance)
@@ -6730,9 +6730,9 @@ def calculate_race_score_optimized(
     return round(total_score, 2)
 
 
-def calculate_same_course_score_from_cache(horse_id: str, venue: str, past_performances_V2: List[Dict]) -> float:
+def calculate_same_course_score_from_cache(horse_id: str, venue: str, past_performances_v2: List[Dict]) -> float:
     """从缓存的往绩中计算同马场评分"""
-    venue_performances = [p for p in past_performances_V2 if p.get('venue') == venue]
+    venue_performances = [p for p in past_performances_v2 if p.get('venue') == venue]
     if not venue_performances:
         return 50.0
     
@@ -6754,9 +6754,9 @@ def calculate_same_course_score_from_cache(horse_id: str, venue: str, past_perfo
     return sum(scores) / len(scores) if scores else 50.0
 
 
-def calculate_same_distance_score_from_cache(horse_id: str, distance: int, past_performances_V2: List[Dict]) -> float:
+def calculate_same_distance_score_from_cache(horse_id: str, distance: int, past_performances_v2: List[Dict]) -> float:
     """从缓存的往绩中计算同路程评分"""
-    distance_performances = [p for p in past_performances_V2 if p.get('distance') == distance]
+    distance_performances = [p for p in past_performances_v2 if p.get('distance') == distance]
     if not distance_performances:
         return 50.0
     
@@ -6872,7 +6872,7 @@ def save_race_result_to_db(record: Dict) -> bool:
         headers = get_supabase_headers(use_secret=True)
         
         # 检查是否已存在（根据唯一键：race_date + venue + race_no + horse_no）
-        check_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?race_date=eq.{record['race_date']}&venue=eq.{record['venue']}&race_no=eq.{record['race_no']}&horse_no=eq.{record['horse_no']}"
+        check_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?race_date=eq.{record['race_date']}&venue=eq.{record['venue']}&race_no=eq.{record['race_no']}&horse_no=eq.{record['horse_no']}"
         check_response = requests.get(check_url, headers=headers)
         
         if check_response.status_code == 200 and check_response.json():
@@ -6880,7 +6880,7 @@ def save_race_result_to_db(record: Dict) -> bool:
             return True
         
         # 插入新记录
-        insert_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2"
+        insert_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2"
         insert_response = requests.post(insert_url, headers=headers, json=record)
         
         if insert_response.status_code not in [200, 201]:
@@ -6894,11 +6894,11 @@ def save_race_result_to_db(record: Dict) -> bool:
 
 #---------------
 def get_latest_race_date_from_db() -> Optional[str]:
-    """从 past_performances_V2 表获取最新的赛事日期"""
+    """从 past_performances_v2 表获取最新的赛事日期"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        # ✅ 改为查询 past_performances_V2 表
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?order=race_date.desc&limit=1&select=race_date"
+        # ✅ 改为查询 past_performances_v2 表
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?order=race_date.desc&limit=1&select=race_date"
         response = requests.get(url, headers=headers)
         if response.status_code == 200 and response.json():
             return response.json()[0].get('race_date')
@@ -6916,7 +6916,7 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
         headers = get_supabase_headers(use_secret=True)
         
         # 获取当前记录数
-        count_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=id"
+        count_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=id"
         count_response = requests.get(count_url, headers=headers)
         
         if count_response.status_code != 200:
@@ -6930,7 +6930,7 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
             return result
         
         # 获取需要保留的最新记录 ID
-        keep_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?order=race_date.desc&limit={keep_count}&select=id"
+        keep_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?order=race_date.desc&limit={keep_count}&select=id"
         keep_response = requests.get(keep_url, headers=headers)
         
         if keep_response.status_code != 200:
@@ -6941,7 +6941,7 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
         # 删除不在保留列表中的记录
         for record_id in all_ids:
             if str(record_id) not in keep_ids:
-                delete_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?id=eq.{record_id}"
+                delete_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?id=eq.{record_id}"
                 delete_response = requests.delete(delete_url, headers=headers)
                 if delete_response.status_code in [200, 204]:
                     result["deleted"] += 1
@@ -7015,11 +7015,11 @@ def get_official_race_dates_from_hkjc() -> List[str]:
 
 #----------------
 def get_db_latest_race_date() -> Optional[str]:
-    """从 past_performances_V2
+    """从 past_performances_v2
     表获取最新的赛事日期"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?order=race_date.desc&limit=1&select=race_date"
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?order=race_date.desc&limit=1&select=race_date"
         response = requests.get(url, headers=headers)
         if response.status_code == 200 and response.json():
             return response.json()[0].get('race_date')
@@ -7031,7 +7031,7 @@ def get_db_latest_race_date() -> Optional[str]:
 
 def save_race_results_batch(results: List[Dict]) -> bool:
     """
-    批量保存一场赛事的全部结果到 past_performances_V2 表
+    批量保存一场赛事的全部结果到 past_performances_v2 表
     使用 upsert 避免重复
     """
     if not results:
@@ -7042,7 +7042,7 @@ def save_race_results_batch(results: List[Dict]) -> bool:
         
         # 构建 upsert 请求（如果有重复则更新）
         response = requests.post(
-            f"{SUPABASE_URL}/rest/v1/past_performances_V2",
+            f"{SUPABASE_URL}/rest/v1/past_performances_v2",
             headers={
                 **headers,
                 "Prefer": "resolution=merge-duplicates"  # 关键：重复时更新
@@ -7150,11 +7150,11 @@ def get_all_race_dates(start_year: int = 2025, end_year: int = None) -> List[str
 
 
 def get_db_latest_race_date() -> Optional[str]:
-    """从 past_performances_V2
+    """从 past_performances_v2
     表获取最新的赛事日期"""
     try:
         headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?order=race_date.desc&limit=1&select=race_date"
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?order=race_date.desc&limit=1&select=race_date"
         response = requests.get(url, headers=headers)
         if response.status_code == 200 and response.json():
             return response.json()[0].get('race_date')
@@ -7166,7 +7166,7 @@ def get_db_latest_race_date() -> Optional[str]:
 
 def save_race_results_batch(results: List[Dict]) -> bool:
     """
-    批量保存一场赛事的全部结果到 past_performances_V2 表
+    批量保存一场赛事的全部结果到 past_performances_v2 表
     """
     if not results:
         return True
@@ -7191,7 +7191,7 @@ def save_race_results_batch(results: List[Dict]) -> bool:
         
         # 批量 upsert
         response = requests.post(
-            f"{SUPABASE_URL}/rest/v1/past_performances_V2",
+            f"{SUPABASE_URL}/rest/v1/past_performances_v2",
             headers={
                 **headers,
                 "Prefer": "resolution=merge-duplicates"
@@ -7365,7 +7365,7 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
         headers = get_supabase_headers(use_secret=True)
         
         # 获取当前记录数
-        count_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?select=id"
+        count_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=id"
         count_response = requests.get(count_url, headers=headers)
         
         if count_response.status_code != 200:
@@ -7379,7 +7379,7 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
             return result
         
         # 获取需要保留的最新记录 ID
-        keep_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?order=race_date.desc&limit={keep_count}&select=id"
+        keep_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?order=race_date.desc&limit={keep_count}&select=id"
         keep_response = requests.get(keep_url, headers=headers)
         
         if keep_response.status_code != 200:
@@ -7390,7 +7390,7 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
         # 删除不在保留列表中的记录
         for record_id in all_ids:
             if str(record_id) not in keep_ids:
-                delete_url = f"{SUPABASE_URL}/rest/v1/past_performances_V2?id=eq.{record_id}"
+                delete_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?id=eq.{record_id}"
                 delete_response = requests.delete(delete_url, headers=headers)
                 if delete_response.status_code in [200, 204]:
                     result["deleted"] += 1
