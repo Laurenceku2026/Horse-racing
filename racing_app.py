@@ -2696,7 +2696,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                         "actual_weight": runner.get('actual_weight'),
                         "jockey_name": runner.get('jockey_name'),
                         "odds_win": odds_win,
-                        "finishing_position": None,  # 未来赛事还没有结果
+                        "finishing_position": None,
                         "trainer": runner.get('trainer_name'),
                         "rating": runner.get('rating'),
                     })
@@ -2716,10 +2716,10 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                 data = response.json()
                 result = []
                 for p in data:
-                    # 安全获取赔率
-                    odds_win_raw = p.get('odds')
+                    # 安全获取赔率（注意：表中字段名是 odds，不是 odds_win）
+                    odds_raw = p.get('odds')
                     try:
-                        odds_win = float(odds_win_raw) if odds_win_raw else None
+                        odds_win = float(odds_raw) if odds_raw else None
                     except (ValueError, TypeError):
                         odds_win = None
                     
@@ -2755,6 +2755,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                 print(f"从 past_performances_v2 获取到 {len(result)} 匹马 (历史赛事)")
                 return result
             else:
+                print(f"past_performances_v2 中无数据: {race_date} {venue} 第{race_no}场")
                 return []
         
     except Exception as e:
