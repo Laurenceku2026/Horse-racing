@@ -1971,10 +1971,26 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
     try:
         headers = get_supabase_headers(use_secret=True)
         
-        # 1. 获取马名映射（horse_id -> 中文名）
+        # ==================== 1. 获取马匹基本信息（从 horses_v2）====================
+        horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=*"
+        horses_response = requests.get(horses_url, headers=headers)
         
+        horse_info = {}
+        if horses_response.status_code == 200:
+            for h in horses_response.json():
+                horse_id = h.get('horse_id')
+                if horse_id:
+                    horse_info[horse_id] = {
+                        'name_zh': h.get('name_zh', ''),
+                        'name_en': h.get('name_en', ''),
+                        'sex': h.get('sex', '-'),
+                        'birth_year': h.get('birth_year')
+                    }
+        else:
+            st.error(f"获取马匹信息失败: {horses_response.status_code}")
+            return pd.DataFrame()
         
-        # 2. 获取所有成绩记录，按 horse_id 分组
+        # ==================== 2. 获取所有成绩记录 ====================
         perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=horse_id,position,body_weight,race_date&limit=50000"
         perf_response = requests.get(perf_url, headers=headers)
         
@@ -1988,7 +2004,7 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             st.info("暂无成绩数据")
             return pd.DataFrame()
         
-        # 按 horse_id 分组
+        # ==================== 3. 按 horse_id 分组 ====================
         from collections import defaultdict
         horse_records = defaultdict(list)
         
@@ -2002,10 +2018,10 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 "race_date": p.get("race_date")
             })
         
-        # 获取语言设置
-        current_lang = st.session_state.get("lang", "zh")
-        
+        # ==================== 4. 计算每匹马的评分 ====================
+        current_year = datetime.now().year
         results = []
+        
         for horse_id, records in horse_records.items():
             # 按日期排序（最新的在前）
             records.sort(key=lambda x: x.get("race_date", ""), reverse=True)
@@ -2020,52 +2036,81 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             if total < 3:
                 continue
             
+            # 计算胜率、入Q率、入T率
             wins = sum(1 for r in selected if r.get("position") == 1)
             places = sum(1 for r in selected if r.get("position") in [1, 2])
             shows = sum(1 for r in selected if r.get("position") in [1, 2, 3])
+            
+            win_rate = wins / total * 100
+            place_rate = places / total * 100
+            show_rate = shows / total * 100
+            
+            # 基础评分公式
+            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
             
             # 体重平均值
             weights = [r.get("body_weight") for r in selected if r.get("body_weight")]
             avg_weight = sum(weights) / len(weights) if weights else 0
             
-            win_rate = wins / total * 100
-            place_rate = places / total * 100
-            show_rate = shows / total * 100
-            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
+            # 获取马匹信息
+            info = horse_info.get(horse_id, {})
+            name_zh = info.get('name_zh', horse_id)
+            name_en = info.get('name_en', '')
+            sex = info.get('sex', '-')
+            birth_year = info.get('birth_year')
             
-            # 获取马名（根据语言）
-            horse_name = horse_id  # 临时使用 horse_id，后续可优化
+            # 计算实时年龄
+            age = '-'
+            if birth_year and isinstance(birth_year, int):
+                age_val = current_year - birth_year
+                age = age_val if 2 <= age_val <= 12 else '-'
             
             results.append({
-                "馬名": horse_name,
-                "勝率": round(win_rate, 1),
-                "入Q率": round(place_rate, 1),
-                "入T率": round(show_rate, 1),
-                "基礎評分": round(basic_score, 1),
-                "平均體重": round(avg_weight, 0)
+                "horse_id": horse_id,
+                "name_zh": name_zh,
+                "name_en": name_en,
+                "sex": sex,
+                "age": age,
+                "avg_weight": round(avg_weight, 0) if avg_weight > 0 else '-',
+                "win_rate": round(win_rate, 1),
+                "place_rate": round(place_rate, 1),
+                "show_rate": round(show_rate, 1),
+                "basic_score": round(basic_score, 1)
             })
         
         # 按评分排序
-        results.sort(key=lambda x: x["基礎評分"], reverse=True)
+        results.sort(key=lambda x: x["basic_score"], reverse=True)
         
+        # 创建 DataFrame
         df = pd.DataFrame(results[:limit])
         
         if df.empty:
             return df
         
-        # 添加性别和年龄列（暂时为空）
-        df["性別"] = "-"
-        df["年齡"] = "-"
+        # 重命名列（用于显示）
+        df_display = df.rename(columns={
+            "horse_id": "Horse_ID",
+            "name_zh": "馬名(中)",
+            "name_en": "馬名(英)",
+            "sex": "性別",
+            "age": "年齡",
+            "avg_weight": "平均體重",
+            "win_rate": "勝率",
+            "place_rate": "入Q率",
+            "show_rate": "入T率",
+            "basic_score": "基礎評分"
+        })
+        
+        # 格式化百分比
+        df_display["勝率"] = df_display["勝率"].apply(lambda x: f"{x:.1f}%")
+        df_display["入Q率"] = df_display["入Q率"].apply(lambda x: f"{x:.1f}%")
+        df_display["入T率"] = df_display["入T率"].apply(lambda x: f"{x:.1f}%")
         
         # 调整列顺序
-        df = df[["馬名", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "基礎評分"]]
+        column_order = ["Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "基礎評分"]
+        df_display = df_display[[c for c in column_order if c in df_display.columns]]
         
-        # 格式化百分比显示
-        df["勝率"] = df["勝率"].apply(lambda x: f"{x:.1f}%")
-        df["入Q率"] = df["入Q率"].apply(lambda x: f"{x:.1f}%")
-        df["入T率"] = df["入T率"].apply(lambda x: f"{x:.1f}%")
-        
-        return df
+        return df_display
         
     except Exception as e:
         st.error(f"获取马匹评分失败: {e}")
@@ -2083,10 +2128,12 @@ def render_horse_rating_table(df: pd.DataFrame):
         use_container_width=True,
         hide_index=True,
         column_config={
-            "馬名": st.column_config.TextColumn("馬名", width="medium"),
+            "Horse_ID": st.column_config.TextColumn("Horse_ID", width="small"),
+            "馬名(中)": st.column_config.TextColumn("馬名(中)", width="medium"),
+            "馬名(英)": st.column_config.TextColumn("馬名(英)", width="medium"),
             "性別": st.column_config.TextColumn("性別", width="small"),
-            "年齡": st.column_config.NumberColumn("年齡", width="small"),
-            "平均體重": st.column_config.NumberColumn("平均體重", width="small", format="%.0f"),
+            "年齡": st.column_config.TextColumn("年齡", width="small"),
+            "平均體重": st.column_config.TextColumn("平均體重", width="small"),
             "勝率": st.column_config.TextColumn("勝率", width="small"),
             "入Q率": st.column_config.TextColumn("入Q率", width="small"),
             "入T率": st.column_config.TextColumn("入T率", width="small"),
