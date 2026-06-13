@@ -7535,31 +7535,27 @@ def update_all_data_for_date(race_date: str, show_progress: bool = True) -> Dict
         return {"success": 0, "failed": result.get("total", 0), "total": result.get("total", 0), "error": str(e)}
 #---------------
 def sync_future_races(days: int = 14) -> Dict:
-    """同步未来 N 天的所有赛事（带进度条）"""
+    """从数据库获取未来赛事（不再调用API）"""
     results = {"success": 0, "failed": 0, "total": 0}
     
-    # 创建进度条
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i in range(days):
-        sync_date = (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
-        status_text.text(f"正在同步 {sync_date}...")
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        future_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
         
-        # 传入 show_progress=False
-        result = update_all_data_for_date(sync_date, show_progress=False)
-        results["success"] += result.get("success", 0)
-        results["failed"] += result.get("failed", 0)
-        results["total"] += result.get("total", 0)
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{future_date}&order=race_date.asc,race_no.asc"
+        response = requests.get(url, headers=headers)
         
-        # 更新进度条
-        progress_bar.progress((i + 1) / days)
-        time.sleep(0.5)
-    
-    progress_bar.empty()
-    status_text.empty()
-    
-    return results
+        if response.status_code == 200:
+            races = response.json()
+            results["success"] = len(races)
+            results["total"] = len(races)
+            return results
+        else:
+            return results
+    except Exception as e:
+        print(f"获取未来赛事失败: {e}")
+        return results
 # ==================== 第2次代码结束 ====================
 # 注意：没有 if __name__ == "__main__"，因为主入口在第1次代码中
 
