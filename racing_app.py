@@ -3379,17 +3379,18 @@ def render_smart_betting(show_title: bool = True):
     perf_log["runners数量"] = len(runners)
     #--------
     # 计算胜率
+    # 计算胜率
     if model_choice == "评分系统":
-        print("1. 进入评分系统分支")
         with st.spinner("正在計算馬匹勝率（評分系統）..."):
-            print("2. 开始调用 get_cached_race_scores")
-            scores, probabilities = get_cached_race_scores(
+            # 直接调用评分引擎，跳过缓存
+            from scoring_engine import calculate_race_scores
+            scores, probabilities = calculate_race_scores(
+                supabase,
                 selected_race.get('race_date'),
+                selected_race.get('venue'),
                 selected_race.get('race_no'),
-                selected_race.get('venue')
+                runners
             )
-            print(f"3. scores 长度: {len(scores) if scores else 0}")
-            print(f"4. probabilities 长度: {len(probabilities) if probabilities else 0}")
         
         t3 = time.time()  # ← 添加这一行！
         perf_log["计算胜率"] = t3 - t2  # ← 添加这一行！
