@@ -2662,17 +2662,14 @@ def precompute_all_races_for_date(race_date: str, venue: str = None, user_weight
 def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
     """
     获取赛事出赛马匹详情
-    
-    数据源策略：
-    - 如果 race_date >= 今天：从 race_runners_clean 获取（Node.js API 实时数据）
-    - 如果 race_date < 今天：从 past_performances_v2 获取（历史数据）
+    优先从 race_runners_clean 获取未来赛事，如果没有则回退到历史数据
     """
     today = datetime.now().strftime("%Y-%m-%d")
     
     try:
         headers = get_supabase_headers(use_secret=True)
         
-        # ==================== 未来赛事：从 race_runners_clean 获取 ====================
+        # ==================== 尝试从 race_runners_clean 获取 ====================
         if race_date >= today:
             url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
             response = requests.get(url, headers=headers)
@@ -2681,11 +2678,10 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                 runners = response.json()
                 result = []
                 for runner in runners:
-                    # 安全获取赔率
                     odds_win_raw = runner.get('odds_win')
                     try:
                         odds_win = float(odds_win_raw) if odds_win_raw else None
-                    except (ValueError, TypeError):
+                    except:
                         odds_win = None
                     
                     result.append({
@@ -2701,35 +2697,27 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                         "rating": runner.get('rating'),
                     })
                 
-                print(f"从 race_runners_clean 获取到 {len(result)} 匹马 (未来赛事)")
+                print(f"从 race_runners_clean 获取到 {len(result)} 匹马")
                 return result
-            else:
-                print(f"race_runners_clean 中无数据: {race_date} {venue} 第{race_no}场")
-                return []
         
-        # ==================== 历史赛事：从 past_performances_v2 获取 ====================
-        else:
-            url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&order=position.asc&limit=100"
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code == 200 and response.json():
-                data = response.json()
+        # ==================== 回退：从 past_performances_v2 获取历史数据 ====================
+        # 使用最近一次同场次的历史数据作为参考
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?venue=eq.{venue}&race_no=eq.{race_no}&order=race_date.desc&limit=100"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200 and response.json():
+            data = response.json()
+            # 按日期分组，取最新一天的数据
+            latest_date = data[0].get('race_date') if data else None
+            if latest_date:
+                latest_data = [p for p in data if p.get('race_date') == latest_date]
                 result = []
-                for p in data:
-                    # 安全获取赔率（注意：表中字段名是 odds，不是 odds_win）
+                for p in latest_data:
                     odds_raw = p.get('odds')
                     try:
                         odds_win = float(odds_raw) if odds_raw else None
-                    except (ValueError, TypeError):
+                    except:
                         odds_win = None
-                    
-                    # 安全获取体重
-                    body_weight = p.get('body_weight')
-                    if body_weight:
-                        try:
-                            body_weight = int(body_weight)
-                        except (ValueError, TypeError):
-                            body_weight = None
                     
                     result.append({
                         "horse_id": p.get('horse_id'),
@@ -2741,22 +2729,17 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                         "odds_win": odds_win,
                         "finishing_position": p.get('position'),
                         "trainer": p.get('trainer'),
-                        "body_weight": body_weight,
-                        "lbw_raw": p.get('lbw_raw'),
-                        "running_position": p.get('running_position'),
+                        "body_weight": p.get('body_weight'),
                         "closing_profile": p.get('closing_profile'),
                         "incident": p.get('incident', ''),
                         "distance": p.get('distance'),
                         "venue": p.get('venue'),
-                        "race_class": p.get('race_class'),
-                        "going": p.get('going'),
                     })
                 
-                print(f"从 past_performances_v2 获取到 {len(result)} 匹马 (历史赛事)")
+                print(f"回退：从 past_performances_v2 获取到 {len(result)} 匹马（参考 {latest_date} 数据）")
                 return result
-            else:
-                print(f"past_performances_v2 中无数据: {race_date} {venue} 第{race_no}场")
-                return []
+        
+        return []
         
     except Exception as e:
         print(f"获取出赛马匹失败: {e}")
