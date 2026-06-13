@@ -3380,20 +3380,22 @@ def render_smart_betting(show_title: bool = True):
     #--------
     # 计算胜率
     if model_choice == "评分系统":
-        # ⭐ 使用缓存（首次计算，后续直接读取）
+        print("1. 进入评分系统分支")
         with st.spinner("正在計算馬匹勝率（評分系統）..."):
+            print("2. 开始调用 get_cached_race_scores")
             scores, probabilities = get_cached_race_scores(
                 selected_race.get('race_date'),
                 selected_race.get('race_no'),
                 selected_race.get('venue')
             )
-        t3 = time.time()
-        perf_log["计算胜率"] = t3 - t2
+            print(f"3. scores 长度: {len(scores) if scores else 0}")
+            print(f"4. probabilities 长度: {len(probabilities) if probabilities else 0}")
         
         for i, runner in enumerate(runners):
             if i < len(scores):
                 runner['overall_score'] = scores[i].get('combined_score', 0)
                 runner['win_probability'] = scores[i].get('win_probability', 0) / 100
+                print(f"5. 马号 {runner.get('horse_no')}: 评分={runner['overall_score']}, 胜率={runner['win_probability']}")
     else:
         model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
         with st.spinner(f"正在計算馬匹勝率（{model_choice}）..."):
