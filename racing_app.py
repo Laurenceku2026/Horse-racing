@@ -29,7 +29,11 @@ from scoring_engine import (
     analyze_incident,
     LEVEL1_WEIGHTS
 )
-
+try:
+    from scoring_engine import calculate_basic_score
+    print("✅ scoring_engine 导入成功")
+except ImportError as e:
+    print(f"❌ scoring_engine 导入失败: {e}")
 # ==================== 页面配置 ====================
 st.set_page_config(
     page_title="香港赛马AI分析系统",
@@ -3168,6 +3172,7 @@ def get_cached_race_scores(race_date: str, race_no: int, venue: str) -> Tuple[Li
     - 后续调用直接返回缓存结果
     - 缓存有效期 1 小时
     """
+    print(f"=== get_cached_race_scores 被调用: {race_date} {venue} R{race_no} ===")
     try:
         headers = get_supabase_headers(use_secret=True)
         
@@ -6605,6 +6610,7 @@ def calculate_all_horses_scores(
     runners: List[Dict],
     user_weights: Dict
 ) -> Tuple[List[Dict], List[float]]:
+     print(f"=== calculate_all_horses_scores_v2 被调用，runners数量: {len(runners)} ===")
     """
     计算一场赛事所有马匹的评分和胜率（优化版）
     - 批量获取所有马匹的往绩（1次请求）
