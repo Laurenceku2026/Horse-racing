@@ -3391,6 +3391,9 @@ def render_smart_betting(show_title: bool = True):
             print(f"3. scores 长度: {len(scores) if scores else 0}")
             print(f"4. probabilities 长度: {len(probabilities) if probabilities else 0}")
         
+        t3 = time.time()  # ← 添加这一行！
+        perf_log["计算胜率"] = t3 - t2  # ← 添加这一行！
+        
         for i, runner in enumerate(runners):
             if i < len(scores):
                 runner['overall_score'] = scores[i].get('combined_score', 0)
