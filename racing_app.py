@@ -2480,7 +2480,7 @@ def calculate_all_horses_scores_v2(runners: List[Dict], user_weights: Dict) -> T
         # 获取本场参数
         draw = runner.get("draw")
         actual_weight = runner.get("actual_weight")
-        jockey = runner.get("jockey_name')
+        jockey = runner.get('jockey_name')
         trainer = runner.get("trainer")
         body_weight = runner.get("body_weight")
         closing_profile = runner.get("closing_profile", 'Even')
