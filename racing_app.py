@@ -3492,11 +3492,11 @@ def render_smart_betting(show_title: bool = True):
     #------------
     # 显示表格
     st.markdown(f"#### 🏇 第{selected_race.get('race_no')}場 出賽馬匹")
-    
+
     race_data = []
     for runner in sorted_runners:
-        horse_id = runner.get('horse_id')
-        horse_name = r.get('horse_name', '')
+        # 修复：使用 runner 而不是未定义的 r
+        horse_name = runner.get('horse_name', '')
         
         # 安全处理赔率
         odds_win_raw = runner.get('odds_win')
@@ -3512,6 +3512,13 @@ def render_smart_betting(show_title: bool = True):
         except (ValueError, TypeError):
             odds_place_display = "-"
         
+        # 安全处理胜率和评分
+        win_prob = runner.get('win_probability', 0)
+        win_prob_display = f"{win_prob*100:.1f}%" if win_prob else "0%"
+        
+        overall_score = runner.get('overall_score', 0)
+        overall_score_display = f"{overall_score:.0f}" if overall_score else "0"
+        
         race_data.append({
             "馬號": runner.get('horse_no', '-'),
             "馬名": horse_name,
@@ -3520,11 +3527,16 @@ def render_smart_betting(show_title: bool = True):
             "騎師": runner.get('jockey_name', '-'),
             "獨贏": odds_win_display,
             "位置": odds_place_display,
-            "勝率": f"{runner.get('win_probability', 0)*100:.1f}%",
-            "綜合評分": f"{runner.get('overall_score', 0):.0f}"
+            "勝率": win_prob_display,
+            "綜合評分": overall_score_display
         })
     
-    st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
+    # 只有当有数据时才显示表格
+    if race_data:
+        st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
+    else:
+        st.warning("暫無出賽馬匹數據")
+    
     t5 = time.time()
     perf_log["显示表格"] = t5 - t4
     # 最后输出性能报告
