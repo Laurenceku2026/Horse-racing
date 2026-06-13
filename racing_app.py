@@ -6610,14 +6610,15 @@ def calculate_all_horses_scores(
     runners: List[Dict],
     user_weights: Dict
 ) -> Tuple[List[Dict], List[float]]:
-     print(f"=== calculate_all_horses_scores_v2 被调用，runners数量: {len(runners)} ===")
-    """
-    计算一场赛事所有马匹的评分和胜率（优化版）
+    """计算一场赛事所有马匹的评分和胜率（优化版）
     - 批量获取所有马匹的往绩（1次请求）
     - 从缓存读取，避免 N+1 查询
     """
+    print(f"=== calculate_all_horses_scores 被调用，runners数量: {len(runners)} ===")
+    
     if not runners:
         return [], []
+    # ... 其余代码
     
     # ==================== 第1步：批量获取所有马匹的往绩 ====================
     # 收集所有 horse_id
