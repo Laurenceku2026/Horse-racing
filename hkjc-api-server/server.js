@@ -282,18 +282,33 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
             const horseNameZh = runner.name_ch || '';
             
             let winOdds = null;
-            if (oddsData && oddsData.WIN) {
-                const horseOdds = oddsData.WIN.find(o => o.horseNo === horseNo);
-                if (horseOdds) {
-                    winOdds = horseOdds.odds;
-                }
-            }
-            
             let placeOdds = null;
-            if (oddsData && oddsData.PLA) {
-                const horseOdds = oddsData.PLA.find(o => o.horseNo === horseNo);
-                if (horseOdds) {
-                    placeOdds = horseOdds.odds;
+            
+            // oddsData 是一个数组，需要根据 oddsType 查找
+            if (oddsData && Array.isArray(oddsData)) {
+                // 查找 WIN 赔率
+                const winData = oddsData.find(o => o.oddsType === 'WIN');
+                if (winData && winData.oddsNodes) {
+                    for (const node of winData.oddsNodes) {
+                        // combString 格式是 "04"（带前导零），需要转换为整数比较
+                        const nodeHorseNo = parseInt(node.combString, 10);
+                        if (nodeHorseNo === horseNo) {
+                            winOdds = parseFloat(node.oddsValue);
+                            break;
+                        }
+                    }
+                }
+                
+                // 查找 PLA 赔率
+                const plaData = oddsData.find(o => o.oddsType === 'PLA');
+                if (plaData && plaData.oddsNodes) {
+                    for (const node of plaData.oddsNodes) {
+                        const nodeHorseNo = parseInt(node.combString, 10);
+                        if (nodeHorseNo === horseNo) {
+                            placeOdds = parseFloat(node.oddsValue);
+                            break;
+                        }
+                    }
                 }
             }
             
