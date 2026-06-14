@@ -3476,54 +3476,6 @@ def render_smart_betting(show_title: bool = True):
         t4 = time.time()
         perf_log["策略引擎"] = t4 - t3
         
-        # ==================== 显示AI投注建议 ====================
-        st.markdown("#### 💡 AI 投注策略建议")
-        st.caption("基于AI评分和赔率计算的期望值(EV)推荐")
-        
-        # 创建三列显示建议
-        col1, col2, col3 = st.columns(3)
-        
-        # 独赢建议 (低风险)
-        with col1:
-            st.markdown("**🎯 低风险 - 獨贏/位置**")
-            if recommendations['win']:
-                rec = recommendations['win'][0]
-                st.info(f"**{rec.description}**")
-                st.write(f"賠率: {rec.odds}倍")
-                st.write(f"預期ROI: {rec.roi:+.1f}%")
-                st.caption(f"💡 {rec.reason}")
-            elif recommendations['place']:
-                rec = recommendations['place'][0]
-                st.info(f"**{rec.description}**")
-                st.write(f"賠率: {rec.odds}倍")
-                st.write(f"預期ROI: {rec.roi:+.1f}%")
-                st.caption(f"💡 {rec.reason}")
-            else:
-                st.write("暂无建议")
-        
-        # 连赢建议 (中风险)
-        with col2:
-            st.markdown("**🎯 中风险 - 連贏**")
-            if recommendations['qin']:
-                rec = recommendations['qin'][0]
-                st.warning(f"**{rec.description}**")
-                st.write(f"賠率: {rec.odds}倍")
-                st.write(f"預期ROI: {rec.roi:+.1f}%")
-                st.caption(f"💡 {rec.reason}")
-            else:
-                st.write("暂无建议")
-        
-        # 单T建议 (高风险)
-        with col3:
-            st.markdown("**🎯 高风险 - 單T**")
-            if recommendations['tri']:
-                rec = recommendations['tri'][0]
-                st.error(f"**{rec.description}**")
-                st.write(f"賠率: {rec.odds}倍")
-                st.write(f"預期ROI: {rec.roi:+.1f}%")
-                st.caption(f"💡 {rec.reason}")
-            else:
-                st.write("暂无建议")
     #------------
     # 显示表格
     st.markdown(f"#### 🏇 第{selected_race.get('race_no')}場 出賽馬匹")
