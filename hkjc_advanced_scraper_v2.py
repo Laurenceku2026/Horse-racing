@@ -305,34 +305,17 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
         jockey = cols[3].get_text(strip=True)
         trainer = cols[4].get_text(strip=True)
         
-        # 负磅
-        actual_weight = None
-        weight_str = cols[5].get_text(strip=True)
-        if weight_str.isdigit():
-            actual_weight = int(weight_str)
+        actual_weight = int(cols[5].get_text(strip=True)) if cols[5].get_text(strip=True).isdigit() else None
+        body_weight = int(cols[6].get_text(strip=True)) if cols[6].get_text(strip=True).isdigit() else None
+        draw = int(cols[7].get_text(strip=True)) if cols[7].get_text(strip=True).isdigit() else None
         
-        # 体重
-        body_weight = None
-        body_str = cols[6].get_text(strip=True)
-        if body_str.isdigit():
-            body_weight = int(body_str)
-        
-        # 档位
-        draw = None
-        draw_str = cols[7].get_text(strip=True)
-        if draw_str.isdigit():
-            draw = int(draw_str)
-        
-        # 头马距离
         lbw_raw = cols[8].get_text(strip=True)
         if not lbw_raw or lbw_raw == '---':
             lbw_raw = '---'
         
-        # 沿途走位
         running_position = cols[9].get_text(strip=True) if len(cols) > 9 else ''
-        
-        # 完成时间
         finish_time_raw = cols[10].get_text(strip=True) if len(cols) > 10 else ''
+        
         finish_seconds = None
         if finish_time_raw and ':' in finish_time_raw:
             parts = finish_time_raw.split(':')
@@ -340,7 +323,6 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
             seconds = float(parts[1])
             finish_seconds = minutes * 60 + seconds
         
-        # 赔率
         odds = None
         odds_str = cols[11].get_text(strip=True) if len(cols) > 11 else ''
         try:
@@ -348,7 +330,6 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
         except:
             odds = None
         
-        # 计算 closing_profile
         closing_profile = calculate_closing_profile(running_position)
         
         results.append({
@@ -358,8 +339,8 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
             'position': int(position_str),
             'horse_no': horse_no,
             'horse_name': horse_name,
-            'horse_name_en': '',  # 暂时留空
-            'horse_id': horse_id,  # 使用旧格式ID
+            'horse_name_en': '',
+            'horse_id': horse_id,
             'age': '',
             'sex': '',
             'jockey': jockey,
@@ -378,7 +359,7 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
             'distance': 0,
             'going': '',
             'sectional_times': '',
-            'dividends_json': ''  # 派彩数据后续从其他页面获取
+            'dividends_json': ''
         })
     
     print(f"成功解析 {len(results)} 条记录")
@@ -455,7 +436,7 @@ def extract_dividends(soup: BeautifulSoup) -> List[Dict]:
     
     return dividends
 
-
+#------------------
 def calculate_closing_profile(running_position: str) -> str:
     """计算冲刺 profile"""
     if not running_position:
@@ -538,7 +519,7 @@ def main():
                     horse_details = extract_horse_details_from_page(soup_zh, soup_en)
                     
                     # 提取赛果
-                    results = extract_race_results(soup_zh, date_str, venue, race_no, horse_details)
+                    results = extract_race_results(soup_zh, date_str, venue, race_no)
                     
                     # 提取事件报告
                     incidents = extract_incidents(soup_zh)
