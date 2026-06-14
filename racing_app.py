@@ -124,32 +124,62 @@ TEXTS = {
         "register_success": "註冊成功！請登入",
         "email_exists": "該電郵已註冊，請直接登入",
         "not_registered_for_racing": "該電郵未註冊賽馬App，請先註冊",
+        "forgot_password": "忘記密碼？",
+        "pool_single_title": "**單場彩池**",
+        "pool_win": "獨贏",
+        "pool_place": "位置",
+        "pool_qin": "連贏",
+        "pool_qpl": "位置Q",
+        "pool_tri": "單T",
+        "pool_tce": "三重彩",
+        "pool_f4": "四連環",
+        "pool_qtt": "四重彩",
+        "pool_multi_title": "**多場彩池**",
+        "pool_double": "孖寶",
+        "pool_treble": "三寶",
+        "pool_double_trio": "孖T",
+        "pool_trio": "三T",
+        "pool_six_up": "六環彩",
+        "data_source_footer": "數據: HKJC API | 支付: Stripe",
+        "home_subtitle": "基於AI技術，智能預測馬匹勝率，優化投注策略",
+        "horse_count": "馬匹總數",
+        "race_count": "賽事總數",
+        "record_count": "成績記錄總數",
+        "jockey_count": "騎師總數",
+        "trainer_count": "練馬師總數",
+        "date_range": "數據日期範圍",
+        "update_all_data": "更新所有数据",
+        "horse_rating_title": "全馬基礎評分榜",
+        "horse_rating_desc": "📌 基於最近 N 場歷史表現計算，分數越高代表整體實力越強。",
+        "calculate_games": "計算場次",
+        "display_limit": "顯示數量",
+        "all_games": "全部",
         
         # ==================== 侧边栏 ====================
         "about_header": "📘 關於系統",
         "about_text": """
-**香港賽馬AI分析系統** 基於AI技術提供：
-
-- 🏇 馬匹評分系統
-- 🎯 智能投注建議
-- 📊 全天優化策略
-- 📈 歷史回測驗證
-- 💡 AI勝率預測
-
-讓AI成為您的賽馬助手。
-""",
-        "contact_header": "📧 聯絡我們",
-        "contact_email": "✉️ 電郵: Techlife2027@gmail.com",
-        "guide_header": "📖 快速指南",
-        "guide_text": """
-1. 點擊[更新數據]獲取最新賽事
-2. 查看馬匹評分榜
-3. 進入智能投注頁生成建議
-4. 運行回測驗證策略
-
-💡 每次更新/生成消耗1次免費次數
-💎 升級專業版後無限使用
-""",
+        **香港賽馬AI分析系統** 基於AI技術提供：
+        
+        - 🏇 馬匹評分系統
+        - 🎯 智能投注建議
+        - 📊 全天優化策略
+        - 📈 歷史回測驗證
+        - 💡 AI勝率預測
+        
+        讓AI成為您的賽馬助手。
+        """,
+                "contact_header": "📧 聯絡我們",
+                "contact_email": "✉️ 電郵: Techlife2027@gmail.com",
+                "guide_header": "📖 快速指南",
+                "guide_text": """
+        1. 點擊[更新數據]獲取最新賽事
+        2. 查看馬匹評分榜
+        3. 進入智能投注頁生成建議
+        4. 運行回測驗證策略
+        
+        💡 每次更新/生成消耗1次免費次數
+        💎 升級專業版後無限使用
+        """,
         
         # ==================== 订阅 ====================
         "subscription": "訂閱",
@@ -282,6 +312,36 @@ TEXTS = {
         "register_success": "Registration successful! Please login.",
         "email_exists": "Email already registered. Please login.",
         "not_registered_for_racing": "This email is not registered for Racing App. Please sign up first.",
+        "forgot_password": "Forgot Password?",
+        "pool_single_title": "**Single Race Pools**",
+        "pool_win": "Win",
+        "pool_place": "Place",
+        "pool_qin": "Quinella",
+        "pool_qpl": "Quinella Place",
+        "pool_tri": "Trio",
+        "pool_tce": "Tierce",
+        "pool_f4": "First 4",
+        "pool_qtt": "Quartet",
+        "pool_multi_title": "**Multi-Race Pools**",
+        "pool_double": "Double",
+        "pool_treble": "Treble",
+        "pool_double_trio": "Double Trio",
+        "pool_trio": "Triple Trio",
+        "pool_six_up": "Six Up",
+        "data_source_footer": "Data: HKJC API | Payment: Stripe",
+        "home_subtitle": "AI-powered horse racing analysis, smart betting recommendations",
+        "horse_count": "Total Horses",
+        "race_count": "Total Races",
+        "record_count": "Total Records",
+        "jockey_count": "Total Jockeys",
+        "trainer_count": "Total Trainers",
+        "date_range": "Date Range",
+        "update_all_data": "Update All Data",
+        "horse_rating_title": "Horse Rating Leaderboard",
+        "horse_rating_desc": "📌 Based on recent N races performance. Higher score = stronger horse.",
+        "calculate_games": "Games",
+        "display_limit": "Display Limit",
+        "all_games": "All",
         
         # ==================== Sidebar ====================
         "about_header": "📘 About System",
@@ -1042,7 +1102,7 @@ def render_login_form():
                 st.session_state.show_register = True
                 st.rerun()
         with col2:
-            if st.button("忘記密碼？", use_container_width=True):
+            if st.button(t().get("forgot_password", "忘記密碼？"), use_container_width=True):
                 st.info(f"請聯絡管理員重置密碼：{ADMIN_EMAIL}")
 
 def render_register_form():
@@ -2074,7 +2134,7 @@ def render_sidebar():
             tier = profile.get("subscription_tier", "free")
             remaining = profile.get("free_trials_remaining", 0)
             
-            tier_display = "💎 專業版" if tier == "pro" else "🔒 免費版"
+            tier_display = "💎 " + t()["pro_tier"] if tier == "pro" else "🔒 " + t()["free_tier"]
             remaining_display = "∞" if remaining == -1 else str(remaining)
             
             st.markdown(f"""
@@ -2128,7 +2188,7 @@ def render_sidebar():
         
         st.markdown("---")
         st.caption("v1.0 | TechLife")
-        st.caption("數據: HKJC API | 支付: Stripe")
+        st.caption(t()["data_source_footer"])
 
 # ==================== 右上角按钮 ====================
 def render_top_buttons():
@@ -2355,10 +2415,10 @@ def render_home():
     """主页：数据概览 + 全马评分榜 + 智能投注 + 回测"""
     
     # ==================== 页面标题 ====================
-    st.markdown("""
+    st.markdown(f"""
     <div style="text-align: center; margin-bottom: 2rem;">
-        <h1>🐎 香港賽馬AI分析系統</h1>
-        <p style="color: #666; font-size: 1.1rem;">基於AI技術，智能預測馬匹勝率，優化投注策略</p>
+        <h1>🐎 {t()['app_title']}</h1>
+        <p style="color: #666; font-size: 1.1rem;">{t()['home_subtitle']}</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -2457,15 +2517,15 @@ def render_home():
         # 第一行：马匹、赛事、成绩、骑师、练马师（5列）
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("🐎 馬匹總數", horse_count)
+            st.metric(f"🐎 {t()['horse_count']}", horse_count)
         with col2:
-            st.metric("🏆 賽事總數", race_count)
+            st.metric(f"🏆 {t()['race_count']}", race_count)
         with col3:
-            st.metric("📊 成績記錄總數", perf_count)
+            st.metric(f"📊 {t()['record_count']}", perf_count)
         with col4:
-            st.metric("🤠 騎師總數", jockey_count)
+            st.metric(f"🤠 {t()['jockey_count']}", jockey_count)
         with col5:
-            st.metric("🏋️ 練馬師總數", trainer_count)
+            st.metric(f"🏋️ {t()['trainer_count']}", trainer_count)
         
         # 第二行：日期范围（居中）
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -2497,7 +2557,7 @@ def render_home():
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        update_btn = st.button("🔄 更新所有数据", type="primary", use_container_width=True)
+        update_btn = st.button(f"🔄 {t()['update_all_data']}", type="primary", use_container_width=True)
     
     if update_btn:
         if not consume_free_trial(st.session_state.user_id):
@@ -2514,8 +2574,8 @@ def render_home():
     st.markdown("---")
     
     # ==================== 模块2：全马基础评分榜 ====================
-    st.markdown("### 🐎 全馬基礎評分榜")
-    st.caption("📌 基於最近 N 場歷史表現計算，分數越高代表整體實力越強。")
+    st.markdown(f"### 🐎 {t()['horse_rating_title']}")
+    st.caption(t()["horse_rating_desc"])
     
     # 评分场次选择
     col1, col2 = st.columns([1, 4])
