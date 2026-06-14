@@ -3526,13 +3526,7 @@ def render_smart_betting(show_title: bool = True):
     
     t5 = time.time()
     perf_log["显示表格"] = t5 - t4
-    # 最后输出性能报告
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**⏱️ 性能报告**")
-    for step, duration in perf_log.items():
-        st.sidebar.write(f"- {step}: {duration:.2f}秒")
-    st.sidebar.write(f"**总耗时: {time.time() - t0:.2f}秒**")
-    
+        
     #------------
     # 投注建议 - 使用AI策略引擎
     st.markdown("#### 💡 AI 投注策略建议")
@@ -5707,7 +5701,7 @@ def render_backtest_page(show_title: bool = True):
     #---------------------
     # ==================== 新增：策略回测选项卡 ====================
     st.markdown("## 📊 策略回測")
-    st.caption("回測不同投注策略（獨贏、連贏）的歷史表現")
+    st.caption("基於市場賠率的期望值(EV)模型：EV = 預測勝率 × 賠率 - 1，當 EV > 門檻時觸發投注")
     
     # 策略回测参数
     col1, col2, col3, col4 = st.columns(4)
