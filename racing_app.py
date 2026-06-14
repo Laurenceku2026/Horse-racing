@@ -165,6 +165,13 @@ TEXTS = {
         "qin_insufficient_horses": "馬匹數量不足，無法推薦連贏",
         "data_source": "📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新",
         "betting_pools": "🎲 彩池玩法",
+        "race_table_title": "第{race_no}場 出賽馬匹",
+        "run_backtest": "▶️ 運行模型對比回測",
+        "select_models": "🤖 選擇要對比的模型",
+        "rating_system": "评分系统",
+        "lightgbm": "LightGBM",
+        "xgboost": "XGBoost",
+        "ensemble": "集成模型",
         
         # ==================== 侧边栏 ====================
         "about_header": "📘 關於系統",
@@ -385,6 +392,13 @@ TEXTS = {
         "qin_insufficient_horses": "Insufficient horses for quinella recommendation",
         "data_source": "📅 Data Source: HKJC | Update Frequency: Daily auto-update",
         "betting_pools": "🎲 Betting Pools",
+        "race_table_title": "Race {race_no} Runners",
+        "run_backtest": "▶️ Run Model Comparison",
+        "select_models": "🤖 Select Models to Compare",
+        "rating_system": "Rating System",
+        "lightgbm": "LightGBM",
+        "xgboost": "XGBoost",
+        "ensemble": "Ensemble",
         
         # ==================== Sidebar ====================
         "about_header": "📘 About System",
@@ -3613,7 +3627,7 @@ def render_smart_betting(show_title: bool = True):
     t0 = time.time()
     
     if show_title:
-        st.markdown("## 🎯 智能投注")
+        st.markdown(f"## {t()['smart_betting']}")
     perf_log["初始化"] = time.time() - t0    
     #-------------
     # ==================== 用户设置区域 ====================
@@ -3826,7 +3840,7 @@ def render_smart_betting(show_title: bool = True):
         
     #------------
     # 显示表格
-    st.markdown(f"#### 🏇 第{selected_race.get('race_no')}場 出賽馬匹")
+    st.markdown(f"#### 🏇 {t()['race_table_title'].format(race_no=selected_race.get('race_no'))}")
 
     race_data = []
     for runner in sorted_runners:
@@ -5847,8 +5861,8 @@ def render_backtest_page(show_title: bool = True):
         st.markdown("## 📊 回測")
     
     # ==================== 模型对比回测 ====================
-    st.markdown("## 📊 模型對比回測")
-    st.caption("選擇回測期間，比較不同模型的預測準確率和 ROI")
+    st.markdown(f"## {t()['model_comparison']}")
+    st.caption(t()["backtest_period"])
     
     # 初始化 session_state 中的日期
     if "backtest_start_date" not in st.session_state:
@@ -5860,30 +5874,30 @@ def render_backtest_page(show_title: bool = True):
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         backtest_start = st.date_input(
-            "開始日期", 
+            t()["start_date"], 
             value=st.session_state.backtest_start_date,
             key="backtest_start_date_input"
         )
     with col2:
         backtest_end = st.date_input(
-            "結束日期", 
+            t()["end_date"], 
             value=st.session_state.backtest_end_date,
             key="backtest_end_date_input"
         )
     with col3:
         st.markdown("<br>", unsafe_allow_html=True)
-        run_backtest_btn = st.button("▶️ 運行模型對比回測", type="primary", use_container_width=True)
+        run_backtest_btn = st.button(t()["run_backtest"], type="primary", use_container_width=True)
     
     # 更新 session_state
     st.session_state.backtest_start_date = backtest_start
     st.session_state.backtest_end_date = backtest_end
     
     # 模型选择复选框
-    st.markdown("**🤖 選擇要對比的模型**")
+    st.markdown(t()["select_models"])
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     
     with col_m1:
-        enable_rule = st.checkbox("评分系统", value=True, key="backtest_rule")
+        enable_rule = st.checkbox(t()["rating_system"], value=True, key="backtest_rule")
     with col_m2:
         enable_lgb = st.checkbox("LightGBM", value=False, key="backtest_lgb",
                                  disabled=not LGB_AVAILABLE,
@@ -6056,7 +6070,7 @@ def render_backtest_page(show_title: bool = True):
     st.markdown("---")
     #---------------------
     # ==================== 新增：策略回测选项卡 ====================
-    st.markdown("## 📊 策略回測")
+    st.markdown(f"## {t()['strategy_backtest']}")
     st.caption("基於市場賠率的期望值(EV)模型：EV = 預測勝率 × 賠率 - 1，當 EV > 門檻時觸發投注")
     
     # 策略回测参数
