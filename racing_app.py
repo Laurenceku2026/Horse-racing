@@ -4660,7 +4660,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             return result
         
         # 4. 获取马名缓存
-        past_performances_v2
+       # past_performances_v2
         
         # 5. 初始化统计变量
         correct_predictions = 0
@@ -4707,7 +4707,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 if not horse_id:
                     continue
                 
-                horse_name = runner.get('horse_name', '')
+                horse_name = r.get('horse_name', '')
                 
                 # 获取该马匹在 race_date 之前的往绩
                 all_past = horse_cache.get(horse_id, [])
