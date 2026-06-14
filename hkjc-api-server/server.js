@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const { HorseRacingAPI } = require('@gikndue/hkjc-api');
-const cron = require('node-cron');  // 需要先安装: npm install node-cron
+const cron = require('node-cron');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,6 +20,24 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const horseAPI = new HorseRacingAPI();
 
 // ==================== 辅助函数 ====================
+
+// 判断是否为海外赛事
+function isOverseasMeeting(meeting) {
+    const venueCode = meeting.venueCode || '';
+    // S1, S2, S3... 开头的都是海外转播赛事
+    return venueCode.startsWith('S') || venueCode === 'OS' || meeting.isOverseas === true;
+}
+
+// 获取正确的赔率 venue 代码
+function getOddsVenueCode(meeting, raceNo) {
+    const venueCode = meeting.venueCode || '';
+    // 海外赛事使用 S1, S2 等代码
+    if (venueCode.startsWith('S')) {
+        return venueCode;
+    }
+    // 本地赛事使用 ST, HV
+    return venueCode;
+}
 
 // 检查是否已存在赔率快照
 async function hasOddsSnapshot(race, horseNo, oddsType, minutesBeforeRace) {
@@ -74,7 +92,7 @@ async function saveOddsSnapshot(race, horseNo, oddsType, oddsValue, minutesToSta
     }
 }
 
-// 获取未来24小时需要采集赔率的赛事
+// 获取需要采集赔率的赛事
 async function getRacesNeedingOdds() {
     try {
         const meetings = await horseAPI.getActiveMeetings();
@@ -85,6 +103,9 @@ async function getRacesNeedingOdds() {
             const meetingDate = new Date(meeting.date);
             if ((meetingDate - now) > 24 * 60 * 60 * 1000) continue;
             
+            // 获取正确的 venue 代码
+            const venueCode = getOddsVenueCode(meeting, 0);
+            
             for (const race of meeting.races || []) {
                 const postTime = new Date(race.postTime);
                 const minutesToStart = (postTime - now) / 1000 / 60;
@@ -92,10 +113,12 @@ async function getRacesNeedingOdds() {
                 if (minutesToStart <= 180 && minutesToStart >= 0) {
                     racesToSync.push({
                         date: meeting.date,
-                        venue: meeting.venueCode,
+                        venue: venueCode,
+                        originalVenue: meeting.venueCode,
                         raceNo: race.no,
                         postTime: postTime,
-                        minutesToStart: Math.round(minutesToStart)
+                        minutesToStart: Math.round(minutesToStart),
+                        isOverseas: isOverseasMeeting(meeting)
                     });
                 }
             }
@@ -108,7 +131,7 @@ async function getRacesNeedingOdds() {
     }
 }
 
-// 判断是否应该采集该时间点的赔率
+// 判断是否应该采集
 function shouldCollectOdds(minutesBeforeRace) {
     if (minutesBeforeRace > 90) return false;
     if (minutesBeforeRace < 0) return false;
@@ -121,9 +144,9 @@ function shouldCollectOdds(minutesBeforeRace) {
     return keyMinutes.includes(minutesBeforeRace);
 }
 
-// 采集单场赛事赔率
+// 采集单场赔率
 async function collectOddsForRace(race) {
-    console.log(`[采集] ${race.date} ${race.venue} 第${race.raceNo}场 (${race.minutesToStart}分钟后开跑)`);
+    console.log(`[采集] ${race.date} ${race.venue} 第${race.raceNo}场 (${race.minutesToStart}分钟后开跑, 海外:${race.isOverseas})`);
     
     if (!shouldCollectOdds(race.minutesToStart)) {
         console.log(`[跳过] 非关键时间点: ${race.minutesToStart}分钟`);
@@ -190,9 +213,9 @@ async function collectOddsForRace(race) {
     }
 }
 
-// ==================== 核心：单场赛事同步到 Supabase（可复用）====================
-async function syncSingleRaceToSupabase(date, venue, raceNo) {
-    console.log(`[同步] ${date} ${venue} 第${raceNo}场`);
+// ==================== 核心：单场赛事同步到 Supabase ====================
+async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false) {
+    console.log(`[同步] ${date} ${venue} 第${raceNo}场 ${isOverseas ? '(海外赛事)' : '(本地赛事)'}`);
     
     try {
         // 1. 从 HKJC API 获取赛事信息
@@ -203,14 +226,16 @@ async function syncSingleRaceToSupabase(date, venue, raceNo) {
             return false;
         }
         
-        console.log(`[API返回] 距离=${raceDetails.distance}, 马匹数=${raceDetails.runners?.length}`);
+        console.log(`[API返回] 马匹数=${raceDetails.runners?.length}`);
         
-        // 2. 获取赔率
+        // 2. 获取赔率（使用正确的 venue 代码）
         let oddsData = null;
         try {
             oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(date, venue, parseInt(raceNo), ['WIN', 'PLA', 'QIN']);
             if (oddsData && oddsData.WIN) {
                 console.log(`[赔率] 获取成功，WIN赔率数量: ${oddsData.WIN.length}`);
+            } else {
+                console.log(`[赔率] 无数据`);
             }
         } catch (oddsErr) {
             console.error(`[赔率] 获取失败: ${oddsErr.message}`);
@@ -228,7 +253,8 @@ async function syncSingleRaceToSupabase(date, venue, raceNo) {
                 going: raceDetails.going || '好地',
                 race_class: raceDetails.raceClass || '',
                 total_runners: raceDetails.runners?.length || 0,
-                race_status: 'RUNNERS',
+                race_status: isOverseas ? 'OVERSEAS' : 'RUNNERS',
+                is_overseas: isOverseas,
                 updated_at: new Date().toISOString()
             }, { onConflict: 'race_date,venue,race_no' });
         
@@ -240,6 +266,7 @@ async function syncSingleRaceToSupabase(date, venue, raceNo) {
         const runners = raceDetails.runners || [];
         
         for (const runner of runners) {
+            // 关键修复：使用 runner.horse?.id 获取永久ID
             const horseId = (runner.horse && runner.horse.id) || runner.id || runner.horseId || '';
             const horseName = runner.name_en || runner.horseName || 'Unknown';
             const horseNo = parseInt(runner.no) || 0;
@@ -259,6 +286,14 @@ async function syncSingleRaceToSupabase(date, venue, raceNo) {
                 const horseOdds = oddsData.WIN.find(o => o.horseNo === horseNo);
                 if (horseOdds) {
                     winOdds = horseOdds.odds;
+                }
+            }
+            
+            let placeOdds = null;
+            if (oddsData && oddsData.PLA) {
+                const horseOdds = oddsData.PLA.find(o => o.horseNo === horseNo);
+                if (horseOdds) {
+                    placeOdds = horseOdds.odds;
                 }
             }
             
@@ -288,7 +323,8 @@ async function syncSingleRaceToSupabase(date, venue, raceNo) {
                     actual_weight: actualWeight,
                     rating: rating,
                     jockey_name: jockeyName,
-                    odds_win: winOdds
+                    odds_win: winOdds,
+                    odds_place: placeOdds
                 }, { onConflict: 'race_date,venue,race_no,horse_no' });
             
             if (runnerError) {
@@ -305,9 +341,9 @@ async function syncSingleRaceToSupabase(date, venue, raceNo) {
     }
 }
 
-// ==================== 定时任务：每天凌晨3点自动同步未来14天赛事 ====================
-cron.schedule('0 3 * * *', async () => {
-    console.log('[' + new Date().toISOString() + '] 定时任务触发：开始同步未来14天赛程...');
+// 同步未来所有赛事（本地+海外）
+async function syncAllFutureRaces() {
+    console.log(`[${new Date().toISOString()}] 开始同步未来赛事...`);
     const startTime = Date.now();
 
     try {
@@ -319,9 +355,14 @@ cron.schedule('0 3 * * *', async () => {
         let totalFailedRaces = 0;
 
         for (const meeting of futureMeetings) {
+            const isOverseas = isOverseasMeeting(meeting);
+            const venueCode = getOddsVenueCode(meeting, 0);
+            
+            console.log(`\n处理赛马日: ${meeting.date} ${venueCode} ${isOverseas ? '(海外)' : '(本地)'}`);
+            
             const races = meeting.races || [];
             for (const race of races) {
-                const success = await syncSingleRaceToSupabase(meeting.date, meeting.venueCode, race.no);
+                const success = await syncSingleRaceToSupabase(meeting.date, venueCode, race.no, isOverseas);
                 if (success) {
                     totalSyncedRaces++;
                 } else {
@@ -332,11 +373,59 @@ cron.schedule('0 3 * * *', async () => {
         }
 
         const duration = Date.now() - startTime;
-        console.log(`[定时任务] 执行完成，耗时 ${duration}ms。同步结果: 成功 ${totalSyncedRaces} 场，失败 ${totalFailedRaces} 场。`);
+        console.log(`[同步完成] 耗时 ${duration}ms。结果: 成功 ${totalSyncedRaces} 场，失败 ${totalFailedRaces} 场。`);
 
     } catch (error) {
-        console.error('[定时任务] 执行失败:', error);
+        console.error('[同步失败]', error);
     }
+}
+
+// 更新最终赔率
+async function updateFinalOdds(race) {
+    try {
+        const oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(
+            race.date, race.venue, race.raceNo, 
+            ['WIN', 'PLA', 'QIN']
+        );
+        
+        if (!oddsData) return;
+        
+        const raceDetails = await horseAPI.getRaceWithDateAndVenueCode(
+            race.date, race.venue, race.raceNo
+        );
+        
+        const runners = raceDetails?.runners || [];
+        let updatedCount = 0;
+        
+        for (const runner of runners) {
+            const horseNo = parseInt(runner.no);
+            const winOdds = oddsData.WIN?.find(o => o.horseNo === horseNo);
+            
+            if (winOdds) {
+                const { error } = await supabase
+                    .from('race_runners_clean')
+                    .upsert({
+                        race_date: race.date,
+                        race_no: race.raceNo,
+                        venue: race.venue,
+                        horse_no: horseNo,
+                        horse_name: runner.name_en || '',
+                        odds_win: winOdds.odds
+                    }, { onConflict: 'race_date,venue,race_no,horse_no' });
+                
+                if (!error) updatedCount++;
+            }
+        }
+        
+        console.log(`[最终赔率] 更新完成 ${race.date} ${race.venue} 第${race.raceNo}场, 更新 ${updatedCount} 匹马`);
+    } catch (error) {
+        console.error(`[最终赔率] 更新失败: ${error.message}`);
+    }
+}
+
+// ==================== 定时任务 ====================
+cron.schedule('0 3 * * *', async () => {
+    await syncAllFutureRaces();
 }, {
     scheduled: true,
     timezone: "Asia/Shanghai"
@@ -360,18 +449,25 @@ app.get('/api/meetings', async (req, res) => {
     }
 });
 
-// 手动触发单场同步（保留，用于调试或手动更新）
+// 手动触发单场同步（支持海外赛事）
 app.post('/api/sync/race', async (req, res) => {
-    const { date, venue, raceNo } = req.body;
-    console.log(`[手动同步] ${date} ${venue} 第${raceNo}场`);
+    const { date, venue, raceNo, isOverseas = false } = req.body;
+    console.log(`[手动同步] ${date} ${venue} 第${raceNo}场 ${isOverseas ? '(海外)' : '(本地)'}`);
     
-    const success = await syncSingleRaceToSupabase(date, venue, raceNo);
+    const success = await syncSingleRaceToSupabase(date, venue, parseInt(raceNo), isOverseas);
     
     if (success) {
         res.json({ success: true, message: `同步成功: ${date} ${venue} 第${raceNo}场` });
     } else {
         res.status(500).json({ success: false, error: '同步失败，请查看服务器日志。' });
     }
+});
+
+// 手动触发全量同步（本地+海外）
+app.post('/api/sync/all', async (req, res) => {
+    console.log('[手动同步] 触发全量同步');
+    await syncAllFutureRaces();
+    res.json({ success: true, message: '全量同步已触发' });
 });
 
 // 手动触发赔率采集
@@ -389,7 +485,7 @@ app.post('/api/collect/odds', async (req, res) => {
     res.json({ collected: results.length, details: results });
 });
 
-// 自动赔率采集（供定时任务调用）
+// 自动赔率采集
 app.post('/api/collect/auto', async (req, res) => {
     console.log('[API] 自动赔率采集');
     const races = await getRacesNeedingOdds();
@@ -433,47 +529,5 @@ app.post('/api/cleanup', async (req, res) => {
 // 启动服务器
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`HKJC API Server running on port ${PORT}`);
+    console.log(`支持本地赛事 (ST/HV) 和海外赛事 (S1/S2...)`);
 });
-
-// 更新最终赔率的辅助函数
-async function updateFinalOdds(race) {
-    try {
-        const oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(
-            race.date, race.venue, race.raceNo, 
-            ['WIN', 'PLA', 'QIN']
-        );
-        
-        if (!oddsData) return;
-        
-        const raceDetails = await horseAPI.getRaceWithDateAndVenueCode(
-            race.date, race.venue, race.raceNo
-        );
-        
-        const runners = raceDetails?.runners || [];
-        let updatedCount = 0;
-        
-        for (const runner of runners) {
-            const horseNo = parseInt(runner.no);
-            const winOdds = oddsData.WIN?.find(o => o.horseNo === horseNo);
-            
-            if (winOdds) {
-                const { error } = await supabase
-                    .from('race_runners_clean')
-                    .upsert({
-                        race_date: race.date,
-                        race_no: race.raceNo,
-                        venue: race.venue,
-                        horse_no: horseNo,
-                        horse_name: runner.name_en || '',
-                        odds_win: winOdds.odds
-                    }, { onConflict: 'race_date,venue,race_no,horse_no' });
-                
-                if (!error) updatedCount++;
-            }
-        }
-        
-        console.log(`[最终赔率] 更新完成 ${race.date} ${race.venue} 第${race.raceNo}场, 更新 ${updatedCount} 匹马`);
-    } catch (error) {
-        console.error(`[最终赔率] 更新失败: ${error.message}`);
-    }
-}
