@@ -2598,8 +2598,8 @@ def render_home():
     st.markdown("---")
     
     # ==================== 模块2：全马基础评分榜 ====================
-    st.markdown(f"### 🐎 {t()['horse_rating_title']}")
-    st.caption(t()["horse_rating_desc"])
+    st.markdown(f"### 🐎 {texts['horse_rating_title']}")
+    st.caption(texts["horse_rating_desc"])
     
     # 评分场次选择
     col1, col2 = st.columns([1, 4])
