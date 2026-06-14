@@ -154,6 +154,11 @@ TEXTS = {
         "calculate_games": "計算場次",
         "display_limit": "顯示數量",
         "all_games": "全部",
+        "data_update": "🔄 數據更新",
+        "update_all_data": "更新所有数据",
+        "checking_update": "正在检查并更新数据...",
+        "update_complete": "✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录",
+        "update_failed": "更新失败",
         
         # ==================== 侧边栏 ====================
         "about_header": "📘 關於系統",
@@ -342,6 +347,10 @@ TEXTS = {
         "calculate_games": "Games",
         "display_limit": "Display Limit",
         "all_games": "All",
+        "update_all_data": "Update All Data",
+        "checking_update": "Checking and updating data...",
+        "update_complete": "✅ Update complete! Added {new_races} races, {new_records} records",
+        "update_failed": "Update failed",
         
         # ==================== Sidebar ====================
         "about_header": "📘 About System",
@@ -2565,23 +2574,26 @@ def render_home():
     st.markdown("---")
    
     # ==================== 数据更新区域 ====================
-    st.markdown("### 🔄 數據更新")
+    st.markdown(f"### {texts.get('data_update', '🔄 數據更新')}")
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        update_btn = st.button(f"🔄 {t()['update_all_data']}", type="primary", use_container_width=True)
+        update_btn = st.button(f"🔄 {texts.get('update_all_data', '更新所有数据')}", type="primary", use_container_width=True)
     
     if update_btn:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(texts.get('free_trial_used', '免費次數已用完，請升級到專業版'))
         else:
-            with st.spinner("正在检查并更新数据..."):
+            with st.spinner(texts.get('checking_update', '正在检查并更新数据...')):
                 result = sync_all_data()
                 if result.get("success"):
-                    st.success(f"✅ 更新完成！新增 {result.get('new_races', 0)} 场赛事，{result.get('new_records', 0)} 条成绩记录")
+                    st.success(texts.get('update_complete', '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录').format(
+                        new_races=result.get('new_races', 0), 
+                        new_records=result.get('new_records', 0)
+                    ))
                     st.rerun()
                 else:
-                    st.error(f"更新失败: {result.get('error', '未知错误')}")
+                    st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
     
     st.markdown("---")
     
