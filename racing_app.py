@@ -7088,6 +7088,7 @@ def get_db_latest_race_date() -> Optional[str]:
 def save_race_results_batch(results: List[Dict]) -> bool:
     """
     批量保存一场赛事的全部结果到 past_performances_v2 表
+    并自动更新 horses_v2 表
     """
     if not results:
         return True
@@ -7095,7 +7096,7 @@ def save_race_results_batch(results: List[Dict]) -> bool:
     try:
         headers = get_supabase_headers(use_secret=True)
         
-        # 清理每条记录，确保字段名与 past_performances_v2 表匹配
+        # 1. 清理每条记录，确保字段名与 past_performances_v2 表匹配
         clean_results = []
         for record in results:
             clean_record = {}
@@ -7108,10 +7109,10 @@ def save_race_results_batch(results: List[Dict]) -> bool:
                 'position': 'position',
                 'horse_no': 'horse_no',
                 'horse_name': 'horse_name',
-                'horse_name_en': 'horse_name_en',  # 新字段
-                'horse_id': 'horse_id',             # 新字段
-                'age': 'age',                       # 新字段
-                'sex': 'sex',                       # 新字段
+                'horse_name_en': 'horse_name_en',
+                'horse_id': 'horse_id',
+                'age': 'age',
+                'sex': 'sex',
                 'jockey': 'jockey',
                 'trainer': 'trainer',
                 'actual_weight': 'actual_weight',
@@ -7128,13 +7129,12 @@ def save_race_results_batch(results: List[Dict]) -> bool:
                 'distance': 'distance',
                 'going': 'going',
                 'sectional_times': 'sectional_times',
-                'dividends_json': 'dividends_json'  # 新字段
+                'dividends_json': 'dividends_json'
             }
             
             for old_key, new_key in field_mapping.items():
                 if old_key in record:
                     value = record[old_key]
-                    # 处理空值
                     if value is None or value == '':
                         clean_record[new_key] = None
                     else:
@@ -7142,7 +7142,7 @@ def save_race_results_batch(results: List[Dict]) -> bool:
             
             clean_results.append(clean_record)
         
-        # 批量 upsert
+        # 批量 upsert 到 past_performances_v2
         response = requests.post(
             f"{SUPABASE_URL}/rest/v1/past_performances_v2",
             headers={
@@ -7152,13 +7152,45 @@ def save_race_results_batch(results: List[Dict]) -> bool:
             json=clean_results
         )
         
-        if response.status_code in [200, 201]:
-            print(f"批量保存成功: {len(results)} 条记录")
-            return True
-        else:
-            print(f"批量保存失败: {response.status_code} - {response.text}")
+        if response.status_code not in [200, 201]:
+            print(f"保存成绩失败: {response.text}")
             return False
+        
+        # 2. 提取新马匹并更新 horses_v2
+        new_horses = []
+        for record in results:
+            horse_id = record.get('horse_id')
+            horse_name = record.get('horse_name')
+            horse_name_en = record.get('horse_name_en', '')
+            sex = record.get('sex', '')
             
+            if not horse_id or not horse_name:
+                continue
+            
+            import re
+            birth_year = None
+            match = re.search(r'HK_(\d{4})_', horse_id)
+            if match:
+                arrival_year = int(match.group(1))
+                birth_year = arrival_year - 3
+            
+            new_horses.append({
+                'horse_id': horse_id,
+                'name_zh': horse_name,
+                'name_en': horse_name_en,
+                'sex': sex,
+                'birth_year': birth_year
+            })
+        
+        # 去重并插入 horses_v2（跳过已存在的）
+        if new_horses:
+            unique_horses = {h['horse_id']: h for h in new_horses}.values()
+            for horse in unique_horses:
+                supabase_request('POST', 'horses_v2', data=horse)
+        
+        print(f"批量保存成功: {len(results)} 条成绩, {len(unique_horses)} 匹马")
+        return True
+        
     except Exception as e:
         print(f"批量保存异常: {e}")
         return False
@@ -7265,52 +7297,6 @@ def get_db_latest_race_date() -> Optional[str]:
         print(f"获取数据库最新日期失败: {e}")
         return None
 
-
-def save_race_results_batch(results: List[Dict]) -> bool:
-    """
-    批量保存一场赛事的全部结果到 past_performances_v2 表
-    """
-    if not results:
-        return True
-    
-    try:
-        headers = get_supabase_headers(use_secret=True)
-        
-        # 清理每条记录
-        clean_results = []
-        for record in results:
-            clean_record = {}
-            for k, v in record.items():
-                # 跳过 id（让数据库自动生成）
-                if k == 'id':
-                    continue
-                # 处理空值
-                if v is None or v == '':
-                    clean_record[k] = None
-                else:
-                    clean_record[k] = v
-            clean_results.append(clean_record)
-        
-        # 批量 upsert
-        response = requests.post(
-            f"{SUPABASE_URL}/rest/v1/past_performances_v2",
-            headers={
-                **headers,
-                "Prefer": "resolution=merge-duplicates"
-            },
-            json=clean_results
-        )
-        
-        if response.status_code in [200, 201]:
-            print(f"批量保存成功: {len(results)} 条记录")
-            return True
-        else:
-            print(f"批量保存失败: {response.status_code} - {response.text}")
-            return False
-            
-    except Exception as e:
-        print(f"批量保存异常: {e}")
-        return False
 #----------------
 def sync_all_data() -> Dict:
     """
