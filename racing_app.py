@@ -108,6 +108,7 @@ SIGNAL_LEVELS = {
 # 多语言文本（繁体中文 + 英文）
 TEXTS = {
     "zh": {
+        # ==================== 基础 ====================
         "app_title": "🐎 香港赛马AI分析系统",
         "login": "登入",
         "register": "註冊",
@@ -123,6 +124,8 @@ TEXTS = {
         "register_success": "註冊成功！請登入",
         "email_exists": "該電郵已註冊，請直接登入",
         "not_registered_for_racing": "該電郵未註冊賽馬App，請先註冊",
+        
+        # ==================== 侧边栏 ====================
         "about_header": "📘 關於系統",
         "about_text": """
 **香港賽馬AI分析系統** 基於AI技術提供：
@@ -147,6 +150,8 @@ TEXTS = {
 💡 每次更新/生成消耗1次免費次數
 💎 升級專業版後無限使用
 """,
+        
+        # ==================== 订阅 ====================
         "subscription": "訂閱",
         "free_tier": "免費版",
         "pro_tier": "專業版",
@@ -156,15 +161,112 @@ TEXTS = {
         "monthly": "月付 $29/月",
         "quarterly": "季付 $79/季",
         "save_info": "季付更划算",
+        
+        # ==================== 语言 ====================
         "chinese": "中文",
         "english": "English",
+        
+        # ==================== 管理员 ====================
         "admin_panel": "管理員面板",
         "total_users": "總用戶數",
         "pro_users": "專業版用戶",
         "free_users": "免費版用戶",
-        "user_list": "用戶列表"
+        "user_list": "用戶列表",
+        
+        # ==================== 智能投注页面 ====================
+        "smart_betting": "🎯 智能投注",
+        "betting_settings": "⚙️ 投注設置",
+        "betting_budget": "💰 投注預算 (HKD)",
+        "risk_preference": "📊 風險偏好",
+        "conservative": "保守",
+        "standard": "標準",
+        "aggressive": "進取",
+        "ai_model": "🤖 AI 模型",
+        "rating_weights": "📐 評分權重",
+        "basic_weight": "基礎:30%",
+        "race_weight": "場次:40%",
+        "odds_weight": "賠率:30%",
+        "temperature": "溫度:0.8",
+        "odds_mix": "賠率混合比:0.6",
+        "select_race_day": "📅 選擇賽日",
+        "refresh_schedule": "🔄 刷新賽程",
+        "no_races": "📌 未來14天暫無賽事，請點擊「刷新賽程」同步最新賽程",
+        "total_races": "📋 共 {count} 場賽事",
+        "single_race_analysis": "📊 單場分析",
+        "select_race": "選擇場次",
+        "refresh_race_data": "🔄 更新本場數據",
+        "no_runners": "暫無出賽馬匹數據，請點擊「更新本場數據」同步",
+        
+        # ==================== AI 建议 ====================
+        "ai_strategy_suggestions": "💡 AI 投注策略建議",
+        "ev_description": "基于AI评分和赔率计算的期望值(EV)推荐",
+        "low_risk": "🎯 低風險 - 獨贏/位置",
+        "medium_risk": "🎯 中風險 - 連贏",
+        "high_risk": "🎯 高風險 - 單T",
+        "no_suggestions": "暂无建议",
+        "qin_recommendation": "🔗 連贏推薦",
+        
+        # ==================== 过关推荐 ====================
+        "parlay_recommendation": "🎲 过关投注推荐",
+        "select_parlay_races": "选择要过关的场次",
+        "select_2_6_races": "选择2-6场比赛（按顺序）",
+        "selected_races_count": "已选择 {count} 场比赛",
+        "generate_parlay": "🎲 生成过关推荐",
+        "best_parlay": "🏆 最佳推荐",
+        
+        # ==================== 全天优化 ====================
+        "full_day_optimization": "🌟 全天優化投注",
+        "kelly_description": "基於凱利公式 + 風險管理，自動分配全天投注策略",
+        "generate_full_day": "🚀 生成全天投注策略",
+        "parlay_generation": "🔗 過關組合推薦",
+        "parlay_description": "基於各場信心馬匹，推薦2串1、3串1過關組合",
+        "generate_parlay_combo": "🎲 生成過關組合",
+        
+        # ==================== 表格列名 ====================
+        "horse_name": "馬名",
+        "horse_no": "馬號",
+        "draw": "檔位",
+        "actual_weight": "負磅",
+        "jockey": "騎師",
+        "win_odds": "獨贏",
+        "place_odds": "位置",
+        "win_rate": "勝率",
+        "overall_score": "綜合評分",
+        "ev": "期望值",
+        "no_data": "暫無出賽馬匹數據",
+        
+        # ==================== 回测页面 ====================
+        "backtest": "📊 回測",
+        "model_comparison": "📊 模型對比回測",
+        "backtest_period": "選擇回測期間，比較不同模型的預測準確率和 ROI",
+        "start_date": "開始日期",
+        "end_date": "結束日期",
+        "run_backtest": "▶️ 運行模型對比回測",
+        "strategy_backtest": "📊 策略回測",
+        "strategy_backtest_desc": "基於市場賠率的期望值(EV)模型：EV = 預測勝率 × 賠率 - 1，當 EV > 門檻時觸發投注",
+        "win_strategy": "獨贏策略",
+        "qin_strategy": "連贏策略",
+        "min_ev_threshold": "最小期望值門檻",
+        "run_strategy_backtest": "▶️ 運行策略回測",
+        "backtest_result_invalid": "回測結果無效或無投注記錄",
+        "disclaimer_backtest": "📌 回測結果基於歷史數據，不構成投資建議",
+        
+        # ==================== 消息提示 ====================
+        "upgrade_pro": "💎 升級專業版",
+        "free_trial_used": "免費次數已用完，請升級到專業版",
+        "data_updated": "數據已更新",
+        "update_failed": "更新失敗",
+        "syncing_schedule": "正在同步最新賽程...",
+        "sync_complete": "同步完成！成功 {success} 场，失败 {failed} 场",
+        "updating_odds": "正在更新最新賠率和出賽馬匹...",
+        "calculating_win_rate": "正在計算馬匹勝率（評分系統）...",
+        "calculating_ml": "正在計算馬匹勝率（{model}）...",
+        "betting_records": "📋 我的投注記錄",
+        "disclaimer": "⚠️ 本建議基於AI模型預測，不保證實際收益。請理性投注，切勿超出預算。",
+        "data_source": "📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新"
     },
     "en": {
+        # ==================== Basic ====================
         "app_title": "🐎 HK Horse Racing AI System",
         "login": "Login",
         "register": "Register",
@@ -180,6 +282,8 @@ TEXTS = {
         "register_success": "Registration successful! Please login.",
         "email_exists": "Email already registered. Please login.",
         "not_registered_for_racing": "This email is not registered for Racing App. Please sign up first.",
+        
+        # ==================== Sidebar ====================
         "about_header": "📘 About System",
         "about_text": """
 **HK Horse Racing AI System** powered by AI:
@@ -204,6 +308,8 @@ Let AI be your racing assistant.
 💡 Each refresh uses 1 free trial
 💎 Upgrade to Pro for unlimited access
 """,
+        
+        # ==================== Subscription ====================
         "subscription": "Subscription",
         "free_tier": "Free",
         "pro_tier": "Pro",
@@ -213,13 +319,109 @@ Let AI be your racing assistant.
         "monthly": "Monthly $29/mo",
         "quarterly": "Quarterly $79/quarter",
         "save_info": "Save with quarterly",
+        
+        # ==================== Language ====================
         "chinese": "中文",
         "english": "English",
+        
+        # ==================== Admin ====================
         "admin_panel": "Admin Panel",
         "total_users": "Total Users",
         "pro_users": "Pro Users",
         "free_users": "Free Users",
-        "user_list": "User List"
+        "user_list": "User List",
+        
+        # ==================== Smart Betting Page ====================
+        "smart_betting": "🎯 Smart Betting",
+        "betting_settings": "⚙️ Betting Settings",
+        "betting_budget": "💰 Budget (HKD)",
+        "risk_preference": "📊 Risk Preference",
+        "conservative": "Conservative",
+        "standard": "Standard",
+        "aggressive": "Aggressive",
+        "ai_model": "🤖 AI Model",
+        "rating_weights": "📐 Rating Weights",
+        "basic_weight": "Basic:30%",
+        "race_weight": "Race:40%",
+        "odds_weight": "Odds:30%",
+        "temperature": "Temp:0.8",
+        "odds_mix": "Odds Mix:0.6",
+        "select_race_day": "📅 Select Race Day",
+        "refresh_schedule": "🔄 Refresh Schedule",
+        "no_races": "📌 No races in the next 14 days. Click 'Refresh Schedule' to sync.",
+        "total_races": "📋 Total {count} races",
+        "single_race_analysis": "📊 Single Race Analysis",
+        "select_race": "Select Race",
+        "refresh_race_data": "🔄 Refresh Race Data",
+        "no_runners": "No runner data available. Click 'Refresh Race Data' to sync.",
+        
+        # ==================== AI Suggestions ====================
+        "ai_strategy_suggestions": "💡 AI Betting Strategy",
+        "ev_description": "Expected Value (EV) based on AI rating and odds",
+        "low_risk": "🎯 Low Risk - Win/Place",
+        "medium_risk": "🎯 Medium Risk - Quinella",
+        "high_risk": "🎯 High Risk - Trio",
+        "no_suggestions": "No suggestions",
+        "qin_recommendation": "🔗 Quinella Recommendation",
+        
+        # ==================== Parlay Recommendation ====================
+        "parlay_recommendation": "🎲 Parlay Recommendation",
+        "select_parlay_races": "Select races for parlay",
+        "select_2_6_races": "Select 2-6 races (in order)",
+        "selected_races_count": "Selected {count} races",
+        "generate_parlay": "🎲 Generate Parlay",
+        "best_parlay": "🏆 Best Parlay",
+        
+        # ==================== Full Day Optimization ====================
+        "full_day_optimization": "🌟 Full Day Optimization",
+        "kelly_description": "Kelly Criterion + Risk Management",
+        "generate_full_day": "🚀 Generate Full Day Strategy",
+        "parlay_generation": "🔗 Parlay Generation",
+        "parlay_description": "Recommend 2x1, 3x1 parlays based on confident horses",
+        "generate_parlay_combo": "🎲 Generate Parlay",
+        
+        # ==================== Table Columns ====================
+        "horse_name": "Horse",
+        "horse_no": "No.",
+        "draw": "Draw",
+        "actual_weight": "Weight",
+        "jockey": "Jockey",
+        "win_odds": "Win",
+        "place_odds": "Place",
+        "win_rate": "Win Rate",
+        "overall_score": "Score",
+        "ev": "EV",
+        "no_data": "No runner data",
+        
+        # ==================== Backtest Page ====================
+        "backtest": "📊 Backtest",
+        "model_comparison": "📊 Model Comparison",
+        "backtest_period": "Select backtest period to compare model accuracy and ROI",
+        "start_date": "Start Date",
+        "end_date": "End Date",
+        "run_backtest": "▶️ Run Model Comparison",
+        "strategy_backtest": "📊 Strategy Backtest",
+        "strategy_backtest_desc": "EV = Predicted Win Rate × Odds - 1. Bet when EV > threshold.",
+        "win_strategy": "Win Strategy",
+        "qin_strategy": "Quinella Strategy",
+        "min_ev_threshold": "Min EV Threshold",
+        "run_strategy_backtest": "▶️ Run Strategy Backtest",
+        "backtest_result_invalid": "Invalid backtest result or no betting records",
+        "disclaimer_backtest": "📌 Backtest results are based on historical data and do not guarantee future performance.",
+        
+        # ==================== Messages ====================
+        "upgrade_pro": "💎 Upgrade to Pro",
+        "free_trial_used": "Free trials exhausted. Please upgrade to Pro.",
+        "data_updated": "Data updated",
+        "update_failed": "Update failed",
+        "syncing_schedule": "Syncing schedule...",
+        "sync_complete": "Sync complete! Success: {success}, Failed: {failed}",
+        "updating_odds": "Updating odds and runners...",
+        "calculating_win_rate": "Calculating win rate (Rating System)...",
+        "calculating_ml": "Calculating win rate ({model})...",
+        "betting_records": "📋 My Betting Records",
+        "disclaimer": "⚠️ Predictions are for reference only. Bet responsibly.",
+        "data_source": "📅 Data Source: HKJC | Update Frequency: Race day auto-update"
     }
 }
 
@@ -3271,15 +3473,16 @@ def render_smart_betting(show_title: bool = True):
     if show_title:
         st.markdown("## 🎯 智能投注")
     perf_log["初始化"] = time.time() - t0    
+    #-------------
     # ==================== 用户设置区域 ====================
-    with st.expander("⚙️ 投注設置", expanded=True):
+    with st.expander(t()["betting_settings"], expanded=True):
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             profile = get_user_profile(st.session_state.user_id)
             default_bankroll = profile.get('default_bankroll', 1000)
             bankroll = st.number_input(
-                "💰 投注預算 (HKD)",
+                t()["betting_budget"],
                 min_value=100,
                 max_value=100000,
                 value=int(default_bankroll),
@@ -3289,9 +3492,13 @@ def render_smart_betting(show_title: bool = True):
         
         with col2:
             risk_preference = st.selectbox(
-                "📊 風險偏好",
+                t()["risk_preference"],
                 options=["conservative", "standard", "aggressive"],
-                format_func=lambda x: {"conservative": "保守", "standard": "標準", "aggressive": "進取"}.get(x, "標準"),
+                format_func=lambda x: {
+                    "conservative": t()["conservative"], 
+                    "standard": t()["standard"], 
+                    "aggressive": t()["aggressive"]
+                }.get(x, t()["standard"]),
                 key="risk_preference"
             )
             risk_multiplier = {
@@ -3302,46 +3509,46 @@ def render_smart_betting(show_title: bool = True):
         
         with col3:
             model_choice = st.selectbox(
-                "🤖 AI 模型",
+                t()["ai_model"],
                 options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
                 index=0,
                 key="ml_model_choice",
                 help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
             )
-            # st.write(f"调试: model_choice = '{model_choice}'")
+        
         with col4:
-            st.markdown("**📐 評分權重**")
-            st.caption("基礎:30% | 場次:40% | 賠率:30%")
-            st.caption("溫度:0.8 | 賠率混合比:0.6")
+            st.markdown(f"**{t()['rating_weights']}**")
+            st.caption(f"{t()['basic_weight']} | {t()['race_weight']} | {t()['odds_weight']}")
+            st.caption(f"{t()['temperature']} | {t()['odds_mix']}")
     
     st.markdown("---")
     
-        
+    #-------    
     # ==================== 选择赛日 ====================
-    st.markdown("### 📅 選擇賽日")
+    st.markdown(f"### {t()['select_race_day']}")
     t1 = time.time()
     perf_log["选择赛日"] = t1 - t0
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        refresh_schedule_btn = st.button("🔄 刷新賽程", use_container_width=True)
+        refresh_schedule_btn = st.button(t()["refresh_schedule"], use_container_width=True)
     
     if refresh_schedule_btn:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
-            with st.spinner("正在同步最新賽程..."):
+            with st.spinner(t()["syncing_schedule"]):
                 result = sync_future_races(days=14)
                 if result.get("total", 0) > 0:
-                    st.success(f"同步完成！成功 {result.get('success', 0)} 场，失败 {result.get('failed', 0)} 场")
+                    st.success(t()["sync_complete"].format(success=result.get('success', 0), failed=result.get('failed', 0)))
                     st.rerun()
                 else:
-                    st.info("未来14天暂无赛事")
+                    st.info(t()["no_races"])
     #-----------------
     upcoming_races = get_cached_upcoming_races()
     
     if not upcoming_races:
-        st.info("📌 未來14天暫無賽事，請點擊「刷新賽程」同步最新賽程")
+        st.info(t()["no_races"])
         return
     
     dates = sorted(set([r.get('race_date') for r in upcoming_races]))
@@ -3353,9 +3560,9 @@ def render_smart_betting(show_title: bool = True):
     races = [r for r in upcoming_races if r.get('race_date') == selected_date]
     st.markdown(f"**📋 共 {len(races)} 場賽事**")
     st.markdown("---")
-    
+    #-------------
     # ==================== 单场分析 ====================
-    st.markdown("### 📊 單場分析")
+    st.markdown(f"### {t()['single_race_analysis']}")
     
     race_options = []
     for r in races:
@@ -3363,32 +3570,32 @@ def render_smart_betting(show_title: bool = True):
         race_class = r.get('race_class', '')
         race_options.append(f"第{r.get('race_no')}場 - {distance}米 ({race_class})")
     
-    selected_idx = st.selectbox("選擇場次", range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
+    selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     selected_race = races[selected_idx]
     
     col1, col2 = st.columns([1, 4])
     with col1:
-        refresh_race_btn = st.button("🔄 更新本場數據", key="refresh_race")
+        refresh_race_btn = st.button(t()["refresh_race_data"], key="refresh_race")
     
     if refresh_race_btn:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
-            with st.spinner("正在更新最新賠率和出賽馬匹..."):
+            with st.spinner(t()["updating_odds"]):
                 if sync_single_race(selected_race):
-                    st.success("數據已更新")
+                    st.success(t()["data_updated"])
                     st.rerun()
                 else:
-                    st.warning("更新失敗")
+                    st.warning(t()["update_failed"])
     
     runners = get_race_runners_with_details(
         selected_race.get('race_date'),
         selected_race.get('venue'),
         selected_race.get('race_no')
     )
-    
+    #------
     if not runners:
-        st.warning("暫無出賽馬匹數據，請點擊「更新本場數據」同步")
+        st.warning(t()["no_runners"])
         return
     
     user_weights = {
@@ -3403,10 +3610,8 @@ def render_smart_betting(show_title: bool = True):
     perf_log["runners数量"] = len(runners)
     #--------
     # 计算胜率
-    # 计算胜率
     if model_choice == "评分系统":
-        with st.spinner("正在計算馬匹勝率（評分系統）..."):
-            # 直接调用评分引擎，跳过缓存
+        with st.spinner(t()["calculating_win_rate"]):
             from scoring_engine import calculate_race_scores
             scores, probabilities = calculate_race_scores(
                 supabase,
@@ -3424,9 +3629,10 @@ def render_smart_betting(show_title: bool = True):
                 runner['overall_score'] = scores[i].get('overall_score', 0)
                 runner['win_probability'] = scores[i].get('win_probability', 0) / 100
                 print(f"5. 马号 {runner.get('horse_no')}: 评分={runner['overall_score']}, 胜率={runner['win_probability']}")
+    #----------
     else:
         model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
-        with st.spinner(f"正在計算馬匹勝率（{model_choice}）..."):
+        with st.spinner(t()["calculating_ml"].format(model=model_choice)):
             ml_probs = get_model_predictions(selected_race.get('race_id'), runners, model_type)
         t3 = time.time()
         perf_log["计算胜率"] = t3 - t2
@@ -3482,7 +3688,6 @@ def render_smart_betting(show_title: bool = True):
 
     race_data = []
     for runner in sorted_runners:
-        # 修复：使用 runner 而不是未定义的 r
         horse_name = runner.get('horse_name', '')
         
         # 安全处理赔率
@@ -3505,42 +3710,42 @@ def render_smart_betting(show_title: bool = True):
         
         overall_score = runner.get('overall_score', 0)
         overall_score_display = f"{overall_score:.0f}" if overall_score else "0"
-        #------
+        
         # 计算 EV (期望值)
-        win_prob = runner.get('win_probability', 0)
-        odds_win = runner.get('odds_win', 0)
-        if win_prob > 0 and odds_win > 0:
-            ev = win_prob * odds_win - 1
+        win_prob_val = runner.get('win_probability', 0)
+        odds_win_val = runner.get('odds_win', 0)
+        if win_prob_val > 0 and odds_win_val > 0:
+            ev = win_prob_val * odds_win_val - 1
             ev_display = f"{ev:+.2f}"
         else:
             ev_display = "-"
         
         race_data.append({
-            "馬號": runner.get('horse_no', '-'),
-            "馬名": horse_name,
-            "檔位": runner.get('draw', '-'),
-            "負磅": runner.get('actual_weight', '-'),
-            "騎師": runner.get('jockey_name', '-'),
-            "獨贏": odds_win_display,
-            "位置": odds_place_display,
-            "勝率": f"{win_prob*100:.1f}%",
-            "綜合評分": f"{runner.get('overall_score', 0):.0f}",
-            "期望值": ev_display
+            t()["horse_no"]: runner.get('horse_no', '-'),
+            t()["horse_name"]: horse_name,
+            t()["draw"]: runner.get('draw', '-'),
+            t()["actual_weight"]: runner.get('actual_weight', '-'),
+            t()["jockey"]: runner.get('jockey_name', '-'),
+            t()["win_odds"]: odds_win_display,
+            t()["place_odds"]: odds_place_display,
+            t()["win_rate"]: win_prob_display,
+            t()["overall_score"]: overall_score_display,
+            t()["ev"]: ev_display
         })
     
     # 只有当有数据时才显示表格
     if race_data:
         st.dataframe(pd.DataFrame(race_data), use_container_width=True, hide_index=True)
     else:
-        st.warning("暫無出賽馬匹數據")
+        st.warning(t()["no_data"])
     
     t5 = time.time()
     perf_log["显示表格"] = t5 - t4
         
     #------------
     # 投注建议 - 使用AI策略引擎
-    st.markdown("#### 💡 AI 投注策略建议")
-    st.caption("基于AI评分和赔率计算的期望值(EV)推荐")
+    st.markdown(f"#### {t()['ai_strategy_suggestions']}")
+    st.caption(t()["ev_description"])
     
     # 准备策略引擎所需数据
     scores = [runner.get('overall_score', 50) for runner in sorted_runners]
@@ -3579,49 +3784,48 @@ def render_smart_betting(show_title: bool = True):
     
     # 低风险 - 独赢/位置
     with col1:
-        st.markdown("**🎯 低风险 - 獨贏/位置**")
+        st.markdown(f"**{t()['low_risk']}**")
         if recommendations.get('win') and recommendations['win']:
             rec = recommendations['win'][0]
             st.info(f"**{rec.description}**")
-            st.write(f"賠率: {rec.odds}倍")
+            st.write(f"{t()['win_odds']}: {rec.odds}倍")
             st.write(f"預期ROI: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
         elif recommendations.get('place') and recommendations['place']:
             rec = recommendations['place'][0]
             st.info(f"**{rec.description}**")
-            st.write(f"賠率: {rec.odds}倍")
+            st.write(f"{t()['place_odds']}: {rec.odds}倍")
             st.write(f"預期ROI: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
         else:
-            st.write("暂无建议")
+            st.write(t()["no_suggestions"])
     
     # 中风险 - 连赢
     with col2:
-        st.markdown("**🎯 中风险 - 連贏**")
+        st.markdown(f"**{t()['medium_risk']}**")
         if recommendations.get('qin') and recommendations['qin']:
             rec = recommendations['qin'][0]
             st.warning(f"**{rec.description}**")
-            st.write(f"賠率: {rec.odds}倍")
+            st.write(f"{t()['win_odds']}: {rec.odds}倍")
             st.write(f"預期ROI: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
         else:
-            st.write("暂无建议")
+            st.write(t()["no_suggestions"])
     
     # 高风险 - 单T
-    # 高风险 - 单T
     with col3:
-        st.markdown("**🎯 高风险 - 單T**")
+        st.markdown(f"**{t()['high_risk']}**")
         if recommendations.get('tri') and recommendations['tri']:
             rec = recommendations['tri'][0]
             st.error(f"**{rec.description}**")
-            st.write(f"賠率: {rec.odds}倍")
+            st.write(f"{t()['win_odds']}: {rec.odds}倍")
             st.write(f"預期ROI: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
         else:
-            st.write("暂无建议")
+            st.write(t()["no_suggestions"])
     
     # ==================== 连赢推荐（追加）====================
-    st.markdown("#### 🔗 連贏推薦")
+    st.markdown(f"#### {t()['qin_recommendation']}")
     
     if len(sorted_runners) >= 2:
         # 获取前两名高胜率马的组合
@@ -3654,7 +3858,7 @@ def render_smart_betting(show_title: bool = True):
             
             if joint_prob * estimated_qin_odds > 1:
                 suggested_stake = bankroll * 0.05 * risk_multiplier
-                st.success(f"**{horse1_name} + {horse2_name}** | 連贏賠率: {estimated_qin_odds:.1f} | 聯合概率: {joint_prob*100:.1f}% | 建議注額: HK${suggested_stake:.0f}")
+                st.success(f"**{horse1_name} + {horse2_name}** | {t()['win_odds']}: {estimated_qin_odds:.1f} | 聯合概率: {joint_prob*100:.1f}% | 建議注額: HK${suggested_stake:.0f}")
             else:
                 st.info(f"連贏組合 {horse1_name} + {horse2_name} 期望值不足，暫不推薦")
         else:
@@ -3665,8 +3869,8 @@ def render_smart_betting(show_title: bool = True):
     st.markdown("---")
     
     # ==================== 新增：过关投注推荐器 ====================
-    st.markdown("## 🎲 过关投注推荐")
-    st.caption("选择多场赛事，AI推荐最佳过关组合")
+    st.markdown(f"## {t()['parlay_recommendation']}")
+    st.caption(t()["parlay_description"])
     
     # 获取当前赛日的所有赛事（用于过关推荐）
     current_races_for_parlay = races  # races 是前面定义的当前赛日所有赛事
@@ -3744,7 +3948,7 @@ def render_smart_betting(show_title: bool = True):
             
             if len(parlay_races_data) >= 2:
                 # 运行过关推荐
-                if st.button("🎲 生成过关推荐", key="generate_parlay_recommendations", use_container_width=True):
+                if st.button(t()["generate_parlay"], key="generate_parlay_recommendations", use_container_width=True):
                     if not consume_free_trial(st.session_state.user_id):
                         st.warning("免費次數已用完，請升級到專業版")
                     else:
@@ -3828,10 +4032,10 @@ def render_smart_betting(show_title: bool = True):
     st.markdown("---")
     
     # ==================== 全天优化投注 ====================
-    st.markdown("### 🌟 全天優化投注")
-    st.caption("基於凱利公式 + 風險管理，自動分配全天投注策略")
+    st.markdown(f"### {t()['full_day_optimization']}")
+    st.caption(t()["kelly_description"])
     
-    if st.button("🚀 生成全天投注策略", key="generate_full_day", use_container_width=True, type="primary"):
+    if st.button(t()["generate_full_day"], key="generate_full_day", use_container_width=True, type="primary"):
         with st.spinner("正在計算全天投注策略..."):
             all_bets = []
             total_stake = 0
@@ -3909,10 +4113,10 @@ def render_smart_betting(show_title: bool = True):
     st.markdown("---")
     
     # ==================== 过关组合推荐 ====================
-    st.markdown("### 🔗 過關組合推薦")
-    st.caption("基於各場信心馬匹，推薦2串1、3串1過關組合")
+    st.markdown(f"### {t()['parlay_generation']}")
+    st.caption(t()["parlay_description"])
     
-    if st.button("🎲 生成過關組合", key="generate_parlay", use_container_width=True):
+    if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True):
         with st.spinner("正在計算過關組合..."):
             confidence_horses = []
             
@@ -3977,7 +4181,7 @@ def render_smart_betting(show_title: bool = True):
                 st.info("暫無符合條件的過關組合")
     
     st.markdown("---")
-    st.caption("⚠️ 本建議基於AI模型預測，不保證實際收益。請理性投注，切勿超出預算。")
+    st.caption(t()["disclaimer"])
 
 def sync_single_race(race: Dict) -> bool:
     """同步单场赛事的最新数据（赔率、出赛马匹）"""
