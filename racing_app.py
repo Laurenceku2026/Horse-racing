@@ -2209,25 +2209,25 @@ def render_sidebar():
         
         # ==================== 新增：彩池玩法 ====================
         with st.expander(t()["betting_pools"], expanded=False):
-        st.markdown(f"""
-        {t()['pool_single_title']}
-        | {t()['pool_win']} | {t()['pool_rule_win']} | {t()['pool_condition_win']} |
-        |------|------|----------|
-        | {t()['pool_place']} | {t()['pool_rule_place']} | {t()['pool_condition_place']} |
-        | {t()['pool_qin']} | {t()['pool_rule_qin']} | {t()['pool_condition_qin']} |
-        | {t()['pool_qpl']} | {t()['pool_rule_qpl']} | {t()['pool_condition_qpl']} |
-        | {t()['pool_tri']} | {t()['pool_rule_tri']} | {t()['pool_condition_tri']} |
-        | {t()['pool_tce']} | {t()['pool_rule_tce']} | {t()['pool_condition_tce']} |
-        | {t()['pool_f4']} | {t()['pool_rule_f4']} | {t()['pool_condition_f4']} |
-        | {t()['pool_qtt']} | {t()['pool_rule_qtt']} | {t()['pool_condition_qtt']} |
-        
-        {t()['pool_multi_title']}
-        | {t()['pool_double']} | {t()['pool_rule_double']} | {t()['pool_condition_double']} |
-        | {t()['pool_treble']} | {t()['pool_rule_treble']} | {t()['pool_condition_treble']} |
-        | {t()['pool_double_trio']} | {t()['pool_rule_double_trio']} | {t()['pool_condition_double_trio']} |
-        | {t()['pool_trio']} | {t()['pool_rule_trio']} | {t()['pool_condition_trio']} |
-        | {t()['pool_six_up']} | {t()['pool_rule_six_up']} | {t()['pool_condition_six_up']} |
-        """)
+            st.markdown(f"""
+            {t()['pool_single_title']}
+            | {t()['pool_win']} | {t()['pool_rule_win']} | {t()['pool_condition_win']} |
+            |------|------|----------|
+            | {t()['pool_place']} | {t()['pool_rule_place']} | {t()['pool_condition_place']} |
+            | {t()['pool_qin']} | {t()['pool_rule_qin']} | {t()['pool_condition_qin']} |
+            | {t()['pool_qpl']} | {t()['pool_rule_qpl']} | {t()['pool_condition_qpl']} |
+            | {t()['pool_tri']} | {t()['pool_rule_tri']} | {t()['pool_condition_tri']} |
+            | {t()['pool_tce']} | {t()['pool_rule_tce']} | {t()['pool_condition_tce']} |
+            | {t()['pool_f4']} | {t()['pool_rule_f4']} | {t()['pool_condition_f4']} |
+            | {t()['pool_qtt']} | {t()['pool_rule_qtt']} | {t()['pool_condition_qtt']} |
+            
+            {t()['pool_multi_title']}
+            | {t()['pool_double']} | {t()['pool_rule_double']} | {t()['pool_condition_double']} |
+            | {t()['pool_treble']} | {t()['pool_rule_treble']} | {t()['pool_condition_treble']} |
+            | {t()['pool_double_trio']} | {t()['pool_rule_double_trio']} | {t()['pool_condition_double_trio']} |
+            | {t()['pool_trio']} | {t()['pool_rule_trio']} | {t()['pool_condition_trio']} |
+            | {t()['pool_six_up']} | {t()['pool_rule_six_up']} | {t()['pool_condition_six_up']} |
+            """)
         
         with st.expander(t()["contact_header"], expanded=False):
             st.markdown(t()["contact_email"])
