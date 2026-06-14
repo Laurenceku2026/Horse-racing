@@ -3397,7 +3397,7 @@ def render_smart_betting(show_title: bool = True):
         
         for i, runner in enumerate(runners):
             if i < len(scores):
-                runner['overall_score'] = scores[i].get('combined_score', 0)
+                runner['overall_score'] = scores[i].get('overall_score', 0)
                 runner['win_probability'] = scores[i].get('win_probability', 0) / 100
                 print(f"5. 马号 {runner.get('horse_no')}: 评分={runner['overall_score']}, 胜率={runner['win_probability']}")
     else:
@@ -3730,7 +3730,7 @@ def render_smart_betting(show_title: bool = True):
                         scores, _ = calculate_all_horses_scores_v2(runners_data, user_weights)
                         for i, runner in enumerate(runners_data):
                             if i < len(scores):
-                                runner['overall_score'] = scores[i].get('combined_score', 0)
+                                runner['overall_score'] = scores[i].get('overall_score', 0)
                                 runner['win_probability'] = scores[i].get('win_probability', 0) / 100
                     else:
                         model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
