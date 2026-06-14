@@ -3943,19 +3943,28 @@ def render_smart_betting(show_title: bool = True):
             parlay_results = []
             
             # 2串1
+            # 2串1
             for i in range(len(confidence_horses)):
                 for j in range(i+1, len(confidence_horses)):
                     h1, h2 = confidence_horses[i], confidence_horses[j]
-                    joint_prob = h1['probability'] * h2['probability']
-                    combined_odds = h1['odds'] * h2['odds']
+                    
+                    prob1 = h1.get('probability', 0) or 0
+                    prob2 = h2.get('probability', 0) or 0
+                    odds1 = h1.get('odds', 0) or 0
+                    odds2 = h2.get('odds', 0) or 0
+                    
+                    joint_prob = prob1 * prob2
+                    combined_odds = odds1 * odds2 if odds1 > 0 and odds2 > 0 else 0
+                    
                     if joint_prob * combined_odds > 1 and combined_odds > 0:
+                        suggested_stake = bankroll * 0.05 * risk_multiplier
                         parlay_results.append({
                             "組合": "2串1",
                             "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
                             "馬匹": f"{h1['horse_name']} + {h2['horse_name']}",
                             "組合賠率": f"{combined_odds:.1f}",
                             "聯合概率": f"{joint_prob*100:.1f}%",
-                            "建議注額": f"HK${bankroll * 0.05 * risk_multiplier:.0f}"
+                            "建議注額": f"HK${suggested_stake:.0f}"
                         })
             
             if parlay_results:
@@ -4160,42 +4169,53 @@ def sync_single_race(race: Dict) -> bool:
             parlay_results = []
             
             # 2串1
+            # 2串1
             for i in range(len(confidence_horses)):
                 for j in range(i+1, len(confidence_horses)):
-                    horse1 = confidence_horses[i]
-                    horse2 = confidence_horses[j]
+                    h1, h2 = confidence_horses[i], confidence_horses[j]
                     
-                    joint_prob = horse1['probability'] * horse2['probability']
-                    combined_odds = horse1['odds'] * horse2['odds']
+                    prob1 = h1.get('probability', 0) or 0
+                    prob2 = h2.get('probability', 0) or 0
+                    odds1 = h1.get('odds', 0) or 0
+                    odds2 = h2.get('odds', 0) or 0
+                    
+                    joint_prob = prob1 * prob2
+                    combined_odds = odds1 * odds2 if odds1 > 0 and odds2 > 0 else 0
                     
                     if joint_prob * combined_odds > 1 and combined_odds > 0:
                         suggested_stake = bankroll * 0.05 * risk_multiplier
                         parlay_results.append({
                             "組合": "2串1",
-                            "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場",
-                            "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']}",
+                            "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
+                            "馬匹": f"{h1['horse_name']} + {h2['horse_name']}",
                             "組合賠率": f"{combined_odds:.1f}",
                             "聯合概率": f"{joint_prob*100:.1f}%",
                             "建議注額": f"HK${suggested_stake:.0f}"
                         })
             
             # 3串1
+            # 3串1
             for i in range(len(confidence_horses)):
                 for j in range(i+1, len(confidence_horses)):
                     for k in range(j+1, len(confidence_horses)):
-                        horse1 = confidence_horses[i]
-                        horse2 = confidence_horses[j]
-                        horse3 = confidence_horses[k]
+                        h1, h2, h3 = confidence_horses[i], confidence_horses[j], confidence_horses[k]
                         
-                        joint_prob = horse1['probability'] * horse2['probability'] * horse3['probability']
-                        combined_odds = horse1['odds'] * horse2['odds'] * horse3['odds']
+                        prob1 = h1.get('probability', 0) or 0
+                        prob2 = h2.get('probability', 0) or 0
+                        prob3 = h3.get('probability', 0) or 0
+                        odds1 = h1.get('odds', 0) or 0
+                        odds2 = h2.get('odds', 0) or 0
+                        odds3 = h3.get('odds', 0) or 0
+                        
+                        joint_prob = prob1 * prob2 * prob3
+                        combined_odds = odds1 * odds2 * odds3 if odds1 > 0 and odds2 > 0 and odds3 > 0 else 0
                         
                         if joint_prob * combined_odds > 1 and combined_odds > 0:
                             suggested_stake = bankroll * 0.03 * risk_multiplier
                             parlay_results.append({
                                 "組合": "3串1",
-                                "場次": f"第{horse1['race_no']}場 + 第{horse2['race_no']}場 + 第{horse3['race_no']}場",
-                                "馬匹": f"{horse1['horse_name']} + {horse2['horse_name']} + {horse3['horse_name']}",
+                                "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場 + 第{h3['race_no']}場",
+                                "馬匹": f"{h1['horse_name']} + {h2['horse_name']} + {h3['horse_name']}",
                                 "組合賠率": f"{combined_odds:.1f}",
                                 "聯合概率": f"{joint_prob*100:.1f}%",
                                 "建議注額": f"HK${suggested_stake:.0f}"
