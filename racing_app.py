@@ -3935,7 +3935,7 @@ def render_smart_betting(show_title: bool = True):
                 if top and top.get('win_probability', 0) >= 0.20:
                     confidence_horses.append({
                         "race_no": race.get('race_no'),
-                        "horse_name": name_cache.get(top.get('horse_id'), ''),
+                        "horse_name": top.get('horse_name', ''),
                         "probability": top.get('win_probability', 0),
                         "odds": top.get('odds_win', 0)
                     })
