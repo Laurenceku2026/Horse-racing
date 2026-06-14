@@ -159,6 +159,11 @@ TEXTS = {
         "checking_update": "正在检查并更新数据...",
         "update_complete": "✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录",
         "update_failed": "更新失败",
+        "qin_ev_insufficient": "連贏組合 {horse1} + {horse2} 期望值不足，暫不推薦",
+        "qin_recommendation": "🔗 連贏推薦",
+        "qin_no_odds": "暫無連贏賠率數據",
+        "qin_insufficient_horses": "馬匹數量不足，無法推薦連贏",
+        "data_source": "📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新",
         
         # ==================== 侧边栏 ====================
         "about_header": "📘 關於系統",
@@ -351,6 +356,33 @@ TEXTS = {
         "checking_update": "Checking and updating data...",
         "update_complete": "✅ Update complete! Added {new_races} races, {new_records} records",
         "update_failed": "Update failed",
+        "betting_pools": "🎲 Betting Pools",
+        "single_pool": "Single Race Pools",
+        "multi_pool": "Multi-Race Pools",
+        "win_pool": "Win",
+        "place_pool": "Place", 
+        "qin_pool": "Quinella",
+        "qpl_pool": "Quinella Place",
+        "tri_pool": "Trio",
+        "tce_pool": "Tierce",
+        "f4_pool": "First 4",
+        "qtt_pool": "Quartet",
+        "double_pool": "Double",
+        "treble_pool": "Treble",
+        "double_trio": "Double Trio",
+        "trio_pool": "Triple Trio",
+        "six_up": "Six Up",
+        "data_overview": "📊 Data Overview",
+        "data_update": "🔄 Data Update",
+        "smart_betting": "🎯 Smart Betting",
+        "select_race_day": "📅 Select Race Day",
+        "total_races": "📋 Total {count} races",
+        "race_table_title": "🏇 Race {race_no} Runners",
+        "qin_ev_insufficient": "Quinella {horse1} + {horse2} EV insufficient, not recommended",
+        "qin_recommendation": "🔗 Quinella Recommendation",
+        "qin_no_odds": "No quinella odds available",
+        "qin_insufficient_horses": "Insufficient horses for quinella recommendation",
+        "data_source": "📅 Data Source: HKJC | Update Frequency: Daily auto-update",
         
         # ==================== Sidebar ====================
         "about_header": "📘 About System",
@@ -2636,7 +2668,7 @@ def render_home():
     render_backtest_page(show_title=False)
     
     st.markdown("---")
-    st.caption("📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新")
+    st.caption(texts.get('data_source', '📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新'))
 
 
 # ==================== 第3次代码结束 ====================
@@ -3944,7 +3976,7 @@ def render_smart_betting(show_title: bool = True):
                 suggested_stake = bankroll * 0.05 * risk_multiplier
                 st.success(f"**{horse1_name} + {horse2_name}** | {t()['win_odds']}: {estimated_qin_odds:.1f} | 聯合概率: {joint_prob*100:.1f}% | 建議注額: HK${suggested_stake:.0f}")
             else:
-                st.info(f"連贏組合 {horse1_name} + {horse2_name} 期望值不足，暫不推薦")
+                st.info(t()["qin_ev_insufficient"].format(horse1=horse1_name, horse2=horse2_name))
         else:
             st.caption("暫無連贏賠率數據")
     else:
