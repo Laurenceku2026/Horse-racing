@@ -7429,7 +7429,7 @@ def sync_all_data() -> Dict:
         # ==================== 第5步：清理旧数据 ====================
         if total_new_records > 0:
             with st.spinner("正在清理旧数据..."):
-                cleanup_result = cleanup_old_records(keep_count=9000)
+                cleanup_result = cleanup_old_records(keep_count=20000)
                 if cleanup_result.get("deleted", 0) > 0:
                     st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
         
