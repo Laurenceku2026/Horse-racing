@@ -489,11 +489,13 @@ def t():
     """获取当前语言文本"""
     try:
         lang = st.session_state.get("lang", "zh")
-        if lang not in TEXTS:
-            lang = "zh"
-        return TEXTS[lang]
-    except Exception:
-        # 如果 session_state 还没初始化，返回中文
+        # 确保返回的是字典
+        if lang == "zh":
+            return TEXTS["zh"]
+        else:
+            return TEXTS["en"]
+    except Exception as e:
+        print(f"t() 函数错误: {e}")
         return TEXTS["zh"]
 #-------------------------
 #-------------
@@ -2420,9 +2422,9 @@ def render_horse_rating_table(df: pd.DataFrame):
 def render_home():
     """主页：数据概览 + 全马评分榜 + 智能投注 + 回测"""
     
-    # 直接获取语言，不使用 t() 函数
+    # 直接获取语言
     lang = st.session_state.get("lang", "zh")
-    texts = TEXTS[lang]
+    texts = TEXTS[lang] if lang in TEXTS else TEXTS["zh"]
     
     # ==================== 页面标题 ====================
     st.markdown(f"""
@@ -2433,7 +2435,7 @@ def render_home():
     """, unsafe_allow_html=True)
    
     # ==================== 模块1：数据概览 ====================
-    st.markdown("## 📊 數據概覽")
+    st.markdown(f"## {texts.get('data_overview', '📊 數據概覽')}")
     
     # 获取统计数据
     try:
@@ -2527,41 +2529,41 @@ def render_home():
         # 第一行：马匹、赛事、成绩、骑师、练马师（5列）
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric(f"🐎 {t()['horse_count']}", horse_count)
+            st.metric(f"🐎 {texts['horse_count']}", horse_count)
         with col2:
-            st.metric(f"🏆 {t()['race_count']}", race_count)
+            st.metric(f"🏆 {texts['race_count']}", race_count)
         with col3:
-            st.metric(f"📊 {t()['record_count']}", perf_count)
+            st.metric(f"📊 {texts['record_count']}", perf_count)
         with col4:
-            st.metric(f"🤠 {t()['jockey_count']}", jockey_count)
+            st.metric(f"🤠 {texts['jockey_count']}", jockey_count)
         with col5:
-            st.metric(f"🏋️ {t()['trainer_count']}", trainer_count)
+            st.metric(f"🏋️ {texts['trainer_count']}", trainer_count)
         
         # 第二行：日期范围（居中）
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.metric("📅 數據日期範圍", f"{oldest_date} ~ {latest_date}", help="基于历史成绩数据的日期范围")
+            st.metric(texts.get('date_range', '📅 數據日期範圍'), f"{oldest_date} ~ {latest_date}", help="基于历史成绩数据的日期范围")
             
     except Exception as e:
         st.warning(f"獲取數據統計失敗: {e}")
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("🐎 馬匹總數", "0")
+            st.metric(f"🐎 {texts.get('horse_count', '馬匹總數')}", "0")
         with col2:
-            st.metric("🏆 賽事總數", "0")
+            st.metric(f"🏆 {texts.get('race_count', '賽事總數')}", "0")
         with col3:
-            st.metric("📊 成績記錄總數", "0")
+            st.metric(f"📊 {texts.get('record_count', '成績記錄總數')}", "0")
         with col4:
-            st.metric("🤠 騎師總數", "0")
+            st.metric(f"🤠 {texts.get('jockey_count', '騎師總數')}", "0")
         with col5:
-            st.metric("🏋️ 練馬師總數", "0")
+            st.metric(f"🏋️ {texts.get('trainer_count', '練馬師總數')}", "0")
         
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.metric("📅 數據範圍", "-")
+            st.metric(texts.get('date_range', '📅 數據範圍'), "-")
     
     st.markdown("---")
-    
+   
     # ==================== 数据更新区域 ====================
     st.markdown("### 🔄 數據更新")
     
