@@ -3505,6 +3505,15 @@ def render_smart_betting(show_title: bool = True):
         
         overall_score = runner.get('overall_score', 0)
         overall_score_display = f"{overall_score:.0f}" if overall_score else "0"
+        #------
+        # 计算 EV (期望值)
+        win_prob = runner.get('win_probability', 0)
+        odds_win = runner.get('odds_win', 0)
+        if win_prob > 0 and odds_win > 0:
+            ev = win_prob * odds_win - 1
+            ev_display = f"{ev:+.2f}"
+        else:
+            ev_display = "-"
         
         race_data.append({
             "馬號": runner.get('horse_no', '-'),
@@ -3514,8 +3523,9 @@ def render_smart_betting(show_title: bool = True):
             "騎師": runner.get('jockey_name', '-'),
             "獨贏": odds_win_display,
             "位置": odds_place_display,
-            "勝率": win_prob_display,
-            "綜合評分": overall_score_display
+            "勝率": f"{win_prob*100:.1f}%",
+            "綜合評分": f"{runner.get('overall_score', 0):.0f}",
+            "期望值": ev_display
         })
     
     # 只有当有数据时才显示表格
