@@ -323,7 +323,7 @@ def calculate_same_venue_win_rate(performances: List[Dict], venue: str) -> float
     wins = sum(1 for p in same_venue if p.get('position') == 1)
     return (wins / len(same_venue)) * 100
 
-
+#--------------
 def calculate_race_score(
     performances: List[Dict],
     venue: str,
@@ -673,10 +673,15 @@ def calculate_race_scores(
         })
     
     # 计算胜率概率
+    # 计算胜率概率
     probabilities = softmax_probabilities(
         [s["overall_score"] for s in scores], 
         temperature=0.8
     )
+    
+    # 将概率赋值给每个 score
+    for i, prob in enumerate(probabilities):
+        scores[i]["win_probability"] = round(prob * 100, 2)  # 转换为百分比
     
     return scores, probabilities
 
