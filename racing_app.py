@@ -7084,11 +7084,10 @@ def get_db_latest_race_date() -> Optional[str]:
         print(f"获取数据库最新日期失败: {e}")
         return None
 
-
+#-----------------
 def save_race_results_batch(results: List[Dict]) -> bool:
     """
     批量保存一场赛事的全部结果到 past_performances_v2 表
-    使用 upsert 避免重复
     """
     if not results:
         return True
@@ -7096,14 +7095,61 @@ def save_race_results_batch(results: List[Dict]) -> bool:
     try:
         headers = get_supabase_headers(use_secret=True)
         
-        # 构建 upsert 请求（如果有重复则更新）
+        # 清理每条记录，确保字段名与 past_performances_v2 表匹配
+        clean_results = []
+        for record in results:
+            clean_record = {}
+            
+            # 字段名映射（爬虫返回的字段名 → 表字段名）
+            field_mapping = {
+                'race_date': 'race_date',
+                'venue': 'venue',
+                'race_no': 'race_no',
+                'position': 'position',
+                'horse_no': 'horse_no',
+                'horse_name': 'horse_name',
+                'horse_name_en': 'horse_name_en',  # 新字段
+                'horse_id': 'horse_id',             # 新字段
+                'age': 'age',                       # 新字段
+                'sex': 'sex',                       # 新字段
+                'jockey': 'jockey',
+                'trainer': 'trainer',
+                'actual_weight': 'actual_weight',
+                'body_weight': 'body_weight',
+                'draw': 'draw',
+                'lbw_raw': 'lbw_raw',
+                'running_position': 'running_position',
+                'finish_time': 'finish_time',
+                'finish_seconds': 'finish_seconds',
+                'odds': 'odds',
+                'closing_profile': 'closing_profile',
+                'incident': 'incident',
+                'race_class': 'race_class',
+                'distance': 'distance',
+                'going': 'going',
+                'sectional_times': 'sectional_times',
+                'dividends_json': 'dividends_json'  # 新字段
+            }
+            
+            for old_key, new_key in field_mapping.items():
+                if old_key in record:
+                    value = record[old_key]
+                    # 处理空值
+                    if value is None or value == '':
+                        clean_record[new_key] = None
+                    else:
+                        clean_record[new_key] = value
+            
+            clean_results.append(clean_record)
+        
+        # 批量 upsert
         response = requests.post(
             f"{SUPABASE_URL}/rest/v1/past_performances_v2",
             headers={
                 **headers,
-                "Prefer": "resolution=merge-duplicates"  # 关键：重复时更新
+                "Prefer": "resolution=merge-duplicates"
             },
-            json=results
+            json=clean_results
         )
         
         if response.status_code in [200, 201]:
