@@ -164,6 +164,7 @@ TEXTS = {
         "qin_no_odds": "暫無連贏賠率數據",
         "qin_insufficient_horses": "馬匹數量不足，無法推薦連贏",
         "data_source": "📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新",
+        "betting_pools": "🎲 彩池玩法",
         
         # ==================== 侧边栏 ====================
         "about_header": "📘 關於系統",
@@ -383,6 +384,7 @@ TEXTS = {
         "qin_no_odds": "No quinella odds available",
         "qin_insufficient_horses": "Insufficient horses for quinella recommendation",
         "data_source": "📅 Data Source: HKJC | Update Frequency: Daily auto-update",
+        "betting_pools": "🎲 Betting Pools",
         
         # ==================== Sidebar ====================
         "about_header": "📘 About System",
@@ -2209,25 +2211,52 @@ def render_sidebar():
         
         # ==================== 新增：彩池玩法 ====================
         with st.expander(t()["betting_pools"], expanded=False):
-            st.markdown(f"""
-            {t()['pool_single_title']}
-            | {t()['pool_win']} | {t()['pool_rule_win']} | {t()['pool_condition_win']} |
-            |------|------|----------|
-            | {t()['pool_place']} | {t()['pool_rule_place']} | {t()['pool_condition_place']} |
-            | {t()['pool_qin']} | {t()['pool_rule_qin']} | {t()['pool_condition_qin']} |
-            | {t()['pool_qpl']} | {t()['pool_rule_qpl']} | {t()['pool_condition_qpl']} |
-            | {t()['pool_tri']} | {t()['pool_rule_tri']} | {t()['pool_condition_tri']} |
-            | {t()['pool_tce']} | {t()['pool_rule_tce']} | {t()['pool_condition_tce']} |
-            | {t()['pool_f4']} | {t()['pool_rule_f4']} | {t()['pool_condition_f4']} |
-            | {t()['pool_qtt']} | {t()['pool_rule_qtt']} | {t()['pool_condition_qtt']} |
-            
-            {t()['pool_multi_title']}
-            | {t()['pool_double']} | {t()['pool_rule_double']} | {t()['pool_condition_double']} |
-            | {t()['pool_treble']} | {t()['pool_rule_treble']} | {t()['pool_condition_treble']} |
-            | {t()['pool_double_trio']} | {t()['pool_rule_double_trio']} | {t()['pool_condition_double_trio']} |
-            | {t()['pool_trio']} | {t()['pool_rule_trio']} | {t()['pool_condition_trio']} |
-            | {t()['pool_six_up']} | {t()['pool_rule_six_up']} | {t()['pool_condition_six_up']} |
-            """)
+            if st.session_state.get("lang", "zh") == "zh":
+                st.markdown("""
+                **單場彩池**
+                | 彩池 | 玩法 | 中獎條件 |
+                |------|------|----------|
+                | 獨贏 | 選1匹 | 跑第1名 |
+                | 位置 | 選1匹 | 跑入前3名 |
+                | 連贏 | 選2匹 | 前2名(不限順序) |
+                | 位置Q | 選2匹 | 前3名(不限順序) |
+                | 單T | 選3匹 | 前3名(不限順序) |
+                | 三重彩 | 選3匹 | 前3名(順序固定) |
+                | 四連環 | 選4匹 | 前4名(不限順序) |
+                | 四重彩 | 選4匹 | 前4名(順序固定) |
+                
+                **多場彩池**
+                | 彩池 | 玩法 | 中獎條件 |
+                |------|------|----------|
+                | 孖寶 | 指定2場 | 兩場都第1名 |
+                | 三寶 | 指定3場 | 三場都第1名 |
+                | 孖T | 指定2場 | 兩場前3名(不限順序) |
+                | 三T | 指定3場 | 三場前3名(不限順序) |
+                | 六環彩 | 指定6場 | 每場第1或第2名 |
+                """)
+            else:
+                st.markdown("""
+                **Single Race Pools**
+                | Pool | How to Play | Winning Condition |
+                |------|-------------|-------------------|
+                | Win | Pick 1 horse | Finish 1st |
+                | Place | Pick 1 horse | Finish Top 3 |
+                | Quinella | Pick 2 horses | 1st & 2nd (any order) |
+                | Quinella Place | Pick 2 horses | 1st, 2nd or 3rd (any order) |
+                | Trio | Pick 3 horses | 1st, 2nd & 3rd (any order) |
+                | Tierce | Pick 3 horses | 1st, 2nd & 3rd (exact order) |
+                | First 4 | Pick 4 horses | 1st, 2nd, 3rd & 4th (any order) |
+                | Quartet | Pick 4 horses | 1st, 2nd, 3rd & 4th (exact order) |
+                
+                **Multi-Race Pools**
+                | Pool | How to Play | Winning Condition |
+                |------|-------------|-------------------|
+                | Double | 2 specified races | Win both races |
+                | Treble | 3 specified races | Win all 3 races |
+                | Double Trio | 2 specified races | Top 3 in both races (any order) |
+                | Triple Trio | 3 specified races | Top 3 in all 3 races (any order) |
+                | Six Up | 6 specified races | 1st or 2nd in each race |
+                """)
         
         with st.expander(t()["contact_header"], expanded=False):
             st.markdown(t()["contact_email"])
