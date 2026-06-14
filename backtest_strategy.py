@@ -343,7 +343,7 @@ def get_historical_scores(race_date: str, race_no: int) -> List[float]:
     # 实际应用中需要调用 calculate_all_horses_scores
     return [75, 68, 62, 58, 55, 52, 48, 45, 42, 40, 38, 35, 32, 30]
 
-
+#-------------
 def get_historical_odds(race_date: str, race_no: int, odds_type: str):
     """获取历史赔率"""
     try:
@@ -378,7 +378,8 @@ def get_historical_odds(race_date: str, race_no: int, odds_type: str):
             return {}
         
         elif odds_type == 'QIN':
-            response = supabase.table('odds_history')\
+            # 修复：从 combo_odds_v2 表获取连赢赔率
+            response = supabase.table('combo_odds_v2')\
                 .select('combination, odds_value')\
                 .eq('race_date', race_date)\
                 .eq('race_no', race_no)\
