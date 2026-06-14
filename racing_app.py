@@ -484,11 +484,17 @@ Let AI be your racing assistant.
         "data_source": "📅 Data Source: HKJC | Update Frequency: Race day auto-update"
     }
 }
-
+#---------
 def t():
     """获取当前语言文本"""
-    lang = st.session_state.get("lang", "zh")
-    return TEXTS[lang]
+    try:
+        lang = st.session_state.get("lang", "zh")
+        if lang not in TEXTS:
+            lang = "zh"
+        return TEXTS[lang]
+    except Exception:
+        # 如果 session_state 还没初始化，返回中文
+        return TEXTS["zh"]
 #-------------------------
 #-------------
 @st.cache_data(ttl=300)
@@ -2414,20 +2420,18 @@ def render_horse_rating_table(df: pd.DataFrame):
 def render_home():
     """主页：数据概览 + 全马评分榜 + 智能投注 + 回测"""
     
-    # 确保语言已初始化
-    if "lang" not in st.session_state:
-        st.session_state.lang = "zh"
+    # 直接获取语言，不使用 t() 函数
+    lang = st.session_state.get("lang", "zh")
+    texts = TEXTS[lang]
     
     # ==================== 页面标题 ====================
-    app_title = t()['app_title']
-    home_subtitle = t()['home_subtitle']
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 2rem;">
-        <h1>🐎 {app_title}</h1>
-        <p style="color: #666; font-size: 1.1rem;">{home_subtitle}</p>
+        <h1>🐎 {texts['app_title']}</h1>
+        <p style="color: #666; font-size: 1.1rem;">{texts.get('home_subtitle', '基於AI技術，智能預測馬匹勝率，優化投注策略')}</p>
     </div>
     """, unsafe_allow_html=True)
-        
+   
     # ==================== 模块1：数据概览 ====================
     st.markdown("## 📊 數據概覽")
     
