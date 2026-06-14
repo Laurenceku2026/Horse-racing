@@ -269,19 +269,21 @@ def fetch_horse_detail_page(new_horse_id: str) -> Dict:
     horse_cache[new_horse_id] = result
     return result
 
-
-def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_no: int,
-                         horse_details_cache: Dict) -> List[Dict]:
-    """提取马匹成绩"""
+#-------------
+def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_no: int) -> List[Dict]:
+    """提取马匹成绩（简化版，不依赖外部缓存）"""
     if not soup:
         return []
     
     table = soup.find('table', class_='table_bd')
     if not table:
+        print(f"未找到表格: {race_date} {venue} R{race_no}")
         return []
     
     results = []
     rows = table.find_all('tr')[1:]
+    
+    print(f"找到 {len(rows)} 行数据")
     
     for row in rows:
         cols = row.find_all('td')
@@ -296,35 +298,41 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
         horse_name_raw = cols[2].get_text(strip=True)
         horse_name = re.sub(r'\s*\([^)]+\)', '', horse_name_raw).strip()
         
-        # 获取马匹详情
-        horse_detail = horse_details_cache.get(horse_name, {})
-        new_horse_id = horse_detail.get('new_id', '')
-        horse_name_en = horse_detail.get('name_en', '')
-        
-        # 如果找到新 ID，获取详细资料（性别、年龄）
-        horse_info = {}
-        if new_horse_id:
-            horse_info = fetch_horse_detail_page(new_horse_id)
+        # 提取旧格式 horse_id（括号内的代码）
+        horse_id_match = re.search(r'\(([^)]+)\)', horse_name_raw)
+        horse_id = horse_id_match.group(1) if horse_id_match else ''
         
         jockey = cols[3].get_text(strip=True)
         trainer = cols[4].get_text(strip=True)
         
-        actual_weight_str = cols[5].get_text(strip=True)
-        actual_weight = int(actual_weight_str) if actual_weight_str.isdigit() else None
+        # 负磅
+        actual_weight = None
+        weight_str = cols[5].get_text(strip=True)
+        if weight_str.isdigit():
+            actual_weight = int(weight_str)
         
-        body_weight_str = cols[6].get_text(strip=True)
-        body_weight = int(body_weight_str) if body_weight_str.isdigit() else None
+        # 体重
+        body_weight = None
+        body_str = cols[6].get_text(strip=True)
+        if body_str.isdigit():
+            body_weight = int(body_str)
         
+        # 档位
+        draw = None
         draw_str = cols[7].get_text(strip=True)
-        draw = int(draw_str) if draw_str.isdigit() else None
+        if draw_str.isdigit():
+            draw = int(draw_str)
         
+        # 头马距离
         lbw_raw = cols[8].get_text(strip=True)
         if not lbw_raw or lbw_raw == '---':
             lbw_raw = '---'
         
+        # 沿途走位
         running_position = cols[9].get_text(strip=True) if len(cols) > 9 else ''
-        finish_time_raw = cols[10].get_text(strip=True)
         
+        # 完成时间
+        finish_time_raw = cols[10].get_text(strip=True) if len(cols) > 10 else ''
         finish_seconds = None
         if finish_time_raw and ':' in finish_time_raw:
             parts = finish_time_raw.split(':')
@@ -332,7 +340,9 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
             seconds = float(parts[1])
             finish_seconds = minutes * 60 + seconds
         
-        odds_str = cols[11].get_text(strip=True)
+        # 赔率
+        odds = None
+        odds_str = cols[11].get_text(strip=True) if len(cols) > 11 else ''
         try:
             odds = float(odds_str) if odds_str else None
         except:
@@ -348,28 +358,30 @@ def extract_race_results(soup: BeautifulSoup, race_date: str, venue: str, race_n
             'position': int(position_str),
             'horse_no': horse_no,
             'horse_name': horse_name,
-            'horse_name_en': horse_name_en if horse_name_en else horse_info.get('name_en', ''),
-            'horse_id': new_horse_id,
-            'age': horse_info.get('age', ''),
-            'sex': horse_info.get('gender', ''),
+            'horse_name_en': '',  # 暂时留空
+            'horse_id': horse_id,  # 使用旧格式ID
+            'age': '',
+            'sex': '',
             'jockey': jockey,
             'trainer': trainer,
             'actual_weight': actual_weight,
             'body_weight': body_weight,
             'draw': draw,
-            'lbw_raw': f'="{lbw_raw}"',
+            'lbw_raw': lbw_raw,
             'running_position': running_position,
             'finish_time': finish_time_raw,
             'finish_seconds': finish_seconds,
             'odds': odds,
             'closing_profile': closing_profile,
-            'incident': '',  # 后续从事件报告填充
+            'incident': '',
             'race_class': '',
             'distance': 0,
             'going': '',
-            'sectional_times': ''
+            'sectional_times': '',
+            'dividends_json': ''  # 派彩数据后续从其他页面获取
         })
     
+    print(f"成功解析 {len(results)} 条记录")
     return results
 
 
