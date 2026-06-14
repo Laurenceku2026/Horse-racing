@@ -3308,7 +3308,7 @@ def render_smart_betting(show_title: bool = True):
                 key="ml_model_choice",
                 help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
             )
-            st.write(f"调试: model_choice = '{model_choice}'")
+            # st.write(f"调试: model_choice = '{model_choice}'")
         with col4:
             st.markdown("**📐 評分權重**")
             st.caption("基礎:30% | 場次:40% | 賠率:30%")
