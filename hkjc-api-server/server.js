@@ -232,14 +232,28 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
         let oddsData = null;
         try {
             oddsData = await horseAPI.getRaceOddsWithDateAndVenueCode(date, venue, parseInt(raceNo), ['WIN', 'PLA', 'QIN']);
-            if (oddsData && oddsData.WIN) {
-                console.log(`[赔率] 获取成功，WIN赔率数量: ${oddsData.WIN.length}`);
+            
+            // 调试：打印返回数据结构
+            console.log(`[赔率] 返回类型: ${Array.isArray(oddsData) ? '数组' : typeof oddsData}`);
+            if (Array.isArray(oddsData)) {
+                console.log(`[赔率] 数组长度: ${oddsData.length}`);
+                oddsData.forEach((item, idx) => {
+                    console.log(`  [${idx}] oddsType: ${item.oddsType}, 有 ${item.oddsNodes?.length || 0} 个赔率节点`);
+                });
+            }
+            
+            if (oddsData && oddsData.length > 0) {
+                console.log(`[赔率] 获取成功`);
             } else {
                 console.log(`[赔率] 无数据`);
+                oddsData = null;
             }
         } catch (oddsErr) {
             console.error(`[赔率] 获取失败: ${oddsErr.message}`);
+            oddsData = null;
         }
+        
+        // ... 后续解析赔率的代码需要相应调整
         
         // 3. 保存 races 主表
         const { error: raceError } = await supabase
@@ -284,13 +298,11 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
             let winOdds = null;
             let placeOdds = null;
             
-            // oddsData 是一个数组，需要根据 oddsType 查找
             if (oddsData && Array.isArray(oddsData)) {
                 // 查找 WIN 赔率
-                const winData = oddsData.find(o => o.oddsType === 'WIN');
-                if (winData && winData.oddsNodes) {
-                    for (const node of winData.oddsNodes) {
-                        // combString 格式是 "04"（带前导零），需要转换为整数比较
+                const winItem = oddsData.find(item => item.oddsType === 'WIN');
+                if (winItem && winItem.oddsNodes) {
+                    for (const node of winItem.oddsNodes) {
                         const nodeHorseNo = parseInt(node.combString, 10);
                         if (nodeHorseNo === horseNo) {
                             winOdds = parseFloat(node.oddsValue);
@@ -300,9 +312,9 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
                 }
                 
                 // 查找 PLA 赔率
-                const plaData = oddsData.find(o => o.oddsType === 'PLA');
-                if (plaData && plaData.oddsNodes) {
-                    for (const node of plaData.oddsNodes) {
+                const plaItem = oddsData.find(item => item.oddsType === 'PLA');
+                if (plaItem && plaItem.oddsNodes) {
+                    for (const node of plaItem.oddsNodes) {
                         const nodeHorseNo = parseInt(node.combString, 10);
                         if (nodeHorseNo === horseNo) {
                             placeOdds = parseFloat(node.oddsValue);
@@ -311,6 +323,8 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
                     }
                 }
             }
+            
+            console.log(`[赔率] 马号 ${horseNo}: WIN=${winOdds}, PLA=${placeOdds}`);
             
             // 保存到 horses 表
             if (horseId) {
