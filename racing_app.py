@@ -4660,7 +4660,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             return result
         
         # 4. 获取马名缓存
-        past_performances
+        past_performances_v2
         
         # 5. 初始化统计变量
         correct_predictions = 0
