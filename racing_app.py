@@ -7306,7 +7306,7 @@ def sync_all_data() -> Dict:
     3. 爬虫自动判断是否有赛事
     4. 批量写入，提高性能
     5. 提前终止无效场次循环
-    6. 清理超过 9000 行的旧数据
+    6. 清理超过 20000 行的旧数据
     """
     result = {"success": False, "new_races": 0, "new_records": 0, "error": None}
     
@@ -7426,12 +7426,13 @@ def sync_all_data() -> Dict:
         else:
             st.info("未发现新数据")
         
-        # ==================== 第5步：清理旧数据 ====================
-        if total_new_records > 0:
-            with st.spinner("正在清理旧数据..."):
-                cleanup_result = cleanup_old_records(keep_count=20000)
-                if cleanup_result.get("deleted", 0) > 0:
-                    st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，保持数据库在 9000 行以内")
+        # ==================== 第5步：清理旧数据（每次更新后都检查）====================
+        with st.spinner("正在检查并清理旧数据..."):
+            cleanup_result = cleanup_old_records(keep_count=20000)
+            if cleanup_result.get("deleted", 0) > 0:
+                st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，数据库保持在 20000 行以内")
+            else:
+                st.info(f"当前数据量 {cleanup_result.get('kept', 0)} 条，未超过 20000 条上限")
         
         # ==================== 第6步：清除缓存 ====================
         st.cache_data.clear()
@@ -7444,9 +7445,9 @@ def sync_all_data() -> Dict:
         print(f"更新异常: {e}")
         return result
 
-
-def cleanup_old_records(keep_count: int = 9000) -> Dict:
-    """清理旧记录，只保留最新的 keep_count 条"""
+#-------------
+def cleanup_old_records(keep_count: int = 20000) -> Dict:
+    """清理旧记录，只保留最新的 keep_count 条（默认 20000）"""
     result = {"deleted": 0, "kept": 0}
     
     try:
@@ -7457,13 +7458,18 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
         count_response = requests.get(count_url, headers=headers)
         
         if count_response.status_code != 200:
+            print(f"获取记录数失败: {count_response.status_code}")
             return result
         
         all_ids = [item.get('id') for item in count_response.json() if item.get('id')]
         total_count = len(all_ids)
+        result["kept"] = total_count
         
+        print(f"当前数据量: {total_count} 条，保留上限: {keep_count} 条")
+        
+        # 如果未超过 keep_count，不清理
         if total_count <= keep_count:
-            result["kept"] = total_count
+            print(f"数据量未超过 {keep_count} 条，无需清理")
             return result
         
         # 获取需要保留的最新记录 ID
@@ -7471,19 +7477,24 @@ def cleanup_old_records(keep_count: int = 9000) -> Dict:
         keep_response = requests.get(keep_url, headers=headers)
         
         if keep_response.status_code != 200:
+            print(f"获取保留记录失败: {keep_response.status_code}")
             return result
         
         keep_ids = {str(item.get('id')) for item in keep_response.json() if item.get('id')}
         
         # 删除不在保留列表中的记录
+        deleted_count = 0
         for record_id in all_ids:
             if str(record_id) not in keep_ids:
                 delete_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?id=eq.{record_id}"
                 delete_response = requests.delete(delete_url, headers=headers)
                 if delete_response.status_code in [200, 204]:
-                    result["deleted"] += 1
+                    deleted_count += 1
         
+        result["deleted"] = deleted_count
         result["kept"] = keep_count
+        
+        print(f"数据清理完成：原 {total_count} 条，删除 {deleted_count} 条，保留 {keep_count} 条")
         
     except Exception as e:
         print(f"清理旧记录失败: {e}")
