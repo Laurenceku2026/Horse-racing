@@ -2414,6 +2414,10 @@ def render_horse_rating_table(df: pd.DataFrame):
 def render_home():
     """主页：数据概览 + 全马评分榜 + 智能投注 + 回测"""
     
+    # 确保语言已初始化
+    if "lang" not in st.session_state:
+        st.session_state.lang = "zh"
+    
     # ==================== 页面标题 ====================
     app_title = t()['app_title']
     home_subtitle = t()['home_subtitle']
@@ -2423,7 +2427,7 @@ def render_home():
         <p style="color: #666; font-size: 1.1rem;">{home_subtitle}</p>
     </div>
     """, unsafe_allow_html=True)
-    
+        
     # ==================== 模块1：数据概览 ====================
     st.markdown("## 📊 數據概覽")
     
