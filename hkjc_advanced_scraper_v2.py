@@ -590,26 +590,143 @@ def main():
 
 if __name__ == "__main__":
     main()
-
+#-------------
 def parse_race_result(race_date, venue, race_no):
     """
-    兼容 racing_app.py 的接口
-    返回: (race_info, results)
+    解析单场赛果（完整实现）
+    参数:
+        race_date: 日期，格式 YYYY/MM/DD
+        venue: 场地 ST/HV
+        race_no: 场次编号
+    返回:
+        (race_info, results)
     """
-    # 重新调用 main 的核心逻辑，但返回数据而不是写文件
-    # 这里简化处理：返回空数据，避免报错
-    print(f"parse_race_result 被调用: {race_date} {venue} 第{race_no}场")
+    import requests
+    from bs4 import BeautifulSoup
+    import re
+    import json
     
-    # 构造空的返回结构
-    race_info = {
-        'race_date': race_date,
-        'venue': venue,
-        'race_no': race_no,
-        'race_class': '',
-        'distance': 0,
-        'going': '',
-        'sectional_times': []
-    }
+    # 构建 URL
+    url = f"https://racing.hkjc.com/zh-hk/local/information/localresults?racedate={race_date}&Racecourse={venue}&RaceNo={race_no}"
+    
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 提取赛事基本信息
+        race_info = extract_race_info(soup, race_date, venue, race_no)
+        race_info['sectional_times'] = extract_sectional_times(soup)
+        
+        # 提取马匹成绩
+        results = extract_race_results_simple(soup, race_date, venue, race_no)
+        
+        # 提取事件报告
+        incidents = extract_incidents(soup)
+        
+        # 为每条记录添加事件报告和赛事信息
+        for result in results:
+            horse_no = result['horse_no']
+            result['incident'] = incidents.get(horse_no, '')
+            result['race_class'] = race_info.get('race_class', '')
+            result['distance'] = race_info.get('distance', 0)
+            result['going'] = race_info.get('going', '')
+            result['sectional_times'] = json.dumps(race_info.get('sectional_times', []))
+        
+        return race_info, results
+        
+    except Exception as e:
+        print(f"解析失败: {e}")
+        return {}, []
+
+
+def extract_race_results_simple(soup, race_date, venue, race_no):
+    """提取马匹成绩（简化版）"""
+    table = soup.find('table', class_='table_bd')
+    if not table:
+        return []
+    
     results = []
+    rows = table.find_all('tr')[1:]
     
-    return race_info, results
+    for row in rows:
+        cols = row.find_all('td')
+        if len(cols) < 12:
+            continue
+        
+        position_str = cols[0].get_text(strip=True)
+        if not position_str.isdigit():
+            continue
+        
+        horse_no = cols[1].get_text(strip=True)
+        horse_name_raw = cols[2].get_text(strip=True)
+        horse_name = re.sub(r'\s*\([^)]+\)', '', horse_name_raw).strip()
+        
+        # 提取 horse_id（括号内的代码）
+        horse_id_match = re.search(r'\(([^)]+)\)', horse_name_raw)
+        horse_id = horse_id_match.group(1) if horse_id_match else ''
+        
+        jockey = cols[3].get_text(strip=True)
+        trainer = cols[4].get_text(strip=True)
+        
+        actual_weight = int(cols[5].get_text(strip=True)) if cols[5].get_text(strip=True).isdigit() else None
+        body_weight = int(cols[6].get_text(strip=True)) if cols[6].get_text(strip=True).isdigit() else None
+        draw = int(cols[7].get_text(strip=True)) if cols[7].get_text(strip=True).isdigit() else None
+        
+        lbw_raw = cols[8].get_text(strip=True)
+        if not lbw_raw or lbw_raw == '---':
+            lbw_raw = '---'
+        
+        running_position = cols[9].get_text(strip=True) if len(cols) > 9 else ''
+        finish_time_raw = cols[10].get_text(strip=True) if len(cols) > 10 else ''
+        
+        finish_seconds = None
+        if finish_time_raw and ':' in finish_time_raw:
+            parts = finish_time_raw.split(':')
+            minutes = float(parts[0])
+            seconds = float(parts[1])
+            finish_seconds = minutes * 60 + seconds
+        
+        odds = None
+        odds_str = cols[11].get_text(strip=True) if len(cols) > 11 else ''
+        try:
+            odds = float(odds_str) if odds_str else None
+        except:
+            odds = None
+        
+        # 计算 closing_profile
+        closing_profile = calculate_closing_profile(running_position)
+        
+        results.append({
+            'race_date': race_date,
+            'venue': venue,
+            'race_no': race_no,
+            'position': int(position_str),
+            'horse_no': horse_no,
+            'horse_name': horse_name,
+            'horse_name_en': '',
+            'horse_id': horse_id,
+            'age': '',
+            'sex': '',
+            'jockey': jockey,
+            'trainer': trainer,
+            'actual_weight': actual_weight,
+            'body_weight': body_weight,
+            'draw': draw,
+            'lbw_raw': lbw_raw,
+            'running_position': running_position,
+            'finish_time': finish_time_raw,
+            'finish_seconds': finish_seconds,
+            'odds': odds,
+            'closing_profile': closing_profile,
+            'incident': '',
+            'race_class': '',
+            'distance': 0,
+            'going': '',
+            'sectional_times': '',
+            'dividends_json': ''
+        })
+    
+    return results
