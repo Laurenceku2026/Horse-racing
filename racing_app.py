@@ -2415,10 +2415,12 @@ def render_home():
     """主页：数据概览 + 全马评分榜 + 智能投注 + 回测"""
     
     # ==================== 页面标题 ====================
+    app_title = t()['app_title']
+    home_subtitle = t()['home_subtitle']
     st.markdown(f"""
     <div style="text-align: center; margin-bottom: 2rem;">
-        <h1>🐎 {t()['app_title']}</h1>
-        <p style="color: #666; font-size: 1.1rem;">{t()['home_subtitle']}</p>
+        <h1>🐎 {app_title}</h1>
+        <p style="color: #666; font-size: 1.1rem;">{home_subtitle}</p>
     </div>
     """, unsafe_allow_html=True)
     
