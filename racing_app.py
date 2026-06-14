@@ -109,7 +109,7 @@ SIGNAL_LEVELS = {
 TEXTS = {
     "zh": {
         # ==================== 基础 ====================
-        "app_title": "🐎 香港赛马AI分析系统",
+        "app_title": "香港赛马AI分析系统",
         "login": "登入",
         "register": "註冊",
         "logout": "登出",
