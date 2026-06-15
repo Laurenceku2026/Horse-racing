@@ -1012,20 +1012,26 @@ def handle_stripe_callback():
         print(f"处理支付回调异常: {e}")
 #------------
 def show_paywall():
-    """显示付费墙"""
+    """显示付费墙（用户主动升级）"""
     st.markdown("---")
     
-    # 先检查用户实际剩余次数
+    # 获取用户当前状态
     profile = get_user_profile(st.session_state.user_id)
     remaining = profile.get("free_trials_remaining", 0)
+    tier = profile.get("subscription_tier", "free")
     
-    # 如果还有次数，不应该显示付费墙
-    if remaining > 0:
+    # 如果已经是专业版，不应该显示付费墙
+    if tier == "pro":
         st.session_state.show_paywall = False
         st.rerun()
         return
     
-    st.error("🔒 您的免費使用次數已用完")
+    # 显示当前状态
+    if remaining > 0:
+        st.info(f"🔓 您当前还有 {remaining} 次免费试用机会")
+        st.warning("💎 升级专业版后，可无限次使用所有功能")
+    else:
+        st.error("🔒 您的免費使用次數已用完")
     
     st.markdown(f"""
     ### 💎 {t()['upgrade']}
