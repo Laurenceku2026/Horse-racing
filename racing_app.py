@@ -947,7 +947,11 @@ def create_checkout_session(user_id: str, user_email: str, price_id: str) -> Tup
         import stripe
         stripe.api_key = STRIPE_SECRET_KEY
         
-        base_url = "https://racing-ai.streamlit.app"  # 部署后修改
+        # 修改这里：使用您当前应用的完整 URL
+        base_url = "https://share.streamlit.io/laurenceku2026/horse-racing/main/racing_app.py"
+        
+        # 注意：success_url 和 cancel_url 需要指向同一个域名下的路径
+        # 由于您的应用是单页的，可以简单地将成功和取消都指向首页
         success_url = f"{base_url}?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base_url}?canceled=true"
         
