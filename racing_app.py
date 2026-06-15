@@ -3879,79 +3879,79 @@ def render_smart_betting(show_title: bool = True):
     t0 = time.time()
     
     # ========== 🔧 调试代码开始（可删除）==========
-    with st.expander("🔧 调试信息 - 赛程获取", expanded=False):
-        st.write("### 正在检查赛程获取逻辑")
-        
-        # 1. 检查 API 配置
-        api_url = st.secrets.get("HKJC_API_URL", "未配置")
-        st.write(f"1. API地址: {api_url}")
-        
-        # 2. 直接测试 API 调用
-        if api_url != "未配置":
-            try:
-                response = requests.get(f"{api_url}/meetings", timeout=10)
-                st.write(f"2. API状态码: {response.status_code}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    st.write(f"3. API返回成功: {data.get('success')}")
-                    
-                    meetings = data.get("data", [])
-                    st.write(f"4. 获取到 {len(meetings)} 个赛马日")
-                    
-                    for m in meetings:
-                        st.write(f"   - {m.get('date')} {m.get('venueCode')}: {len(m.get('races', []))} 场比赛")
-                else:
-                    st.error(f"API返回错误: {response.text}")
-            except Exception as e:
-                st.error(f"API调用失败: {e}")
-        else:
-            st.error("API地址未配置！请在 secrets.toml 中设置 HKJC_API_URL")
-        
-        # 3. 检查数据库中的赛事
-        st.write("### 数据库中的未来赛事")
-        try:
-            headers = get_supabase_headers(use_secret=True)
-            today = datetime.now().strftime("%Y-%m-%d")
-            url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&order=race_date.asc&limit=50"
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code == 200:
-                db_races = response.json()
-                st.write(f"从数据库获取到 {len(db_races)} 条记录")
-                
-                if db_races:
-                    dates = {}
-                    for r in db_races:
-                        date = r.get('race_date')
-                        if date not in dates:
-                            dates[date] = []
-                        dates[date].append(r.get('race_no'))
-                    
-                    for date, race_nos in sorted(dates.items()):
-                        st.write(f"   - {date}: {len(race_nos)} 场")
-                else:
-                    st.warning("数据库中没有未来赛事")
-            else:
-                st.error(f"数据库查询失败: {response.status_code}")
-        except Exception as e:
-            st.error(f"数据库错误: {e}")
-        
-        # 4. 测试 get_upcoming_races 函数
-        st.write("### get_upcoming_races() 返回结果")
-        test_races = get_upcoming_races()
-        st.write(f"返回 {len(test_races)} 场赛事")
-        
-        if test_races:
-            by_date = {}
-            for r in test_races:
-                date = r.get('race_date')
-                if date not in by_date:
-                    by_date[date] = []
-                by_date[date].append(r.get('race_no'))
-            
-            for date, race_nos in sorted(by_date.items()):
-                st.write(f"   - {date}: {len(race_nos)} 场")
+    #with st.expander("🔧 调试信息 - 赛程获取", expanded=False):
+    #    st.write("### 正在检查赛程获取逻辑")
+    #    
+    #    # 1. 检查 API 配置
+    #    api_url = st.secrets.get("HKJC_API_URL", "未配置")
+    #    st.write(f"1. API地址: {api_url}")
+    #    
+    #    # 2. 直接测试 API 调用
+    #    if api_url != "未配置":
+    #        try:
+    #            response = requests.get(f"{api_url}/meetings", timeout=10)
+    #            st.write(f"2. API状态码: {response.status_code}")
+    #            
+    #            if response.status_code == 200:
+    #                data = response.json()
+    #                st.write(f"3. API返回成功: {data.get('success')}")
+    #                
+    #                meetings = data.get("data", [])
+    #                st.write(f"4. 获取到 {len(meetings)} 个赛马日")
+    #                
+    #                for m in meetings:
+    #                    st.write(f"   - {m.get('date')} {m.get('venueCode')}: {len(m.get('races', []))} 场比赛")
+    #            else:
+    #                st.error(f"API返回错误: {response.text}")
+    #        except Exception as e:
+    #            st.error(f"API调用失败: {e}")
+    #    else:
+    #        st.error("API地址未配置！请在 secrets.toml 中设置 HKJC_API_URL")
+    #    
+    #    # 3. 检查数据库中的赛事
+    #    st.write("### 数据库中的未来赛事")
+    #    try:
+    #        headers = get_supabase_headers(use_secret=True)
+    #        today = datetime.now().strftime("%Y-%m-%d")
+    #        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&order=race_date.asc&limit=50"
+    #        response = requests.get(url, headers=headers)
+    #        
+    #        if response.status_code == 200:
+    #            db_races = response.json()
+    #            st.write(f"从数据库获取到 {len(db_races)} 条记录")
+    #            
+    #            if db_races:
+    #                dates = {}
+    #                for r in db_races:
+    #                    date = r.get('race_date')
+    #                    if date not in dates:
+    #                        dates[date] = []
+    #                    dates[date].append(r.get('race_no'))
+    #                
+    #                for date, race_nos in sorted(dates.items()):
+    #                    st.write(f"   - {date}: {len(race_nos)} 场")
+    #            else:
+    #                st.warning("数据库中没有未来赛事")
+    #        else:
+    #            st.error(f"数据库查询失败: {response.status_code}")
+    #    except Exception as e:
+    #        st.error(f"数据库错误: {e}")
+    #    
+    #    # 4. 测试 get_upcoming_races 函数
+    #    st.write("### get_upcoming_races() 返回结果")
+    #    test_races = get_upcoming_races()
+    #    st.write(f"返回 {len(test_races)} 场赛事")
+    #    
+    #    if test_races:
+    #        by_date = {}
+    #        for r in test_races:
+    #            date = r.get('race_date')
+    #            if date not in by_date:
+    #                by_date[date] = []
+    #            by_date[date].append(r.get('race_no'))
+    #        
+    #        for date, race_nos in sorted(by_date.items()):
+    #            st.write(f"   - {date}: {len(race_nos)} 场")
     # ========== 🔧 调试代码结束 ==========
     
     if show_title:
