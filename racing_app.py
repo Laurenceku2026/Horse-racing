@@ -2822,10 +2822,9 @@ def get_upcoming_races_from_api() -> List[Dict]:
     try:
         API_BASE_URL = st.secrets.get("HKJC_API_URL", "")
         if not API_BASE_URL:
-            print("⚠️ API地址未配置，请在 secrets.toml 中设置 HKJC_API_URL")
+            print("⚠️ API地址未配置")
             return []
         
-        # 调用 /api/meetings 端点
         url = f"{API_BASE_URL}/meetings"
         response = requests.get(url, timeout=30)
         
@@ -2841,13 +2840,12 @@ def get_upcoming_races_from_api() -> List[Dict]:
         
         meetings = data.get("data", [])
         
-        if not meetings:
-            print("⚠️ API返回空数据")
-            return []
+        print(f"📊 API返回 {len(meetings)} 个赛马日")
         
-        print(f"✅ 从 API 获取到 {len(meetings)} 个赛马日")
+        # 打印每个赛马日的详细信息
+        for meeting in meetings:
+            print(f"  - {meeting.get('date')} {meeting.get('venueCode')}: {len(meeting.get('races', []))} 场比赛")
         
-        # 解析赛程
         upcoming_races = []
         today = datetime.now().date()
         future_limit = today + timedelta(days=14)
@@ -2857,7 +2855,7 @@ def get_upcoming_races_from_api() -> List[Dict]:
             if not meeting_date_str:
                 continue
             
-            # 解析日期 (格式: YYYY-MM-DD)
+            # 解析日期
             try:
                 meeting_date = datetime.strptime(meeting_date_str, "%Y-%m-%d").date()
             except ValueError:
@@ -2866,15 +2864,16 @@ def get_upcoming_races_from_api() -> List[Dict]:
             
             # 只保留未来14天内的赛事
             if meeting_date < today or meeting_date > future_limit:
+                print(f"⏭️ 跳过 {meeting_date_str} (不在未来14天内)")
                 continue
             
             venue_code = meeting.get("venueCode", "ST")
-            venue_name = meeting.get("venue", "沙田")
-            
-            # 获取该赛日的场次列表
+            venue_name = meeting.get("venue", "")
             races_list = meeting.get("races", [])
             
-            if races_list:
+            print(f"✅ 处理 {meeting_date_str} {venue_code}: {len(races_list)} 场比赛")
+            
+            if races_list and len(races_list) > 0:
                 # 有详细场次信息
                 for race in races_list:
                     race_no = race.get("no", 0)
@@ -2890,8 +2889,10 @@ def get_upcoming_races_from_api() -> List[Dict]:
                         "race_class": race_class,
                         "race_id": f"{meeting_date_str}_{venue_code}_{race_no}"
                     })
+                    print(f"    - 添加第{race_no}场: {distance}米")
             else:
-                # 没有详细场次，至少添加一个占位记录
+                # 没有详细场次，添加占位记录
+                print(f"    - 无详细场次，添加占位记录")
                 upcoming_races.append({
                     "race_date": meeting_date_str,
                     "venue": venue_code,
@@ -2902,21 +2903,17 @@ def get_upcoming_races_from_api() -> List[Dict]:
                     "race_id": f"{meeting_date_str}_{venue_code}_0"
                 })
         
+        print(f"📊 最终返回 {len(upcoming_races)} 场赛事")
+        
         # 按日期和场次排序
         upcoming_races.sort(key=lambda x: (x.get('race_date', ''), x.get('race_no', 0)))
         
-        print(f"✅ 解析后得到 {len(upcoming_races)} 场赛事")
-        for race in upcoming_races[:5]:
-            print(f"   {race['race_date']} {race['venue']} 第{race['race_no']}场")
+        # 打印最终结果
+        for race in upcoming_races:
+            print(f"  {race['race_date']} {race['venue']} 第{race['race_no']}场")
         
         return upcoming_races
         
-    except requests.exceptions.Timeout:
-        print("❌ API请求超时")
-        return []
-    except requests.exceptions.ConnectionError:
-        print("❌ 无法连接到API服务器，请确保 Node.js 服务正在运行")
-        return []
     except Exception as e:
         print(f"❌ 获取未来赛事失败: {e}")
         return []
