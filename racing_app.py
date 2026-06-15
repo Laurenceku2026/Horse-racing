@@ -967,49 +967,86 @@ def create_checkout_session(user_id: str, user_email: str, price_id: str) -> Tup
         return None, str(e)
 #--------------
 def handle_stripe_callback():
-    """处理Stripe支付成功回调"""
-    try:
-        query_params = st.query_params
+    """使用 HTTP 请求验证 Stripe 支付（不依赖 stripe 库）"""
+    import requests
+    import base64
+    import json
+    
+    query_params = st.query_params
+    
+    if "session_id" in query_params:
+        session_id = query_params["session_id"]
         
-        if "session_id" in query_params:
-            session_id = query_params["session_id"]
-            try:
-                import stripe
-                stripe.api_key = STRIPE_SECRET_KEY
-                session = stripe.checkout.Session.retrieve(session_id)
-                
-                if session.payment_status == "paid":
-                    user_id = session.metadata.get("user_id")
-                    print(f"支付成功，user_id: {user_id}")
+        # 显示手动验证按钮
+        st.warning("🔔 检测到支付会话，请点击按钮完成验证")
+        st.info(f"会话ID: {session_id[:30]}...")
+        
+        if st.button("✅ 手动验证支付并升级", type="primary"):
+            with st.spinner("正在验证..."):
+                try:
+                    # 使用 Basic 认证调用 Stripe API
+                    auth_str = f"{STRIPE_SECRET_KEY}:"
+                    auth_bytes = auth_str.encode('ascii')
+                    auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
                     
-                    if user_id and user_id != "admin":
-                        # 更新用户订阅状态
-                        success = update_user_profile(user_id, {"subscription_tier": "pro"})
-                        print(f"更新订阅状态结果: {success}")
+                    headers = {
+                        "Authorization": f"Basic {auth_b64}",
+                        "Content-Type": "application/x-www-form-urlencoded"
+                    }
+                    
+                    url = f"https://api.stripe.com/v1/checkout/sessions/{session_id}"
+                    response = requests.get(url, headers=headers)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
                         
-                        if success:
-                            st.success("✅ 支付成功！您已是專業版用戶")
-                            st.balloons()
+                        if data.get("payment_status") == "paid":
+                            # 从 metadata 获取用户信息
+                            user_id = data.get("metadata", {}).get("user_id")
+                            user_email = data.get("customer_email") or data.get("metadata", {}).get("user_email")
                             
-                            # 同时更新 session_state 中的信息
-                            st.session_state.user_tier = "pro"
-                            st.session_state.show_paywall = False
+                            # 如果没有 user_id，通过邮箱查找用户
+                            if not user_id and user_email:
+                                headers_secret = get_supabase_headers(use_secret=True)
+                                url_users = f"{SUPABASE_URL}/rest/v1/user_settings_racing?email=eq.{user_email}"
+                                users_resp = requests.get(url_users, headers=headers_secret)
+                                if users_resp.status_code == 200 and users_resp.json():
+                                    user_id = users_resp.json()[0].get("user_id")
                             
-                            # 清除 URL 参数
-                            st.query_params.clear()
-                            st.rerun()
+                            if user_id and user_id != "admin":
+                                # 更新数据库
+                                headers_patch = get_supabase_headers(use_secret=True)
+                                url_patch = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
+                                patch_response = requests.patch(
+                                    url_patch, 
+                                    headers=headers_patch, 
+                                    json={"subscription_tier": "pro"}
+                                )
+                                
+                                if patch_response.status_code in [200, 204]:
+                                    st.success("✅ 支付验证成功！您已是专业版用户")
+                                    st.balloons()
+                                    # 更新 session state
+                                    if st.session_state.get("user_id") == user_id:
+                                        st.session_state.user_tier = "pro"
+                                        # 清除付费墙标志
+                                        st.session_state.show_paywall = False
+                                    st.query_params.clear()
+                                    time.sleep(2)
+                                    st.rerun()
+                                else:
+                                    st.error(f"更新失败: {patch_response.text}")
+                            else:
+                                st.error("无法识别用户，请重新登录后重试")
                         else:
-                            st.error("更新用户状态失败，请联络管理员")
+                            st.warning(f"支付状态: {data.get('payment_status')}，请完成支付")
                     else:
-                        st.warning("支付成功，但用戶信息驗證失敗，請聯絡管理員")
-                else:
-                    st.info("支付未完成，請完成支付後刷新頁面")
-            except Exception as e:
-                st.error(f"驗證支付狀態失敗: {e}")
-        elif "canceled" in query_params:
-            st.info("支付已取消")
-    except Exception as e:
-        print(f"处理支付回调异常: {e}")
+                        st.error(f"API请求失败: {response.status_code}")
+                        
+                except Exception as e:
+                    st.error(f"验证失败: {e}")
+    elif "canceled" in query_params:
+        st.info("支付已取消")
 #------------
 def show_paywall():
     """显示付费墙（用户主动升级）"""
