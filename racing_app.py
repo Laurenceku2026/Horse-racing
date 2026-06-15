@@ -947,11 +947,9 @@ def create_checkout_session(user_id: str, user_email: str, price_id: str) -> Tup
         import stripe
         stripe.api_key = STRIPE_SECRET_KEY
         
-        # 修改这里：使用您当前应用的完整 URL
+        # 使用您的实际 Streamlit Cloud 地址
         base_url = "https://share.streamlit.io/laurenceku2026/horse-racing/main/racing_app.py"
         
-        # 注意：success_url 和 cancel_url 需要指向同一个域名下的路径
-        # 由于您的应用是单页的，可以简单地将成功和取消都指向首页
         success_url = f"{base_url}?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url = f"{base_url}?canceled=true"
         
@@ -967,36 +965,66 @@ def create_checkout_session(user_id: str, user_email: str, price_id: str) -> Tup
         return session.url, None
     except Exception as e:
         return None, str(e)
-
+#--------------
 def handle_stripe_callback():
     """处理Stripe支付成功回调"""
-    query_params = st.query_params
-    
-    if "session_id" in query_params:
-        session_id = query_params["session_id"]
-        try:
-            import stripe
-            stripe.api_key = STRIPE_SECRET_KEY
-            session = stripe.checkout.Session.retrieve(session_id)
-            
-            if session.payment_status == "paid":
-                user_id = session.metadata.get("user_id")
-                if user_id and user_id != "admin":
-                    update_user_profile(user_id, {"subscription_tier": "pro"})
-                    st.success("✅ 支付成功！您已是專業版用戶")
-                    st.balloons()
-                    st.query_params.clear()
-                    st.rerun()
+    try:
+        query_params = st.query_params
+        
+        if "session_id" in query_params:
+            session_id = query_params["session_id"]
+            try:
+                import stripe
+                stripe.api_key = STRIPE_SECRET_KEY
+                session = stripe.checkout.Session.retrieve(session_id)
+                
+                if session.payment_status == "paid":
+                    user_id = session.metadata.get("user_id")
+                    print(f"支付成功，user_id: {user_id}")
+                    
+                    if user_id and user_id != "admin":
+                        # 更新用户订阅状态
+                        success = update_user_profile(user_id, {"subscription_tier": "pro"})
+                        print(f"更新订阅状态结果: {success}")
+                        
+                        if success:
+                            st.success("✅ 支付成功！您已是專業版用戶")
+                            st.balloons()
+                            
+                            # 同时更新 session_state 中的信息
+                            st.session_state.user_tier = "pro"
+                            st.session_state.show_paywall = False
+                            
+                            # 清除 URL 参数
+                            st.query_params.clear()
+                            st.rerun()
+                        else:
+                            st.error("更新用户状态失败，请联络管理员")
+                    else:
+                        st.warning("支付成功，但用戶信息驗證失敗，請聯絡管理員")
                 else:
-                    st.warning("支付成功，但用戶信息驗證失敗，請聯絡管理員")
-            else:
-                st.info("支付未完成，請完成支付後刷新頁面")
-        except Exception as e:
-            st.error(f"驗證支付狀態失敗: {e}")
-
+                    st.info("支付未完成，請完成支付後刷新頁面")
+            except Exception as e:
+                st.error(f"驗證支付狀態失敗: {e}")
+        elif "canceled" in query_params:
+            st.info("支付已取消")
+    except Exception as e:
+        print(f"处理支付回调异常: {e}")
+#------------
 def show_paywall():
     """显示付费墙"""
     st.markdown("---")
+    
+    # 先检查用户实际剩余次数
+    profile = get_user_profile(st.session_state.user_id)
+    remaining = profile.get("free_trials_remaining", 0)
+    
+    # 如果还有次数，不应该显示付费墙
+    if remaining > 0:
+        st.session_state.show_paywall = False
+        st.rerun()
+        return
+    
     st.error("🔒 您的免費使用次數已用完")
     
     st.markdown(f"""
