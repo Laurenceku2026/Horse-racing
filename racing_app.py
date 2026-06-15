@@ -1040,7 +1040,7 @@ def show_paywall():
                 border-radius: 0.5rem;
                 font-weight: bold;
                 margin-top: 0.5rem;">
-                💳 前往Stripe支付（月付$29）
+                💳 前往Stripe支付（月付HK$380）
             </a>
             ''', unsafe_allow_html=True)
     
@@ -1071,7 +1071,7 @@ def show_paywall():
                 border-radius: 0.5rem;
                 font-weight: bold;
                 margin-top: 0.5rem;">
-                💳 前往Stripe支付（季付$79）
+                💳 前往Stripe支付（季付HK$988）
             </a>
             ''', unsafe_allow_html=True)
     
