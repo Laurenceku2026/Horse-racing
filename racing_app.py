@@ -3878,6 +3878,82 @@ def render_smart_betting(show_title: bool = True):
     perf_log = {}
     t0 = time.time()
     
+    # ========== 🔧 调试代码开始（可删除）==========
+    with st.expander("🔧 调试信息 - 赛程获取", expanded=False):
+        st.write("### 正在检查赛程获取逻辑")
+        
+        # 1. 检查 API 配置
+        api_url = st.secrets.get("HKJC_API_URL", "未配置")
+        st.write(f"1. API地址: {api_url}")
+        
+        # 2. 直接测试 API 调用
+        if api_url != "未配置":
+            try:
+                response = requests.get(f"{api_url}/meetings", timeout=10)
+                st.write(f"2. API状态码: {response.status_code}")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    st.write(f"3. API返回成功: {data.get('success')}")
+                    
+                    meetings = data.get("data", [])
+                    st.write(f"4. 获取到 {len(meetings)} 个赛马日")
+                    
+                    for m in meetings:
+                        st.write(f"   - {m.get('date')} {m.get('venueCode')}: {len(m.get('races', []))} 场比赛")
+                else:
+                    st.error(f"API返回错误: {response.text}")
+            except Exception as e:
+                st.error(f"API调用失败: {e}")
+        else:
+            st.error("API地址未配置！请在 secrets.toml 中设置 HKJC_API_URL")
+        
+        # 3. 检查数据库中的赛事
+        st.write("### 数据库中的未来赛事")
+        try:
+            headers = get_supabase_headers(use_secret=True)
+            today = datetime.now().strftime("%Y-%m-%d")
+            url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&order=race_date.asc&limit=50"
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                db_races = response.json()
+                st.write(f"从数据库获取到 {len(db_races)} 条记录")
+                
+                if db_races:
+                    dates = {}
+                    for r in db_races:
+                        date = r.get('race_date')
+                        if date not in dates:
+                            dates[date] = []
+                        dates[date].append(r.get('race_no'))
+                    
+                    for date, race_nos in sorted(dates.items()):
+                        st.write(f"   - {date}: {len(race_nos)} 场")
+                else:
+                    st.warning("数据库中没有未来赛事")
+            else:
+                st.error(f"数据库查询失败: {response.status_code}")
+        except Exception as e:
+            st.error(f"数据库错误: {e}")
+        
+        # 4. 测试 get_upcoming_races 函数
+        st.write("### get_upcoming_races() 返回结果")
+        test_races = get_upcoming_races()
+        st.write(f"返回 {len(test_races)} 场赛事")
+        
+        if test_races:
+            by_date = {}
+            for r in test_races:
+                date = r.get('race_date')
+                if date not in by_date:
+                    by_date[date] = []
+                by_date[date].append(r.get('race_no'))
+            
+            for date, race_nos in sorted(by_date.items()):
+                st.write(f"   - {date}: {len(race_nos)} 场")
+    # ========== 🔧 调试代码结束 ==========
+    
     if show_title:
         st.markdown(f"## {t()['smart_betting']}")
     perf_log["初始化"] = time.time() - t0    
@@ -3941,17 +4017,23 @@ def render_smart_betting(show_title: bool = True):
     with col2:
         refresh_schedule_btn = st.button(t()["refresh_schedule"], use_container_width=True)
     
+    # ✅ 修改：刷新赛程时调用新的 API 获取函数
     if refresh_schedule_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning(t()["free_trial_used"])
         else:
             with st.spinner(t()["syncing_schedule"]):
-                result = sync_future_races(days=14)
-                if result.get("total", 0) > 0:
-                    st.success(t()["sync_complete"].format(success=result.get('success', 0), failed=result.get('failed', 0)))
+                # 直接从 API 获取最新赛程
+                api_races = get_upcoming_races_from_api()
+                if api_races:
+                    # 同步到数据库
+                    sync_races_to_db(api_races)
+                    st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
+                    # 清除缓存，强制刷新
+                    st.cache_data.clear()
                     st.rerun()
                 else:
-                    st.info(t()["no_races"])
+                    st.warning(t()["no_races"])
     #-----------------
     upcoming_races = get_cached_upcoming_races()
     
@@ -3959,24 +4041,44 @@ def render_smart_betting(show_title: bool = True):
         st.info(t()["no_races"])
         return
     
-    dates = sorted(set([r.get('race_date') for r in upcoming_races]))
+    # ✅ 修改：过滤掉 race_no = 0 的占位记录（只显示有详细场次的赛事）
+    # 但保留有详细场次的赛事（race_no > 0）
+    valid_races = [r for r in upcoming_races if r.get('race_no', 0) > 0]
+    
+    if not valid_races:
+        st.warning("暂无详细赛事数据（排位表尚未公布）。请点击「刷新赛程」同步最新数据。")
+        # 仍然显示原始数据让用户看到有哪些赛日
+        valid_races = upcoming_races
+    
+    dates = sorted(set([r.get('race_date') for r in valid_races if r.get('race_date')]))
+    
+    if not dates:
+        st.info(t()["no_races"])
+        return
+    
     date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
     
     selected_date_str = st.selectbox("選擇賽日", date_options, key="selected_race_date")
     selected_date = selected_date_str.split(" ")[0]
     
-    races = [r for r in upcoming_races if r.get('race_date') == selected_date]
+    # ✅ 修改：使用 valid_races 而不是原始 races
+    races = [r for r in valid_races if r.get('race_date') == selected_date]
     st.markdown(f"**📋 共 {len(races)} 場賽事**")
     st.markdown("---")
     #-------------
     # ==================== 单场分析 ====================
     st.markdown(f"### {t()['single_race_analysis']}")
     
+    if not races:
+        st.warning("该日期暂无详细赛事数据")
+        return
+    
     race_options = []
     for r in races:
         distance = r.get('distance', 0)
         race_class = r.get('race_class', '')
-        race_options.append(f"第{r.get('race_no')}場 - {distance}米 ({race_class})")
+        race_no = r.get('race_no', 0)
+        race_options.append(f"第{race_no}場 - {distance}米 ({race_class})")
     
     selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     selected_race = races[selected_idx]
@@ -3985,16 +4087,37 @@ def render_smart_betting(show_title: bool = True):
     with col1:
         refresh_race_btn = st.button(t()["refresh_race_data"], key="refresh_race")
     
+    # ✅ 修改：单场同步也使用 API
     if refresh_race_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning(t()["free_trial_used"])
         else:
             with st.spinner(t()["updating_odds"]):
-                if sync_single_race(selected_race):
-                    st.success(t()["data_updated"])
-                    st.rerun()
+                # 调用 API 同步单场赛事
+                api_url = st.secrets.get("HKJC_API_URL", "")
+                if api_url:
+                    try:
+                        sync_url = f"{api_url}/sync/race"
+                        response = requests.post(sync_url, json={
+                            "date": selected_race.get('race_date'),
+                            "venue": selected_race.get('venue'),
+                            "raceNo": selected_race.get('race_no')
+                        }, timeout=60)
+                        if response.status_code == 200:
+                            st.success(t()["data_updated"])
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.warning(t()["update_failed"])
+                    except Exception as e:
+                        st.error(f"同步失败: {e}")
                 else:
-                    st.warning(t()["update_failed"])
+                    # 回退到原有方法
+                    if sync_single_race(selected_race):
+                        st.success(t()["data_updated"])
+                        st.rerun()
+                    else:
+                        st.warning(t()["update_failed"])
     
     runners = get_race_runners_with_details(
         selected_race.get('race_date'),
@@ -4029,8 +4152,8 @@ def render_smart_betting(show_title: bool = True):
                 runners
             )
         
-        t3 = time.time()  # ← 添加这一行！
-        perf_log["计算胜率"] = t3 - t2  # ← 添加这一行！
+        t3 = time.time()
+        perf_log["计算胜率"] = t3 - t2
         
         for i, runner in enumerate(runners):
             if i < len(scores):
@@ -4558,7 +4681,6 @@ def render_smart_betting(show_title: bool = True):
             
             parlay_results = []
             
-            # 2串1
             # 2串1
             for i in range(len(confidence_horses)):
                 for j in range(i+1, len(confidence_horses)):
