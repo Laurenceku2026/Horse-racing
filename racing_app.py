@@ -206,8 +206,8 @@ TEXTS = {
         "remaining": "剩餘次數",
         "unlimited": "無限",
         "upgrade": "升級專業版",
-        "monthly": "月付 $29/月",
-        "quarterly": "季付 $79/季",
+        "monthly": "月付 HK$380/月",
+        "quarterly": "季付 HK$988/季",
         "save_info": "季付更划算",
         
         # ==================== 语言 ====================
