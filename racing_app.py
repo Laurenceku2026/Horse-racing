@@ -2804,30 +2804,205 @@ def render_home():
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_cached_upcoming_races() -> List[Dict]:
-    """缓存未来14天的赛事列表"""
-    return get_upcoming_races()
+    """缓存未来14天的赛事列表（直接从 API 获取）"""
+    races = get_upcoming_races()
+    return races
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_cached_race_runners(race_date: str, venue: str, race_no: int) -> List[Dict]:
     """缓存出赛马匹数据"""
     return get_race_runners_with_details(race_date, venue, race_no)
-#------------
-def get_upcoming_races() -> List[Dict]:
-    """获取未来14天的赛事（从数据库读取）"""
+#-----------
+def get_upcoming_races_from_api() -> List[Dict]:
+    """
+    从 Node.js API 获取未来赛程（直接调用 getActiveMeetings）
+    这是获取赛程的主要数据源
+    """
+    try:
+        API_BASE_URL = st.secrets.get("HKJC_API_URL", "")
+        if not API_BASE_URL:
+            print("⚠️ API地址未配置，请在 secrets.toml 中设置 HKJC_API_URL")
+            return []
+        
+        # 调用 /api/meetings 端点
+        url = f"{API_BASE_URL}/meetings"
+        response = requests.get(url, timeout=30)
+        
+        if response.status_code != 200:
+            print(f"❌ API返回错误: {response.status_code}")
+            return []
+        
+        data = response.json()
+        
+        if not data.get("success"):
+            print(f"❌ API返回失败: {data.get('error')}")
+            return []
+        
+        meetings = data.get("data", [])
+        
+        if not meetings:
+            print("⚠️ API返回空数据")
+            return []
+        
+        print(f"✅ 从 API 获取到 {len(meetings)} 个赛马日")
+        
+        # 解析赛程
+        upcoming_races = []
+        today = datetime.now().date()
+        future_limit = today + timedelta(days=14)
+        
+        for meeting in meetings:
+            meeting_date_str = meeting.get("date", "")
+            if not meeting_date_str:
+                continue
+            
+            # 解析日期 (格式: YYYY-MM-DD)
+            try:
+                meeting_date = datetime.strptime(meeting_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                print(f"⚠️ 日期格式错误: {meeting_date_str}")
+                continue
+            
+            # 只保留未来14天内的赛事
+            if meeting_date < today or meeting_date > future_limit:
+                continue
+            
+            venue_code = meeting.get("venueCode", "ST")
+            venue_name = meeting.get("venue", "沙田")
+            
+            # 获取该赛日的场次列表
+            races_list = meeting.get("races", [])
+            
+            if races_list:
+                # 有详细场次信息
+                for race in races_list:
+                    race_no = race.get("no", 0)
+                    distance = race.get("distance", 0)
+                    race_class = race.get("className", "")
+                    
+                    upcoming_races.append({
+                        "race_date": meeting_date_str,
+                        "venue": venue_code,
+                        "venue_name": venue_name,
+                        "race_no": race_no,
+                        "distance": distance,
+                        "race_class": race_class,
+                        "race_id": f"{meeting_date_str}_{venue_code}_{race_no}"
+                    })
+            else:
+                # 没有详细场次，至少添加一个占位记录
+                upcoming_races.append({
+                    "race_date": meeting_date_str,
+                    "venue": venue_code,
+                    "venue_name": venue_name,
+                    "race_no": 0,
+                    "distance": 0,
+                    "race_class": "TBC",
+                    "race_id": f"{meeting_date_str}_{venue_code}_0"
+                })
+        
+        # 按日期和场次排序
+        upcoming_races.sort(key=lambda x: (x.get('race_date', ''), x.get('race_no', 0)))
+        
+        print(f"✅ 解析后得到 {len(upcoming_races)} 场赛事")
+        for race in upcoming_races[:5]:
+            print(f"   {race['race_date']} {race['venue']} 第{race['race_no']}场")
+        
+        return upcoming_races
+        
+    except requests.exceptions.Timeout:
+        print("❌ API请求超时")
+        return []
+    except requests.exceptions.ConnectionError:
+        print("❌ 无法连接到API服务器，请确保 Node.js 服务正在运行")
+        return []
+    except Exception as e:
+        print(f"❌ 获取未来赛事失败: {e}")
+        return []
+#----------
+def get_upcoming_races_from_db() -> List[Dict]:
+    """从本地数据库获取未来赛程（备用数据源）"""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         next_two_weeks = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
         headers = get_supabase_headers(use_secret=True)
-        # 确保返回 race_id
-        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_two_weeks}&order=race_date.asc,race_no.asc&select=*,race_id"
+        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&race_date=lte.{next_two_weeks}&order=race_date.asc,race_no.asc"
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json()
         return []
     except Exception as e:
-        print(f"获取未来赛事失败: {e}")
+        print(f"从数据库获取赛事失败: {e}")
         return []
+#-----------
+def sync_races_to_db(races: List[Dict]) -> bool:
+    """
+    将 API 获取的赛程同步到本地 races 表作为缓存
+    """
+    if not races:
+        return False
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        synced_count = 0
+        
+        for race in races:
+            # 检查是否已存在
+            check_url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race['race_date']}&venue=eq.{race['venue']}&race_no=eq.{race['race_no']}"
+            check_response = requests.get(check_url, headers=headers)
+            
+            if check_response.status_code == 200 and check_response.json():
+                # 已存在，更新
+                update_url = f"{SUPABASE_URL}/rest/v1/races?race_date=eq.{race['race_date']}&venue=eq.{race['venue']}&race_no=eq.{race['race_no']}"
+                update_data = {
+                    "distance": race.get('distance', 0),
+                    "race_class": race.get('race_class', ''),
+                    "updated_at": datetime.now().isoformat()
+                }
+                requests.patch(update_url, headers=headers, json=update_data)
+            else:
+                # 不存在，插入
+                insert_data = {
+                    "race_date": race['race_date'],
+                    "venue": race['venue'],
+                    "race_no": race['race_no'],
+                    "distance": race.get('distance', 0),
+                    "race_class": race.get('race_class', ''),
+                    "race_status": "SCHEDULED",
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat()
+                }
+                insert_url = f"{SUPABASE_URL}/rest/v1/races"
+                response = requests.post(insert_url, headers=headers, json=insert_data)
+                if response.status_code in [200, 201]:
+                    synced_count += 1
+        
+        if synced_count > 0:
+            print(f"✅ 同步 {synced_count} 条新赛程到数据库")
+        return True
+        
+    except Exception as e:
+        print(f"同步赛程到数据库失败: {e}")
+        return False
+#------------
+#------------
+def get_upcoming_races() -> List[Dict]:
+    """
+    获取未来14天的赛事列表（带缓存）
+    优先从 API 获取，失败时尝试从数据库读取
+    """
+    # 优先从 API 获取
+    races = get_upcoming_races_from_api()
+    
+    if races:
+        # 同步到数据库作为备份
+        sync_races_to_db(races)
+        return races
+    
+    # API 失败，尝试从数据库读取
+    print("⚠️ API获取失败，尝试从数据库读取缓存...")
+    return get_upcoming_races_from_db()
 #------------------
 def get_races_by_date(race_date: str) -> List[Dict]:
     """获取指定日期的所有赛事"""
