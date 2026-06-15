@@ -433,8 +433,8 @@ Let AI be your racing assistant.
         "remaining": "Remaining",
         "unlimited": "Unlimited",
         "upgrade": "Upgrade to Pro",
-        "monthly": "Monthly $29/mo",
-        "quarterly": "Quarterly $79/quarter",
+        "monthly": "Monthly HK$380/mo",
+        "quarterly": "Quarterly HK$988/quarter",
         "save_info": "Save with quarterly",
         
         # ==================== Language ====================
@@ -1014,7 +1014,7 @@ def show_paywall():
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("💎 月付 $29/月", key="monthly_btn", use_container_width=True):
+        if st.button("💎 月付 HK$380/月", key="monthly_btn", use_container_width=True):
             url, error = create_checkout_session(
                 st.session_state.user_id, 
                 st.session_state.user_email, 
@@ -1045,7 +1045,7 @@ def show_paywall():
             ''', unsafe_allow_html=True)
     
     with col2:
-        if st.button("💎 季付 $79/季", key="quarterly_btn", use_container_width=True):
+        if st.button("💎 季付 HK$988/季", key="quarterly_btn", use_container_width=True):
             url, error = create_checkout_session(
                 st.session_state.user_id, 
                 st.session_state.user_email, 
