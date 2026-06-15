@@ -2263,7 +2263,7 @@ def render_sidebar():
     with st.sidebar:
         st.markdown(f"## {t()['app_title']}")
         st.markdown("---")
-        
+        #-------------
         if st.session_state.authenticated and not st.session_state.admin_mode:
             user_email = st.session_state.user_email
             username = user_email.split('@')[0] if user_email else user_email
@@ -2274,8 +2274,13 @@ def render_sidebar():
             tier = profile.get("subscription_tier", "free")
             remaining = profile.get("free_trials_remaining", 0)
             
-            tier_display = "💎 " + t()["pro_tier"] if tier == "pro" else "🔒 " + t()["free_tier"]
-            remaining_display = "∞" if remaining == -1 else str(remaining)
+            tier_display = "💎 專業版" if tier == "pro" else "🔒 免費版"
+            
+            # 专业版显示无限，免费版显示剩余次数
+            if tier == "pro":
+                remaining_display = "∞"
+            else:
+                remaining_display = str(remaining)
             
             st.markdown(f"""
             <div class="sidebar-user-info">
