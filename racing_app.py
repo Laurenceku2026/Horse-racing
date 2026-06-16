@@ -2077,7 +2077,149 @@ def render_admin_panel():
                 st.error(f"❌ 当前总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
         
         st.markdown("---")
-        
+        #----------------
+        # ==================== ML 模型参数设置 ====================
+        with st.expander("🤖 ML 模型参数" if lang == "zh" else "🤖 ML Model Parameters", expanded=False):
+            st.caption("调整机器学习模型的训练参数（修改后需重新运行回测生效）" if lang == "zh" else "Adjust ML model training parameters (restart backtest to apply)")
+            
+            # 获取当前 ML 配置
+            from scoring_engine import get_ml_config, update_ml_config
+            ml_config = get_ml_config()
+            
+            # 数据配置
+            if lang == "zh":
+                st.markdown("**📊 数据配置**")
+            else:
+                st.markdown("**📊 Data Configuration**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                recent_games = st.number_input(
+                    "最近比赛场数" if lang == "zh" else "Recent Games",
+                    min_value=10, max_value=100, value=int(ml_config.get("recent_games", 30)),
+                    step=5, key="admin_ml_recent_games"
+                )
+            with col2:
+                top_n_horses = st.number_input(
+                    "关注前N名马" if lang == "zh" else "Top N Horses",
+                    min_value=2, max_value=6, value=int(ml_config.get("top_n_horses", 4)),
+                    step=1, key="admin_ml_top_n"
+                )
+            
+            # LightGBM 参数
+            if lang == "zh":
+                st.markdown("**🌳 LightGBM 参数**")
+            else:
+                st.markdown("**🌳 LightGBM Parameters**")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                lgb_n_estimators = st.number_input(
+                    "树数量" if lang == "zh" else "Trees",
+                    min_value=10, max_value=200, value=int(ml_config.get("lgb_n_estimators", 50)),
+                    step=10, key="admin_lgb_trees"
+                )
+                lgb_max_depth = st.number_input(
+                    "最大深度" if lang == "zh" else "Max Depth",
+                    min_value=2, max_value=10, value=int(ml_config.get("lgb_max_depth", 4)),
+                    step=1, key="admin_lgb_depth"
+                )
+            with col2:
+                lgb_learning_rate = st.number_input(
+                    "学习率" if lang == "zh" else "Learning Rate",
+                    min_value=0.01, max_value=0.5, value=float(ml_config.get("lgb_learning_rate", 0.1)),
+                    step=0.01, format="%.2f", key="admin_lgb_lr"
+                )
+                lgb_num_leaves = st.number_input(
+                    "叶子数" if lang == "zh" else "Leaves",
+                    min_value=4, max_value=64, value=int(ml_config.get("lgb_num_leaves", 16)),
+                    step=2, key="admin_lgb_leaves"
+                )
+            with col3:
+                lgb_subsample = st.number_input(
+                    "子采样" if lang == "zh" else "Subsample",
+                    min_value=0.5, max_value=1.0, value=float(ml_config.get("lgb_subsample", 0.7)),
+                    step=0.05, format="%.2f", key="admin_lgb_subsample"
+                )
+                lgb_colsample = st.number_input(
+                    "特征采样" if lang == "zh" else "Colsample",
+                    min_value=0.5, max_value=1.0, value=float(ml_config.get("lgb_colsample_bytree", 0.7)),
+                    step=0.05, format="%.2f", key="admin_lgb_colsample"
+                )
+            
+            # XGBoost 参数
+            if lang == "zh":
+                st.markdown("**🌲 XGBoost 参数**")
+            else:
+                st.markdown("**🌲 XGBoost Parameters**")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                xgb_n_estimators = st.number_input(
+                    "树数量" if lang == "zh" else "Trees",
+                    min_value=10, max_value=200, value=int(ml_config.get("xgb_n_estimators", 80)),
+                    step=10, key="admin_xgb_trees"
+                )
+                xgb_max_depth = st.number_input(
+                    "最大深度" if lang == "zh" else "Max Depth",
+                    min_value=2, max_value=10, value=int(ml_config.get("xgb_max_depth", 6)),
+                    step=1, key="admin_xgb_depth"
+                )
+            with col2:
+                xgb_learning_rate = st.number_input(
+                    "学习率" if lang == "zh" else "Learning Rate",
+                    min_value=0.01, max_value=0.5, value=float(ml_config.get("xgb_learning_rate", 0.08)),
+                    step=0.01, format="%.2f", key="admin_xgb_lr"
+                )
+            with col3:
+                xgb_subsample = st.number_input(
+                    "子采样" if lang == "zh" else "Subsample",
+                    min_value=0.5, max_value=1.0, value=float(ml_config.get("xgb_subsample", 0.8)),
+                    step=0.05, format="%.2f", key="admin_xgb_subsample"
+                )
+                xgb_colsample = st.number_input(
+                    "特征采样" if lang == "zh" else "Colsample",
+                    min_value=0.5, max_value=1.0, value=float(ml_config.get("xgb_colsample_bytree", 0.8)),
+                    step=0.05, format="%.2f", key="admin_xgb_colsample"
+                )
+            
+            # 保存按钮
+            if st.button("💾 保存 ML 参数" if lang == "zh" else "💾 Save ML Parameters", use_container_width=True):
+                new_ml_config = {
+                    "recent_games": int(recent_games),
+                    "top_n_horses": int(top_n_horses),
+                    "min_races_for_train": 100,
+                    "lgb_n_estimators": int(lgb_n_estimators),
+                    "lgb_max_depth": int(lgb_max_depth),
+                    "lgb_learning_rate": float(lgb_learning_rate),
+                    "lgb_num_leaves": int(lgb_num_leaves),
+                    "lgb_subsample": float(lgb_subsample),
+                    "lgb_colsample_bytree": float(lgb_colsample),
+                    "xgb_n_estimators": int(xgb_n_estimators),
+                    "xgb_max_depth": int(xgb_max_depth),
+                    "xgb_learning_rate": float(xgb_learning_rate),
+                    "xgb_subsample": float(xgb_subsample),
+                    "xgb_colsample_bytree": float(xgb_colsample),
+                }
+                update_ml_config(new_ml_config)
+                st.success("✅ ML 参数已保存" if lang == "zh" else "✅ ML Parameters saved")
+                # 清空模型缓存
+                clear_model_cache()
+                st.info("🔄 模型缓存已清空，下次回测将使用新参数" if lang == "zh" else "🔄 Model cache cleared, new parameters will be used")
+            
+            # 重置按钮
+            if st.button("🔄 重置 ML 参数为默认" if lang == "zh" else "🔄 Reset ML Parameters", use_container_width=True):
+                from scoring_engine import reset_ml_config
+                reset_ml_config()
+                st.success("✅ ML 参数已重置" if lang == "zh" else "✅ ML Parameters reset")
+                clear_model_cache()
+                st.rerun()
+            
+            # 显示当前参数摘要
+            if lang == "zh":
+                st.caption(f"💡 当前: LightGBM(树={lgb_n_estimators}, 深度={lgb_max_depth}) | XGBoost(树={xgb_n_estimators}, 深度={xgb_max_depth})")
+            else:
+                st.caption(f"💡 Current: LightGBM(trees={lgb_n_estimators}, depth={lgb_max_depth}) | XGBoost(trees={xgb_n_estimators}, depth={xgb_max_depth})")
         # ==================== 保存按钮 ====================
         col1, col2, col3 = st.columns([1, 1, 2])
         
@@ -7230,7 +7372,7 @@ _model_cache = {}
 
 def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     """
-    获取或训练模型（带缓存）
+    获取或训练模型（带缓存，使用配置参数）
     参数：
         X_train: 训练特征
         y_train: 训练标签
@@ -7255,29 +7397,34 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     if cache_key in _model_cache:
         return _model_cache[cache_key]
     
+    # ✅ 从配置获取参数
+    from scoring_engine import get_ml_config
+    config = get_ml_config()
+    
     # 训练新模型
     if model_type == 'lightgbm' and LGB_AVAILABLE:
         model = lgb.LGBMClassifier(
-            n_estimators=50,
-            max_depth=4,
-            learning_rate=0.1,
+            n_estimators=config.get("lgb_n_estimators", 50),
+            max_depth=config.get("lgb_max_depth", 4),
+            learning_rate=config.get("lgb_learning_rate", 0.1),
+            num_leaves=config.get("lgb_num_leaves", 16),
             random_state=42,
             verbose=-1,
-            subsample=0.8,
-            colsample_bytree=0.8
+            subsample=config.get("lgb_subsample", 0.7),
+            colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
         )
         model.fit(X_train, y_train)
     elif model_type == 'xgboost' and XGB_AVAILABLE:
         model = xgb.XGBClassifier(
-            n_estimators=50,
-            max_depth=4,
-            learning_rate=0.1,
+            n_estimators=config.get("xgb_n_estimators", 80),
+            max_depth=config.get("xgb_max_depth", 6),
+            learning_rate=config.get("xgb_learning_rate", 0.08),
             random_state=42,
             use_label_encoder=False,
             eval_metric='logloss',
             verbosity=0,
-            subsample=0.8,
-            colsample_bytree=0.8
+            subsample=config.get("xgb_subsample", 0.8),
+            colsample_bytree=config.get("xgb_colsample_bytree", 0.8)
         )
         model.fit(X_train, y_train)
     else:
