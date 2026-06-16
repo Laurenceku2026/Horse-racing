@@ -3468,10 +3468,14 @@ def render_home():
                 # 1. 同步数据（从 API 获取新赛事和成绩）
                 result = sync_all_data()
                 
-                if result.get("success"):
-                    # 2. 强制刷新评分缓存
+                # 2. 检查是否有新数据
+                new_races = result.get('new_races', 0)
+                new_records = result.get('new_records', 0)
+                
+                if result.get("success") and (new_races > 0 or new_records > 0):
+                    # ✅ 有新数据：刷新缓存
                     try:
-                        with st.spinner("正在刷新评分缓存..."):
+                        with st.spinner("正在更新评分缓存..."):
                             # 清空缓存表
                             headers = get_supabase_headers(use_secret=True)
                             delete_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
@@ -3483,8 +3487,8 @@ def render_home():
                                 save_horse_scores_to_cache(df)
                             
                             st.success(texts.get('update_complete', '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录，評分緩存已刷新').format(
-                                new_races=result.get('new_races', 0), 
-                                new_records=result.get('new_records', 0)
+                                new_races=new_races, 
+                                new_records=new_records
                             ))
                             
                             # 清除 Streamlit 缓存
@@ -3493,6 +3497,9 @@ def render_home():
                     except Exception as e:
                         st.warning(f"数据同步成功，但缓存刷新失败: {e}")
                         st.rerun()
+                elif result.get("success"):
+                    # ⚠️ 没有新数据：只提示，不重新计算
+                    st.info("✅ 数据已是最新，无需更新评分缓存")
                 else:
                     st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
     
