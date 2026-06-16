@@ -343,7 +343,104 @@ def calculate_trend_score(performances: List[Dict]) -> float:
         return 70
     else:
         return 50
+#----------
+# ==================== 基础往绩辅助函数 ====================
 
+def calculate_avg_distance_rating(past_performances: List[Dict], target_distance: int) -> float:
+    """
+    计算在目标路程附近的平均表现评分
+    参数：
+        past_performances: 往绩列表
+        target_distance: 目标路程（米）
+    返回：
+        0-100 分
+    """
+    if not past_performances:
+        return 50.0
+    
+    scores = []
+    weights = []
+    
+    for p in past_performances:
+        distance = p.get('distance', 0)
+        if not distance or distance <= 0:
+            continue
+        
+        # 路程差异越小，权重越高
+        distance_diff = abs(distance - target_distance)
+        if distance_diff <= 200:
+            weight = 1.0 - (distance_diff / 200) * 0.5
+        else:
+            weight = 0.3
+        
+        # 名次评分
+        pos = p.get('position', 0)
+        if pos == 1:
+            score = 100
+        elif pos == 2:
+            score = 85
+        elif pos == 3:
+            score = 70
+        elif 4 <= pos <= 5:
+            score = 55
+        elif 6 <= pos <= 8:
+            score = 40
+        else:
+            score = 25
+        
+        scores.append(score)
+        weights.append(weight)
+    
+    if not scores:
+        return 50.0
+    
+    total_weighted_score = sum(scores[i] * weights[i] for i in range(len(scores)))
+    total_weight = sum(weights)
+    
+    return total_weighted_score / total_weight if total_weight > 0 else 50.0
+
+
+def calculate_rating_trend(past_performances: List[Dict]) -> float:
+    """
+    计算名次趋势（最近几场的名次变化）
+    参数：
+        past_performances: 往绩列表（按日期排序）
+    返回：
+        趋势值（正数表示进步，负数表示退步）
+    """
+    if len(past_performances) < 2:
+        return 0.0
+    
+    # 取最近5场
+    recent = past_performances[:5] if len(past_performances) >= 5 else past_performances
+    
+    # 提取名次（过滤无效值）
+    positions = []
+    for p in recent:
+        pos = p.get('position', 0)
+        if pos and pos > 0:
+            positions.append(pos)
+    
+    if len(positions) < 2:
+        return 0.0
+    
+    # 计算趋势：用线性回归的斜率
+    n = len(positions)
+    x = list(range(n))
+    sum_x = sum(x)
+    sum_y = sum(positions)
+    sum_xy = sum(x[i] * positions[i] for i in range(n))
+    sum_x2 = sum(x[i] ** 2 for i in range(n))
+    
+    denominator = n * sum_x2 - sum_x ** 2
+    if denominator == 0:
+        return 0.0
+    
+    # 斜率（负数表示名次在进步，即数值变小）
+    slope = (n * sum_xy - sum_x * sum_y) / denominator
+    
+    # 返回负斜率（因为名次越小越好，所以负斜率表示进步）
+    return -slope
 #--------
 def calculate_basic_score(
     past_performances: List[Dict], 
@@ -408,7 +505,67 @@ def calculate_basic_score(
     
     return round(score, 2)
 #-------------
-
+def get_horse_past_performances_v2_optimized(horse_id: str, cache: Dict[str, List[Dict]], limit: int = 10) -> List[Dict]:
+    """
+    从缓存中获取马匹往绩（优化版）
+    参数：
+        horse_id: 马匹ID
+        cache: 批量获取的缓存字典
+        limit: 返回最近 N 场
+    """
+    if not horse_id or horse_id not in cache:
+        return []
+    
+    performances = cache.get(horse_id, [])
+    return performances[:limit]
+#------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_horses_performances_batch(horse_ids: tuple) -> Dict[str, List[Dict]]:
+    """
+    批量获取多匹马的历史往绩
+    参数：
+        horse_ids: 马匹ID元组，如 ('H001', 'H002', ...)
+    返回：
+        { horse_id: [往绩记录列表] }
+    """
+    if not horse_ids:
+        return {}
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 构建 IN 查询
+        ids_str = ','.join([f"'{hid}'" for hid in horse_ids])
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?horse_id=in.({ids_str})&order=race_date.desc&limit=10000"
+        
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"批量获取失败: {response.status_code}")
+            return {}
+        
+        data = response.json()
+        
+        # 构建缓存
+        cache = {}
+        for p in data:
+            hid = p.get('horse_id')
+            if not hid:
+                continue
+            if hid not in cache:
+                cache[hid] = []
+            cache[hid].append(p)
+        
+        # 对每个马匹的往绩按日期排序（最新的在前）
+        for hid in cache:
+            cache[hid].sort(key=lambda x: x.get('race_date', ''), reverse=True)
+        
+        print(f"批量获取 {len(horse_ids)} 匹马，共 {len(data)} 条记录")
+        return cache
+        
+    except Exception as e:
+        print(f"批量获取异常: {e}")
+        return {}
 # ==================== 场次因素评分 ====================
 
 def calculate_draw_score(draw: int, venue: str, distance: int) -> float:
