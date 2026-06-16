@@ -228,7 +228,30 @@ TRAINER_SCORES = {
     "其他": 50
 }
 
-
+#----------
+def get_horse_weight_comfort_range_from_cache(horse_id: str, past_performances: List[Dict]) -> Tuple[int, int]:
+    """
+    从缓存的往绩中获取马匹的负磅舒适区（不查询数据库）
+    参数：
+        horse_id: 马匹ID（用于日志）
+        past_performances: 往绩列表
+    返回：
+        (舒适区下限, 舒适区上限)
+    """
+    WEIGHT_COMFORT_RANGE = 5
+    winning_weights = []
+    
+    for p in past_performances:
+        pos = p.get('finishing_position', 0)
+        weight = p.get('actual_weight', 0)
+        if pos in [1, 2, 3] and weight and weight > 0:
+            winning_weights.append(weight)
+    
+    if len(winning_weights) >= 3:
+        mean_weight = sum(winning_weights) / len(winning_weights)
+        return (int(mean_weight - WEIGHT_COMFORT_RANGE), int(mean_weight + WEIGHT_COMFORT_RANGE))
+    
+    return (118, 128)  # 默认舒适区
 # ==================== 马龄计算 ====================
 
 def calculate_horse_age(horse_id: str, race_date: str) -> float:
