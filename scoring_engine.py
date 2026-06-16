@@ -10,6 +10,8 @@ import re
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from supabase import create_client
+import requests  # ← 新增
+import streamlit as st  # ← 新增
 #-------------------
 # ==================== 评分配置加载 ====================
 
@@ -32,8 +34,8 @@ def load_scoring_config_from_db() -> Dict:
     }
     
     try:
-        import requests
-        import streamlit as st
+        # 删除下面的 import requests 和 import streamlit as st
+        # 因为已经在顶部导入了
         
         SUPABASE_URL = st.secrets.get("SUPABASE_STOCK_URL", "")
         SUPABASE_KEY = st.secrets.get("SUPABASE_STOCK_SECRET_KEY", "")
@@ -398,8 +400,106 @@ def calculate_avg_distance_rating(past_performances: List[Dict], target_distance
     total_weight = sum(weights)
     
     return total_weighted_score / total_weight if total_weight > 0 else 50.0
+#--------------
+# ==================== 缺失的辅助函数 ====================
+
+def normalize_odds(odds, max_odds: float = 99.0) -> float:
+    """将赔率归一化为0-100的分数"""
+    if odds is None or odds == '' or odds == 'null':
+        return 50.0
+    
+    try:
+        odds_float = float(odds)
+    except (ValueError, TypeError):
+        return 50.0
+    
+    if odds_float <= 0 or odds_float > max_odds:
+        return 50.0
+    
+    normalized = max(0, min(100, 100 * (1 - (odds_float - 1) / (max_odds - 1))))
+    return normalized
 
 
+def get_draw_score(draw: int, venue: str, distance: int) -> float:
+    """计算档位优势分数"""
+    if draw is None or draw < 1 or draw > 14:
+        return 50.0
+    
+    # 沙田1000米直路赛：外档有利
+    if venue == "ST" and distance == 1000:
+        # 外档有利：1档20分，14档100分
+        draw_score = int(20 + (draw - 1) * (80 / 13))
+    else:
+        # 内档有利：1档100分，14档20分
+        draw_score = int(100 - (draw - 1) * (80 / 13))
+    
+    return max(0, min(100, draw_score))
+
+
+def get_weight_advantage_score(actual_weight: int, weight_comfort_range: Tuple[int, int]) -> float:
+    """计算负磅优势分数"""
+    if actual_weight is None or actual_weight <= 0:
+        return 50.0
+    
+    comfort_min, comfort_max = weight_comfort_range
+    
+    if comfort_min <= actual_weight <= comfort_max:
+        return 85.0
+    elif actual_weight < comfort_min:
+        diff = comfort_min - actual_weight
+        return max(40, 85 - diff * 3)
+    else:
+        diff = actual_weight - comfort_max
+        return max(30, 85 - diff * 4)
+
+
+def calculate_same_course_score_from_cache(past_performances: List[Dict], venue: str) -> float:
+    """从缓存的往绩中计算同马场评分"""
+    venue_performances = [p for p in past_performances if p.get('venue') == venue]
+    if not venue_performances:
+        return 50.0
+    
+    recent = venue_performances[:3] if len(venue_performances) >= 3 else venue_performances
+    scores = []
+    for p in recent:
+        pos = p.get('position', 0)
+        if pos == 1:
+            scores.append(100)
+        elif pos == 2:
+            scores.append(85)
+        elif pos == 3:
+            scores.append(70)
+        elif 4 <= pos <= 5:
+            scores.append(55)
+        else:
+            scores.append(35)
+    
+    return sum(scores) / len(scores) if scores else 50.0
+
+
+def calculate_same_distance_score_from_cache(past_performances: List[Dict], distance: int) -> float:
+    """从缓存的往绩中计算同路程评分"""
+    distance_performances = [p for p in past_performances if p.get('distance') == distance]
+    if not distance_performances:
+        return 50.0
+    
+    recent = distance_performances[:3] if len(distance_performances) >= 3 else distance_performances
+    scores = []
+    for p in recent:
+        pos = p.get('position', 0)
+        if pos == 1:
+            scores.append(100)
+        elif pos == 2:
+            scores.append(85)
+        elif pos == 3:
+            scores.append(70)
+        elif 4 <= pos <= 5:
+            scores.append(55)
+        else:
+            scores.append(35)
+    
+    return sum(scores) / len(scores) if scores else 50.0
+#---------------
 def calculate_rating_trend(past_performances: List[Dict]) -> float:
     """
     计算名次趋势（最近几场的名次变化）
@@ -629,10 +729,10 @@ def calculate_race_score(
         race_weights = config.get("race", {})
     
     # === 同场地胜率 ===
-    same_course = calculate_same_course_score_from_cache(horse_id, venue, past_performances)
+    same_course = calculate_same_course_score_from_cache(past_performances, venue)
     
     # === 同路程胜率 ===
-    same_distance = calculate_same_distance_score_from_cache(horse_id, distance, past_performances)
+    same_distance = calculate_same_distance_score_from_cache(past_performances, distance)
     
     # === 档位优势 ===
     draw_score = get_draw_score(draw, venue, distance)
@@ -840,17 +940,12 @@ def calculate_burst_score(running_position: str, finishing_position: int = None)
 def get_horse_weight_comfort_range_from_cache(horse_id: str, past_performances: List[Dict]) -> Tuple[int, int]:
     """
     从缓存的往绩中获取马匹的负磅舒适区（不查询数据库）
-    参数：
-        horse_id: 马匹ID（用于日志）
-        past_performances: 往绩列表
-    返回：
-        (舒适区下限, 舒适区上限)
     """
     WEIGHT_COMFORT_RANGE = 5
     winning_weights = []
     
     for p in past_performances:
-        pos = p.get('finishing_position', 0)
+        pos = p.get('position', 0)  # ← 改为 position
         weight = p.get('actual_weight', 0)
         if pos in [1, 2, 3] and weight and weight > 0:
             winning_weights.append(weight)
@@ -937,10 +1032,6 @@ def calculate_odds_score(
 ) -> float:
     """
     计算赔率因素评分（0-100分）
-    参数：
-        odds_win: 独赢赔率
-        odds_trend_score: 赔率变动趋势评分（0-100），默认为50
-        odds_weights: 二级因子权重
     """
     if odds_weights is None:
         config = get_scoring_config()
