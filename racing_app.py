@@ -4218,33 +4218,49 @@ try:
 except ImportError:
     SKLEARN_AVAILABLE = False
 
-
+#-------------
 def prepare_ml_features(horse_id: int, race_id: int, past_performances_v2: List[Dict]) -> Dict:
     """
     为 ML 模型准备特征
-    返回特征字典
+    使用最近 N 场数据（N 从 get_ml_config 读取，默认30场）
     """
     features = {}
     
-    # 1. 基础统计特征
-    if past_performances_v2:
-        recent_5 = past_performances_v2[:5] if len(past_performances_v2) >= 5 else past_performances_v2
-        recent_10 = past_performances_v2[:10] if len(past_performances_v2) >= 10 else past_performances_v2
+    # 获取 ML 配置
+    from scoring_engine import get_ml_config
+    ml_config = get_ml_config()
+    recent_games = ml_config.get("recent_games", 30)
+    
+    # ✅ 只取最近 N 场（从 get_ml_config 读取）
+    if len(past_performances_v2) > recent_games:
+        recent_performances = past_performances_v2[:recent_games]
+    else:
+        recent_performances = past_performances_v2
+    
+    # 1. 基础统计特征（基于最近 N 场）
+    if recent_performances:
+        total = len(recent_performances)
         
-        # 胜率、入Q率、入T率
-        wins = sum(1 for p in recent_10 if p.get('position') == 1)
-        places = sum(1 for p in recent_10 if p.get('position', 0) <= 2)
-        shows = sum(1 for p in recent_10 if p.get('position', 0) <= 3)
+        # 近5场（从最近 N 场中取）
+        recent_5 = recent_performances[:5] if total >= 5 else recent_performances
         
-        features['win_rate_10'] = wins / len(recent_10) if recent_10 else 0
-        features['place_rate_10'] = places / len(recent_10) if recent_10 else 0
-        features['show_rate_10'] = shows / len(recent_10) if recent_10 else 0
+        # 近10场
+        recent_10 = recent_performances[:10] if total >= 10 else recent_performances
+        
+        # 胜率、入Q率、入T率（最近10场）
+        wins_10 = sum(1 for p in recent_10 if p.get('position') == 1)
+        places_10 = sum(1 for p in recent_10 if p.get('position', 0) <= 2)
+        shows_10 = sum(1 for p in recent_10 if p.get('position', 0) <= 3)
+        
+        features['win_rate_10'] = wins_10 / len(recent_10) if recent_10 else 0
+        features['place_rate_10'] = places_10 / len(recent_10) if recent_10 else 0
+        features['show_rate_10'] = shows_10 / len(recent_10) if recent_10 else 0
         
         # 近5场胜率
         wins_5 = sum(1 for p in recent_5 if p.get('position') == 1)
         features['win_rate_5'] = wins_5 / len(recent_5) if recent_5 else 0
         
-        # 平均完成时间
+        # 平均完成时间（近5场）
         finish_times = [p.get('finish_seconds', 0) for p in recent_5 if p.get('finish_seconds')]
         features['avg_finish_time'] = np.mean(finish_times) if finish_times else 0
         
@@ -4261,6 +4277,33 @@ def prepare_ml_features(horse_id: int, race_id: int, past_performances_v2: List[
             features['weight_trend'] = weights[0] - weights[-1]
         else:
             features['weight_trend'] = 0
+        
+        # 近3场胜率（从最近 N 场中取）
+        recent_3 = recent_performances[:3] if total >= 3 else recent_performances
+        wins_3 = sum(1 for p in recent_3 if p.get('position') == 1)
+        features['win_rate_3'] = wins_3 / len(recent_3) if recent_3 else 0
+        
+    else:
+        # 无数据，填充默认值
+        features['win_rate_10'] = 0
+        features['place_rate_10'] = 0
+        features['show_rate_10'] = 0
+        features['win_rate_5'] = 0
+        features['win_rate_3'] = 0
+        features['avg_finish_time'] = 0
+        features['position_trend'] = 0
+        features['weight_trend'] = 0
+    
+    # 本场特征：增加反映马匹实力的字段
+    features['draw'] = 0
+    features['actual_weight'] = 0
+    features['odds'] = 0
+    features['distance'] = 0
+    features['jockey_id'] = 0
+    features['trainer_id'] = 0
+    
+    # ✅ 记录使用了多少场数据，便于调试
+    features['data_used_count'] = len(recent_performances)
     
     return features
 
@@ -4399,17 +4442,28 @@ def predict_with_ml_model(model: Any, features: Dict) -> float:
         print(f"预测失败: {e}")
         return 0.5
 
-
+#-------------
 def get_model_predictions(race_id: int, runners: List[Dict], model_type: str) -> List[float]:
     """
     获取 ML 模型预测的胜率
+    只对前 N 名马进行预测（N 从 get_ml_config 读取，默认4名）
     model_type: 'lightgbm', 'xgboost', 'ensemble'
     """
-    predictions = []
+    # 获取 ML 配置
+    from scoring_engine import get_ml_config
+    ml_config = get_ml_config()
+    top_n_horses = ml_config.get("top_n_horses", 4)
+    recent_games = ml_config.get("recent_games", 30)
     
     # 训练模型（使用历史数据）
-    # 注意：实际应用中应该缓存模型，避免重复训练
     draws = get_historical_draws_for_training(limit=300)
+    
+    predictions = []
+    
+    # ✅ 先按评分排序，只取前 N 名马进行预测
+    # 如果没有评分，则按马号顺序取前 N 名
+    sorted_runners = sorted(runners, key=lambda x: x.get('overall_score', 0), reverse=True)
+    top_runners = sorted_runners[:top_n_horses]
     
     if model_type == 'lightgbm':
         model = train_lightgbm_model(draws)
@@ -4420,9 +4474,10 @@ def get_model_predictions(race_id: int, runners: List[Dict], model_type: str) ->
         lgb_model = train_lightgbm_model(draws)
         xgb_model = train_xgboost_model(draws)
         
-        for runner in runners:
+        for runner in top_runners:
             horse_id = runner.get('horse_id')
-            past = get_horse_past_performances_v2(horse_id, limit=10)
+            # 获取该马匹在 race_date 之前的往绩（限制最近 N 场）
+            past = get_horse_past_performances_v2(horse_id, limit=recent_games)
             features = prepare_ml_features(horse_id, race_id, past)
             
             if features:
@@ -4434,22 +4489,35 @@ def get_model_predictions(race_id: int, runners: List[Dict], model_type: str) ->
             
             predictions.append(prob)
         
+        # ✅ 补充剩余马匹的默认概率（0.5）
+        remaining_count = len(runners) - len(predictions)
+        for _ in range(remaining_count):
+            predictions.append(0.5)
+        
         return predictions
     
-    for runner in runners:
+    # 单模型预测
+    for runner in top_runners:
         horse_id = runner.get('horse_id')
-        past = get_horse_past_performances_v2(horse_id, limit=10)
+        past = get_horse_past_performances_v2(horse_id, limit=recent_games)
         features = prepare_ml_features(horse_id, race_id, past)
         
         if features:
             features['draw'] = runner.get('draw', 0)
             features['actual_weight'] = runner.get('actual_weight', 0)
             features['odds'] = runner.get('odds_win', 0)
+            # ✅ 记录数据使用量
+            features['data_used_count'] = len(past)
             prob = predict_with_ml_model(model, features)
         else:
             prob = 0.5
         
         predictions.append(prob)
+    
+    # ✅ 补充剩余马匹的默认概率（0.5）
+    remaining_count = len(runners) - len(predictions)
+    for _ in range(remaining_count):
+        predictions.append(0.5)
     
     return predictions
 
@@ -6949,8 +7017,15 @@ def calculate_basic_score_fast(past_performances_v2: List[Dict], target_distance
 def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict], horse_cache: Dict) -> Tuple[pd.DataFrame, pd.Series]:
     """
     准备截止到 cutoff_date 之前的训练数据
+    只关注前 N 名马（N 从 get_ml_config 读取，默认4名）
     返回: (X_features, y_labels)
     """
+    # 获取 ML 配置
+    from scoring_engine import get_ml_config
+    ml_config = get_ml_config()
+    recent_games = ml_config.get("recent_games", 30)
+    top_n_horses = ml_config.get("top_n_horses", 4)
+    
     X_list = []
     y_list = []
     
@@ -6974,15 +7049,22 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
         race_date = first_runner.get('race_date')
         distance = first_runner.get('distance', 1200)
         
-        for r in runners_data:
+        # ✅ 只关注前 N 名马（默认4名）
+        # 按名次排序，只取前 N 名
+        sorted_runners = sorted(runners_data, key=lambda x: x.get('position', 99))
+        top_runners = sorted_runners[:top_n_horses]
+        
+        for r in top_runners:
             horse_id = r.get('horse_id')
             if not horse_id:
                 continue
             
-            # 获取该马匹在 race_date 之前的往绩
+            # 获取该马匹在 race_date 之前的往绩（限制最近 N 场）
             all_past = horse_cache.get(horse_id, [])
             past_before = [p for p in all_past if p.get('race_date', '') < race_date]
-            past_before = past_before[:10]
+            
+            # ✅ 只取最近 recent_games 场
+            past_before = past_before[:recent_games]
             
             # 构建特征
             features = {}
@@ -6990,18 +7072,26 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             # 1. 基础统计特征
             if past_before:
                 total = len(past_before)
-                wins = sum(1 for p in past_before if p.get('position') == 1)
-                places = sum(1 for p in past_before if p.get('position', 0) in [1, 2])
-                shows = sum(1 for p in past_before if p.get('position', 0) in [1, 2, 3])
+                recent_5 = past_before[:5] if total >= 5 else past_before
+                recent_10 = past_before[:10] if total >= 10 else past_before
                 
-                features['win_rate'] = wins / total if total > 0 else 0
-                features['place_rate'] = places / total if total > 0 else 0
-                features['show_rate'] = shows / total if total > 0 else 0
+                # 胜率、入Q率、入T率（最近10场）
+                wins = sum(1 for p in recent_10 if p.get('position') == 1)
+                places = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2])
+                shows = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2, 3])
+                
+                features['win_rate'] = wins / len(recent_10) if recent_10 else 0
+                features['place_rate'] = places / len(recent_10) if recent_10 else 0
+                features['show_rate'] = shows / len(recent_10) if recent_10 else 0
                 
                 # 近5场胜率
-                recent_5 = past_before[:5]
                 wins_5 = sum(1 for p in recent_5 if p.get('position') == 1)
                 features['win_rate_5'] = wins_5 / len(recent_5) if recent_5 else 0
+                
+                # 近3场胜率
+                recent_3 = past_before[:3] if total >= 3 else past_before
+                wins_3 = sum(1 for p in recent_3 if p.get('position') == 1)
+                features['win_rate_3'] = wins_3 / len(recent_3) if recent_3 else 0
                 
                 # 平均负磅
                 weights = [p.get('actual_weight', 0) for p in past_before if p.get('actual_weight')]
@@ -7011,6 +7101,7 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 features['place_rate'] = 0
                 features['show_rate'] = 0
                 features['win_rate_5'] = 0
+                features['win_rate_3'] = 0
                 features['avg_weight'] = 0
             
             # 2. 本场特征
@@ -7022,6 +7113,9 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             # 3. 骑师特征（如果有骑师胜率数据）
             jockey = r.get('jockey', '')
             features['jockey_win_rate'] = 0  # 可扩展：从 jockeys 表获取
+            
+            # ✅ 记录数据使用量
+            features['data_used_count'] = len(past_before)
             
             X_list.append(features)
             
@@ -7232,7 +7326,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
             if model is None:
                 status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
                 continue
-            
+            #-----------
             # 9.2 预测 current_date 当天的所有赛事
             for race in races_by_date[current_date]:
                 # 内层循环取消检查点
@@ -7253,9 +7347,173 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                 if not runners_data:
                     continue
                 
-                # 为每匹马构建特征并预测
+                # ✅ 步骤1：先使用评分系统对马匹排序（或直接按名次排序）
+                # 获取该场赛事的实际结果（用于后续对比）
+                runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
+                
+                # ✅ 步骤2：只对前 N 名马进行预测（默认4名）
+                from scoring_engine import get_ml_config
+                ml_config = get_ml_config()
+                top_n_horses = ml_config.get("top_n_horses", 4)
+                recent_games = ml_config.get("recent_games", 30)
+                
+                # 获取实际前 N 名（用于对比）
+                actual_top_n = runners_data_sorted[:top_n_horses]
+                actual_top_n_ids = [r.get('horse_id') for r in actual_top_n if r.get('horse_id')]
+                
+                # 构建特征并预测
                 runners = []
-                for r in runners_data:
+                
+                # ✅ 只对实际前 N 名的马匹进行预测
+                for r in actual_top_n:
+                    horse_id = r.get('horse_id')
+                    if not horse_id:
+                        continue
+                    
+                    horse_name = r.get('horse_name', '')
+                    
+                    # 获取该马匹在 race_date 之前的往绩（限制最近 N 场）
+                    all_past = horse_cache.get(horse_id, [])
+                    past_before = [p for p in all_past if p.get('race_date', '') < race_date]
+                    past_before = past_before[:recent_games]  # ✅ 只取最近 N 场
+                    
+                    # 构建特征
+                    features = {}
+                    
+                    if past_before:
+                        total = len(past_before)
+                        recent_5 = past_before[:5] if total >= 5 else past_before
+                        recent_10 = past_before[:10] if total >= 10 else past_before
+                        
+                        wins = sum(1 for p in recent_10 if p.get('position') == 1)
+                        places = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2])
+                        shows = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2, 3])
+                        
+                        features['win_rate'] = wins / len(recent_10) if recent_10 else 0
+                        features['place_rate'] = places / len(recent_10) if recent_10 else 0
+                        features['show_rate'] = shows / len(recent_10) if recent_10 else 0
+                        
+                        wins_5 = sum(1 for p in recent_5 if p.get('position') == 1)
+                        features['win_rate_5'] = wins_5 / len(recent_5) if recent_5 else 0
+                        
+                        recent_3 = past_before[:3] if total >= 3 else past_before
+                        wins_3 = sum(1 for p in recent_3 if p.get('position') == 1)
+                        features['win_rate_3'] = wins_3 / len(recent_3) if recent_3 else 0
+                        
+                        weights = [p.get('actual_weight', 0) for p in past_before if p.get('actual_weight')]
+                        features['avg_weight'] = sum(weights) / len(weights) if weights else 0
+                    else:
+                        features['win_rate'] = 0
+                        features['place_rate'] = 0
+                        features['show_rate'] = 0
+                        features['win_rate_5'] = 0
+                        features['win_rate_3'] = 0
+                        features['avg_weight'] = 0
+                    
+                    features['draw'] = r.get('draw', 0) or 0
+                    features['actual_weight'] = r.get('actual_weight', 0) or 0
+                    features['odds'] = r.get('odds', 10) or 10
+                    features['distance'] = distance
+                    features['jockey_win_rate'] = 0
+                    features['data_used_count'] = len(past_before)
+                    
+                    # 预测
+                    prob = predict_with_model(model, features, model_type)
+                    
+                    # 获取赔率
+                    odds_raw = r.get('odds')
+                    try:
+                        odds = float(odds_raw) if odds_raw else 10
+                    except (ValueError, TypeError):
+                        odds = 10
+                    
+                    runners.append({
+                        "horse_id": horse_id,
+                        "horse_name": horse_name,
+                        "horse_no": r.get('horse_no'),
+                        "finishing_position": r.get('position'),
+                        "win_probability": prob,
+                        "odds_win": odds,
+                        "actual_position": r.get('position')  # 保存实际名次
+                    })
+                
+                if not runners:
+                    continue
+                
+                # ✅ 步骤3：按预测概率排序
+                runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
+                
+                # 获取预测前三名
+                predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
+                predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
+                predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
+                predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
+                
+                # 获取实际结果（所有马匹的实际名次）
+                actual_1st = None
+                actual_2nd = None
+                actual_3rd = None
+                actual_top3_set = set()
+                
+                for r in runners_data_sorted:
+                    pos = r.get('position')
+                    horse_name = r.get('horse_name', '')
+                    if pos == 1:
+                        actual_1st = horse_name
+                        actual_top3_set.add(horse_name)
+                    elif pos == 2:
+                        actual_2nd = horse_name
+                        actual_top3_set.add(horse_name)
+                    elif pos == 3:
+                        actual_3rd = horse_name
+                        actual_top3_set.add(horse_name)
+                
+                # 统计各指标（与原有逻辑一致）
+                is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
+                
+                hits = len(predicted_top3_set & actual_top3_set)
+                total_top3_hits += hits
+                if hits >= 1:
+                    total_top3_hit_races += 1
+                
+                tri_correct = (predicted_top3_set == actual_top3_set) if len(predicted_top3_set) == 3 and len(actual_top3_set) == 3 else False
+                if tri_correct:
+                    total_tri_correct += 1
+                
+                tce_correct = (predicted_1st == actual_1st and 
+                               predicted_2nd == actual_2nd and 
+                               predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
+                if tce_correct:
+                    total_tce_correct += 1
+                
+                # ROI：每场都投注 100 元（只对预测的前4名中的第1名投注）
+                total_stake += 100
+                if is_correct:
+                    odds = runners[0].get('odds_win', 3.0) if runners else 3.0
+                    try:
+                        odds = float(odds) if odds else 3.0
+                    except:
+                        odds = 3.0
+                    total_return += 100 * odds
+                
+                # 记录调试详情
+                result["debug_details"].append({
+                    "赛期": race_date,
+                    "场次": race_no,
+                    "预测第1名": predicted_1st or "-",
+                    "预测第2名": predicted_2nd or "-",
+                    "预测第3名": predicted_3rd or "-",
+                    "实际第1名": actual_1st or "-",
+                    "实际第2名": actual_2nd or "-",
+                    "实际第3名": actual_3rd or "-",
+                    "独赢正确": "✅" if is_correct else "❌",
+                    "前3名命中匹数": hits,
+                    "前3名全中": "✅" if tri_correct else "❌",
+                    "前3名顺序正确": "✅" if tce_correct else "❌"
+                })
+                
+                if is_correct:
+                    correct_predictions += 1
                     horse_id = r.get('horse_id')
                     if not horse_id:
                         continue
