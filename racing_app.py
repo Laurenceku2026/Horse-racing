@@ -2611,7 +2611,81 @@ def render_sidebar():
         
         with st.expander(t()["guide_header"], expanded=False):
             st.markdown(t()["guide_text"])
-        
+        #---------------
+                # ==================== 评分系统介绍 ====================
+        with st.expander("📊 评分系统" if lang == "zh" else "📊 Rating System", expanded=False):
+            if lang == "zh":
+                st.markdown("""
+                **一级因子权重**
+                
+                | 一级因子 | 权重 | 说明 |
+                |---------|------|------|
+                | 基础往绩 | 0-100% | 历史表现评估实力与稳定性 |
+                | 场次因素 | 0-100% | 本场条件适配度 |
+                | 赔率因素 | 0-100% | 市场赔率与资金动向 |
+                | 状态因素 | 0-100% | 即时状态综合评估 |
+                
+                **二级因子详解**
+                
+                | 一级因子 | 二级因子 | 权重 | 评分逻辑 |
+                |---------|---------|------|---------|
+                | 基础往绩 | 近3场胜率 | 20% | 近期状态最重要 |
+                | | 近10场胜率 | 20% | 长期实力评估 |
+                | | 近10场入Q率 | 15% | 稳定性指标 |
+                | | 近10场入T率 | 15% | 整体水平反映 |
+                | | 同程表现评分 | 15% | 路程适配度 |
+                | | 名次趋势 | 15% | 进步/退步趋势 |
+                | 场次因素 | 同场地胜率 | 25% | 场地专长适应性 |
+                | | 同路程胜率 | 25% | 路程专长适应性 |
+                | | 档位优势 | 15% | 起步位置优劣 |
+                | | 负磅变化 | 10% | 重量影响评估 |
+                | | 骑师配合 | 15% | 骑师胜率反映 |
+                | | 练马师状态 | 10% | 马房状态评估 |
+                | 赔率因素 | 独赢赔率 | 60% | 市场看好程度 |
+                | | 赔率变动趋势 | 40% | 资金流向反映 |
+                | 状态因素 | 马龄因子 | 30% | 4-6岁黄金期 |
+                | | 体重变化 | 25% | 与上赛比较 |
+                | | 事件报告 | 25% | 受阻/健康影响 |
+                | | 冲刺能力 | 20% | 后劲走位分析 |
+                
+                **评分流程**：四维评分 → 加权综合 → Softmax转换 → 胜率概率
+                """)
+            else:
+                st.markdown("""
+                **Level 1 Weights**
+                
+                | Level 1 Factor | Weight | Description |
+                |---------------|--------|-------------|
+                | Basic Performance | 0-100% | Historical performance evaluation |
+                | Race Factors | 0-100% | Race condition adaptability |
+                | Odds Factors | 0-100% | Market odds & money flow |
+                | Status Factors | 0-100% | Current condition assessment |
+                
+                **Level 2 Factors**
+                
+                | Level 1 | Level 2 | Weight | Scoring Logic |
+                |---------|---------|--------|---------------|
+                | Basic | Win Rate (L3) | 20% | Recent form is most important |
+                | | Win Rate (L10) | 20% | Long-term ability assessment |
+                | | Place Rate (L10) | 15% | Consistency indicator |
+                | | Show Rate (L10) | 15% | Overall level reflection |
+                | | Distance Rating | 15% | Distance adaptability |
+                | | Ranking Trend | 15% | Progress/decline trend |
+                | Race | Same Course Rate | 25% | Course adaptability |
+                | | Same Distance Rate | 25% | Distance adaptability |
+                | | Draw Advantage | 15% | Starting position |
+                | | Weight Change | 10% | Weight impact assessment |
+                | | Jockey | 15% | Jockey win rate |
+                | | Trainer | 10% | Stable form assessment |
+                | Odds | Win Odds | 60% | Market favorability |
+                | | Odds Trend | 40% | Money flow reflection |
+                | Status | Age Factor | 30% | 4-6yo golden period |
+                | | Weight Change | 25% | Compare with last run |
+                | | Incident | 25% | Interference/health impact |
+                | | Burst Ability | 20% | Finishing position analysis |
+                
+                **Scoring Flow**: 4D Score → Weighted Combine → Softmax → Win Probability
+                """)
         # ==================== 新增：彩池玩法 ====================
         with st.expander(t()["betting_pools"], expanded=False):
             if st.session_state.get("lang", "zh") == "zh":
