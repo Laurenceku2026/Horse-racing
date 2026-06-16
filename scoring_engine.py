@@ -683,19 +683,47 @@ def calculate_draw_score(draw: int, venue: str, distance: int) -> float:
     
     return score
 
-
-def calculate_jockey_score(jockey_name: str) -> float:
-    """计算骑师评分"""
+#-------------
+def calculate_jockey_score(jockey_name: str, venue: str = None) -> float:
+    """
+    计算骑师评分
+    参数：
+        jockey_name: 骑师名称
+        venue: 场地（可选，用于场地专长调整）
+    """
     if not jockey_name:
         return 50
-    return JOCKEY_SCORES.get(jockey_name, 50)
+    
+    base_score = JOCKEY_SCORES.get(jockey_name, 50)
+    
+    # 场地专长调整
+    if venue == "ST" and jockey_name in ["潘頓", "田泰安", "布文"]:
+        base_score = min(100, base_score + 5)
+    elif venue == "HV" and jockey_name in ["何澤堯", "潘明輝", "巴度"]:
+        base_score = min(100, base_score + 5)
+    
+    return base_score
 
-
-def calculate_trainer_score(trainer_name: str) -> float:
-    """计算练马师评分"""
+#----------------
+def calculate_trainer_score(trainer_name: str, venue: str = None) -> float:
+    """
+    计算练马师评分
+    参数：
+        trainer_name: 练马师名称
+        venue: 场地（可选，用于场地专长调整）
+    """
     if not trainer_name:
         return 50
-    return TRAINER_SCORES.get(trainer_name, 50)
+    
+    base_score = TRAINER_SCORES.get(trainer_name, 50)
+    
+    # 场地专长调整
+    if venue == "ST" and trainer_name in ["蔡約翰", "羅富全", "告東尼"]:
+        base_score = min(100, base_score + 5)
+    elif venue == "HV" and trainer_name in ["方嘉柏", "姚本輝", "呂健威"]:
+        base_score = min(100, base_score + 5)
+    
+    return base_score
 
 
 def calculate_same_venue_win_rate(performances: List[Dict], venue: str) -> float:
