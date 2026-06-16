@@ -15,20 +15,79 @@ import streamlit as st  # ← 新增
 #-------------------
 # ==================== ML 模型配置 ====================
 
+# 全局 ML 配置缓存
+_ml_config_cache = {
+    # 数据配置
+    "recent_games": 30,
+    "top_n_horses": 4,
+    "min_races_for_train": 100,
+    # LightGBM 参数
+    "lgb_n_estimators": 50,
+    "lgb_max_depth": 4,
+    "lgb_learning_rate": 0.1,
+    "lgb_num_leaves": 16,
+    "lgb_subsample": 0.7,
+    "lgb_colsample_bytree": 0.7,
+    # XGBoost 参数
+    "xgb_n_estimators": 80,
+    "xgb_max_depth": 6,
+    "xgb_learning_rate": 0.08,
+    "xgb_subsample": 0.8,
+    "xgb_colsample_bytree": 0.8,
+}
+
 def get_ml_config() -> Dict:
     """
     获取 ML 模型的全局配置
     返回：
         {
-            "recent_games": 30,      # 使用最近多少场比赛
-            "top_n_horses": 4,       # 只关注前N名马
-            "min_races_for_train": 100  # 训练模型所需最少场次
+            "recent_games": 30,           # 使用最近多少场比赛
+            "top_n_horses": 4,            # 只关注前N名马
+            "min_races_for_train": 100,   # 训练模型所需最少场次
+            # LightGBM 参数
+            "lgb_n_estimators": 50,
+            "lgb_max_depth": 4,
+            "lgb_learning_rate": 0.1,
+            "lgb_num_leaves": 16,
+            "lgb_subsample": 0.7,
+            "lgb_colsample_bytree": 0.7,
+            # XGBoost 参数
+            "xgb_n_estimators": 80,
+            "xgb_max_depth": 6,
+            "xgb_learning_rate": 0.08,
+            "xgb_subsample": 0.8,
+            "xgb_colsample_bytree": 0.8,
         }
     """
-    return {
+    return _ml_config_cache
+
+def update_ml_config(new_config: Dict) -> None:
+    """
+    更新 ML 配置
+    参数：
+        new_config: 要更新的配置字典
+    """
+    global _ml_config_cache
+    _ml_config_cache.update(new_config)
+
+def reset_ml_config() -> None:
+    """重置 ML 配置为默认值"""
+    global _ml_config_cache
+    _ml_config_cache = {
         "recent_games": 30,
         "top_n_horses": 4,
-        "min_races_for_train": 100
+        "min_races_for_train": 100,
+        "lgb_n_estimators": 50,
+        "lgb_max_depth": 4,
+        "lgb_learning_rate": 0.1,
+        "lgb_num_leaves": 16,
+        "lgb_subsample": 0.7,
+        "lgb_colsample_bytree": 0.7,
+        "xgb_n_estimators": 80,
+        "xgb_max_depth": 6,
+        "xgb_learning_rate": 0.08,
+        "xgb_subsample": 0.8,
+        "xgb_colsample_bytree": 0.8,
     }
 
 
