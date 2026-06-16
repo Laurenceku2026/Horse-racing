@@ -5085,6 +5085,9 @@ def render_smart_betting(show_title: bool = True):
     # 在计算完 runners 的 win_probability 之后添加
 
     # ==================== 调用策略引擎生成投注建议 ====================
+    # 初始化 t3 变量，防止 UnboundLocalError
+    t3 = time.time()  # ← 添加这一行，确保 t3 始终有值
+    
     if sorted_runners:
         # 准备策略引擎所需数据
         scores = [runner.get('overall_score', 50) for runner in sorted_runners]
@@ -5100,7 +5103,7 @@ def render_smart_betting(show_title: bool = True):
             except:
                 odds = 0
             odds_win.append(odds)
-            odds_place.append(odds * 0.3 if odds > 0 else 0)  # 位置赔率约为独赢的30%
+            odds_place.append(odds * 0.3 if odds > 0 else 0)
         
         # 获取连赢和单T赔率（如果有真实数据）
         odds_qin = get_odds_qin_from_db(selected_race.get('race_date'), selected_race.get('race_no'))
@@ -5119,6 +5122,10 @@ def render_smart_betting(show_title: bool = True):
         
         t4 = time.time()
         perf_log["策略引擎"] = t4 - t3
+    else:
+        # 如果没有 runners，也要记录时间
+        perf_log["策略引擎"] = 0
+        recommendations = {}  # 空建议
         
     #------------
     # 显示表格
