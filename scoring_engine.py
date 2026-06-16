@@ -13,6 +13,11 @@ from supabase import create_client
 #-------------------
 # ==================== 评分配置加载 ====================
 
+# 全局缓存变量
+_scoring_config_cache = None
+_scoring_config_cache_time = 0
+
+
 def load_scoring_config_from_db() -> Dict:
     """
     从 Supabase scoring_config 表加载权重配置
@@ -60,18 +65,13 @@ def load_scoring_config_from_db() -> Dict:
     return default_config
 
 
-# 内存缓存配置（避免每次调用都查询数据库）
-_scoring_config_cache = None
-_scoring_config_cache_time = 0
-
-
 def get_scoring_config(force_refresh: bool = False) -> Dict:
     """
     获取评分配置（带缓存）
     force_refresh: 强制刷新缓存
     """
-    import time
     global _scoring_config_cache, _scoring_config_cache_time
+    import time
     
     current_time = time.time()
     # 缓存5分钟
