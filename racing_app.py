@@ -3569,7 +3569,7 @@ def calculate_all_horses_scores_v2(runners: List[Dict], user_weights: Dict) -> T
     # 批量获取所有马匹的往绩
     horse_ids = [r.get('horse_id') for r in runners if r.get('horse_id')]
     
-    # 使用 scoring_engine 中的批量获取函数
+    # 使用 scoring_engine 中的批量获取函数（注意：复数形式）
     from scoring_engine import get_horses_performances_batch
     
     # 转换为元组（因为 @st.cache_data 要求 hashable）
