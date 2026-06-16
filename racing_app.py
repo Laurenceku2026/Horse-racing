@@ -1851,7 +1851,7 @@ def render_admin_panel():
         def check_level1_sum():
             total = level1.get("basic", 0) + level1.get("race", 0) + level1.get("odds", 0) + level1.get("status", 0)
             return total
-        
+        #-----------
         # ==================== 一级因子设置 ====================
         if lang == "zh":
             st.markdown("#### 📊 一级因子权重")
@@ -1894,10 +1894,11 @@ def render_admin_panel():
             )
             level1["status"] = status_val / 100
         
-        # 显示总和校验
-        # 显示总和校验
-        total_level1 = check_level1_sum()
-        # ✅ 使用 round() 解决浮点数精度问题
+        # ✅ 计算总和（百分比）
+        total_level1 = (level1.get("basic", 0) + level1.get("race", 0) + 
+                        level1.get("odds", 0) + level1.get("status", 0)) * 100
+        
+        # ✅ 显示总和校验（使用 abs 处理浮点数精度）
         if abs(total_level1 - 100) < 0.01:
             st.success(f"✅ 当前总和: {round(total_level1)}%" if lang == "zh" else f"✅ Total: {round(total_level1)}%")
         else:
