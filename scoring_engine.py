@@ -1485,6 +1485,7 @@ __all__ = [
     'get_horses_performances_batch',
     'calculate_horse_full_score',
     # ML 配置
-    'get_ml_config',           # ← 添加这一行
-    'set_ml_config'            # ← 如果有 set_ml_config 也添加
+    'get_ml_config',
+    'update_ml_config',
+    'reset_ml_config',
 ]
