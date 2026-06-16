@@ -13,6 +13,34 @@ from supabase import create_client
 import requests  # ← 新增
 import streamlit as st  # ← 新增
 #-------------------
+# ==================== ML 模型配置 ====================
+
+def get_ml_config() -> Dict:
+    """
+    获取 ML 模型的全局配置
+    返回：
+        {
+            "recent_games": 30,      # 使用最近多少场比赛
+            "top_n_horses": 4,       # 只关注前N名马
+            "min_races_for_train": 100  # 训练模型所需最少场次
+        }
+    """
+    return {
+        "recent_games": 30,
+        "top_n_horses": 4,
+        "min_races_for_train": 100
+    }
+
+
+def set_ml_config(recent_games: int = 30, top_n_horses: int = 4) -> None:
+    """
+    设置 ML 模型配置（供管理员使用）
+    参数：
+        recent_games: 使用最近多少场比赛
+        top_n_horses: 只关注前N名马
+    """
+    # 这个函数用于更新配置，后续可以扩展保存到数据库
+    pass
 # ==================== 评分配置加载 ====================
 
 # 全局缓存变量
