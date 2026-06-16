@@ -4560,7 +4560,7 @@ def render_smart_betting(show_title: bool = True):
             status_val = st.number_input(
                 "状态因素" if lang == "zh" else "Status",
                 min_value=0, max_value=100, value=int(user_level1.get("status", 0.15) * 100),
-                step=1, key="user_status_weight"
+                step=1, key="user_status_weight_change"
             )
             user_level1["status"] = status_val / 100
         
@@ -4707,7 +4707,7 @@ def render_smart_betting(show_title: bool = True):
                 weight_change = st.number_input(
                     "体重变化" if lang == "zh" else "Weight Change",
                     min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25) * 100),
-                    step=1, key="user_status_weight"
+                    step=1, key="user_status_weight_change"
                 )
             with col2:
                 incident = st.number_input(
