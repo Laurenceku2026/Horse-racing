@@ -7372,21 +7372,22 @@ _model_cache = {}
 
 def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     """
-    获取或训练模型（带缓存，使用配置参数）
+    获取或训练模型（带缓存，统一缓存键格式）
     参数：
         X_train: 训练特征
         y_train: 训练标签
         model_type: 'lightgbm', 'xgboost', 'ensemble'
-        cache_key: 唯一缓存键（基于训练数据哈希值）
+        cache_key: 唯一缓存键（已包含模型类型）
     返回：
         训练好的模型
     """
     global _model_cache
     
-    # 如果是集成模型，分别获取或训练 LightGBM 和 XGBoost
+    # ✅ 如果是集成模型，使用统一的缓存键格式
     if model_type == 'ensemble':
-        lgb_key = f"{cache_key}_lgb"
-        xgb_key = f"{cache_key}_xgb"
+        # ✅ 关键修复：与单独训练使用相同的缓存键格式
+        lgb_key = f"lightgbm_{cache_key}"      # ← 与单独训练一致
+        xgb_key = f"xgboost_{cache_key}"       # ← 与单独训练一致
         
         lgb_model = get_or_train_model(X_train, y_train, 'lightgbm', lgb_key)
         xgb_model = get_or_train_model(X_train, y_train, 'xgboost', xgb_key)
@@ -7538,11 +7539,20 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
             # ⭐ 显示训练数据量
             status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
             #-----------
-            # 新代码（使用缓存）
+            # ✅ 新代码（使用缓存，包含模型类型）
             import hashlib
             
-            # 生成缓存键（基于训练数据的哈希值）
-            cache_key = hashlib.md5(str(train_X.values).encode()).hexdigest()[:16]
+            # 生成数据哈希（不含模型类型）
+            data_hash = hashlib.md5(str(train_X.values).encode()).hexdigest()[:16]
+            
+            # ✅ 根据模型类型生成不同的缓存键
+            if model_type == 'lightgbm':
+                cache_key = f"lightgbm_{data_hash}"
+            elif model_type == 'xgboost':
+                cache_key = f"xgboost_{data_hash}"
+            else:  # ensemble
+                cache_key = data_hash  # 集成模型使用数据哈希，内部会添加前缀
+            
             model = get_or_train_model(train_X, train_y, model_type, cache_key)
 
             if model is None:
