@@ -1373,7 +1373,7 @@ def calculate_race_scores(
     
     return scores, probabilities
 
-
+#--------
 # ==================== 模块导出 ====================
 
 __all__ = [
@@ -1395,6 +1395,6 @@ __all__ = [
     'calculate_race_scores',
     'analyze_incident',
     # 批量函数
-    'get_horse_performances_batch',
+    'get_horses_performances_batch',  # ← 改为复数形式
     'calculate_horse_full_score'
 ]
