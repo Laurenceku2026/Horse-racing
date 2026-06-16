@@ -4750,22 +4750,135 @@ def render_smart_betting(show_title: bool = True):
     # 计算胜率
     if model_choice == "评分系统":
         with st.spinner(t()["calculating_win_rate"]):
-            from scoring_engine import calculate_race_scores
-            scores, probabilities = calculate_race_scores(
-                supabase,
-                selected_race.get('race_date'),
-                selected_race.get('venue'),
-                selected_race.get('race_no'),
-                runners
+            # 获取用户权重配置（如果已应用）
+            if st.session_state.get('scoring_weights_applied', False):
+                user_config = st.session_state.get('user_scoring_config', {})
+                level1_weights = user_config.get('level1_weights', {})
+                basic_weights = user_config.get('basic_weights', {})
+                race_weights = user_config.get('race_weights', {})
+                odds_weights = user_config.get('odds_weights', {})
+                status_weights = user_config.get('status_weights', {})
+            else:
+                # 使用管理员默认配置
+                from scoring_engine import get_scoring_config
+                config = get_scoring_config()
+                level1_weights = config.get('level1', {})
+                basic_weights = config.get('basic', {})
+                race_weights = config.get('race', {})
+                odds_weights = config.get('odds', {})
+                status_weights = config.get('status', {})
+            
+            # 导入新的评分函数
+            from scoring_engine import (
+                calculate_basic_score,
+                calculate_race_score,
+                calculate_odds_score,
+                calculate_status_score,
+                calculate_overall_score,
+                get_horse_weight_comfort_range_from_cache,
+                get_horses_performances_batch
             )
-        
-        t3 = time.time()
-        perf_log["计算胜率"] = t3 - t2
-        
-        for i, runner in enumerate(runners):
-            if i < len(scores):
-                runner['overall_score'] = scores[i].get('overall_score', 0)
-                runner['win_probability'] = scores[i].get('win_probability', 0) / 100
+            
+            # 获取马匹往绩
+            horse_ids = [r.get('horse_id') for r in runners if r.get('horse_id')]
+            perf_cache = get_horses_performances_batch(tuple(set(horse_ids)))
+            
+            # 计算每匹马的评分
+            scores = []
+            for runner in runners:
+                horse_id = runner.get('horse_id')
+                if not horse_id:
+                    scores.append({
+                        'overall_score': 50,
+                        'win_probability': 50,
+                        'basic_score': 50,
+                        'race_score': 50,
+                        'odds_score': 50,
+                        'status_score': 50
+                    })
+                    continue
+                
+                # 获取往绩
+                past_performances = perf_cache.get(horse_id, [])[:10]
+                
+                # 获取负磅舒适区
+                weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_performances)
+                
+                # 计算基础往绩评分
+                basic_score = calculate_basic_score(
+                    past_performances,
+                    selected_race.get('distance', 1200),
+                    basic_weights
+                )
+                
+                # 计算场次因素评分
+                race_score = calculate_race_score(
+                    horse_id,
+                    selected_race.get('venue', 'ST'),
+                    selected_race.get('distance', 1200),
+                    runner.get('draw'),
+                    runner.get('actual_weight'),
+                    runner.get('jockey_id'),
+                    runner.get('trainer_id'),
+                    weight_comfort_range,
+                    past_performances,
+                    race_weights
+                )
+                
+                # 计算赔率因素评分
+                odds_win = runner.get('odds_win', 10.0)
+                if odds_win is None or odds_win == '':
+                    odds_win = 10.0
+                try:
+                    odds_win = float(odds_win)
+                except (ValueError, TypeError):
+                    odds_win = 10.0
+                
+                odds_score = calculate_odds_score(odds_win, 50.0, odds_weights)
+                
+                # 计算状态因素评分
+                from scoring_engine import calculate_status_score
+                status_score = calculate_status_score(
+                    None,  # birth_year - 可以从horses表获取
+                    runner.get('body_weight'),
+                    [p.get('body_weight') for p in past_performances if p.get('body_weight')],
+                    runner.get('incident', ''),
+                    runner.get('running_position', ''),
+                    None,  # finishing_position
+                    status_weights
+                )
+                
+                # 计算综合评分
+                overall_score = calculate_overall_score(
+                    basic_score,
+                    race_score,
+                    odds_score,
+                    status_score,
+                    level1_weights
+                )
+                
+                scores.append({
+                    'overall_score': overall_score,
+                    'win_probability': overall_score,  # 稍后用softmax转换
+                    'basic_score': basic_score,
+                    'race_score': race_score,
+                    'odds_score': odds_score,
+                    'status_score': status_score
+                })
+            
+            # 使用softmax计算胜率
+            from scoring_engine import softmax_probabilities
+            prob_scores = [s['overall_score'] for s in scores]
+            probabilities = softmax_probabilities(prob_scores, temperature=0.8)
+            
+            for i, runner in enumerate(runners):
+                if i < len(scores):
+                    runner['overall_score'] = scores[i]['overall_score']
+                    runner['win_probability'] = probabilities[i] if i < len(probabilities) else 0
+                    runner['basic_score'] = scores[i]['basic_score']
+                    runner['race_score'] = scores[i]['race_score']
+                    runner['odds_score'] = scores[i]['odds_score']
+                    runner['status_score'] = scores[i]['status_score']
                 print(f"5. 马号 {runner.get('horse_no')}: 评分={runner['overall_score']}, 胜率={runner['win_probability']}")
     #----------
     else:
