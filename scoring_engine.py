@@ -1008,12 +1008,8 @@ def calculate_status_score(
     """
     # 默认权重（与数据库配置一致）
     if status_weights is None:
-        status_weights = {
-            "age": 0.30,
-            "weight_change": 0.25,
-            "incident": 0.25,
-            "burst": 0.20
-        }
+        config = get_scoring_config()
+        status_weights = config.get("status", {})
     
     # 计算各因子得分
     age_score = calculate_age_score(birth_year)
@@ -1022,7 +1018,6 @@ def calculate_status_score(
     burst_score = calculate_burst_score(running_position, finishing_position)
     
     # 事件报告是调整分（-20到+20），需要转换为0-100分
-    # 转换公式：incident_adjustment = -20 → 0分, 0 → 50分, +20 → 100分
     incident_score = 50 + incident_adjustment
     
     # 加权计算
