@@ -7223,6 +7223,75 @@ def predict_with_model(model, features: Dict, model_type: str) -> float:
     except Exception as e:
         print(f"预测失败: {e}")
         return 0.5
+#-----------
+# ==================== ML 模型缓存 ====================
+
+_model_cache = {}
+
+def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
+    """
+    获取或训练模型（带缓存）
+    参数：
+        X_train: 训练特征
+        y_train: 训练标签
+        model_type: 'lightgbm', 'xgboost', 'ensemble'
+        cache_key: 唯一缓存键（基于训练数据哈希值）
+    返回：
+        训练好的模型
+    """
+    global _model_cache
+    
+    # 如果是集成模型，分别获取或训练 LightGBM 和 XGBoost
+    if model_type == 'ensemble':
+        lgb_key = f"{cache_key}_lgb"
+        xgb_key = f"{cache_key}_xgb"
+        
+        lgb_model = get_or_train_model(X_train, y_train, 'lightgbm', lgb_key)
+        xgb_model = get_or_train_model(X_train, y_train, 'xgboost', xgb_key)
+        
+        return {'lightgbm': lgb_model, 'xgboost': xgb_model}
+    
+    # 检查缓存
+    if cache_key in _model_cache:
+        return _model_cache[cache_key]
+    
+    # 训练新模型
+    if model_type == 'lightgbm' and LGB_AVAILABLE:
+        model = lgb.LGBMClassifier(
+            n_estimators=50,
+            max_depth=4,
+            learning_rate=0.1,
+            random_state=42,
+            verbose=-1,
+            subsample=0.8,
+            colsample_bytree=0.8
+        )
+        model.fit(X_train, y_train)
+    elif model_type == 'xgboost' and XGB_AVAILABLE:
+        model = xgb.XGBClassifier(
+            n_estimators=50,
+            max_depth=4,
+            learning_rate=0.1,
+            random_state=42,
+            use_label_encoder=False,
+            eval_metric='logloss',
+            verbosity=0,
+            subsample=0.8,
+            colsample_bytree=0.8
+        )
+        model.fit(X_train, y_train)
+    else:
+        return None
+    
+    # 存入缓存
+    _model_cache[cache_key] = model
+    return model
+
+
+def clear_model_cache():
+    """清空模型缓存（用于测试或强制重新训练）"""
+    global _model_cache
+    _model_cache = {}
 #----------
 def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
     """
@@ -7321,8 +7390,14 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
             
             # ⭐ 显示训练数据量
             status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
+            #-----------
+            # 新代码（使用缓存）
+            import hashlib
             
-            model = train_model_on_data(train_X, train_y, model_type)
+            # 生成缓存键（基于训练数据的哈希值）
+            cache_key = hashlib.md5(str(train_X.values).encode()).hexdigest()[:16]
+            model = get_or_train_model(train_X, train_y, model_type, cache_key)
+
             if model is None:
                 status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
                 continue
@@ -7467,117 +7542,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
                     elif pos == 3:
                         actual_3rd = horse_name
                         actual_top3_set.add(horse_name)
-                
-                # 统计各指标（与原有逻辑一致）
-                is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
-                
-                hits = len(predicted_top3_set & actual_top3_set)
-                total_top3_hits += hits
-                if hits >= 1:
-                    total_top3_hit_races += 1
-                
-                tri_correct = (predicted_top3_set == actual_top3_set) if len(predicted_top3_set) == 3 and len(actual_top3_set) == 3 else False
-                if tri_correct:
-                    total_tri_correct += 1
-                
-                tce_correct = (predicted_1st == actual_1st and 
-                               predicted_2nd == actual_2nd and 
-                               predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
-                if tce_correct:
-                    total_tce_correct += 1
-                
-                # ROI：每场都投注 100 元（只对预测的前4名中的第1名投注）
-                total_stake += 100
-                if is_correct:
-                    odds = runners[0].get('odds_win', 3.0) if runners else 3.0
-                    try:
-                        odds = float(odds) if odds else 3.0
-                    except:
-                        odds = 3.0
-                    total_return += 100 * odds
-                
-                # 记录调试详情
-                result["debug_details"].append({
-                    "赛期": race_date,
-                    "场次": race_no,
-                    "预测第1名": predicted_1st or "-",
-                    "预测第2名": predicted_2nd or "-",
-                    "预测第3名": predicted_3rd or "-",
-                    "实际第1名": actual_1st or "-",
-                    "实际第2名": actual_2nd or "-",
-                    "实际第3名": actual_3rd or "-",
-                    "独赢正确": "✅" if is_correct else "❌",
-                    "前3名命中匹数": hits,
-                    "前3名全中": "✅" if tri_correct else "❌",
-                    "前3名顺序正确": "✅" if tce_correct else "❌"
-                })
-                
-                if is_correct:
-                    correct_predictions += 1
-                    horse_id = r.get('horse_id')
-                    if not horse_id:
-                        continue
-                    
-                    horse_name = r.get('horse_name', '')
-                    
-                    # 获取该马匹在 race_date 之前的往绩
-                    all_past = horse_cache.get(horse_id, [])
-                    past_before = [p for p in all_past if p.get('race_date', '') < race_date]
-                    past_before = past_before[:10]
-                    
-                    # 构建特征
-                    features = {}
-                    if past_before:
-                        total = len(past_before)
-                        wins = sum(1 for p in past_before if p.get('position') == 1)
-                        places = sum(1 for p in past_before if p.get('position', 0) in [1, 2])
-                        shows = sum(1 for p in past_before if p.get('position', 0) in [1, 2, 3])
-                        
-                        features['win_rate'] = wins / total
-                        features['place_rate'] = places / total
-                        features['show_rate'] = shows / total
-                        
-                        recent_5 = past_before[:5]
-                        wins_5 = sum(1 for p in recent_5 if p.get('position') == 1)
-                        features['win_rate_5'] = wins_5 / len(recent_5) if recent_5 else 0
-                        
-                        weights = [p.get('actual_weight', 0) for p in past_before if p.get('actual_weight')]
-                        features['avg_weight'] = sum(weights) / len(weights) if weights else 0
-                    else:
-                        features['win_rate'] = 0
-                        features['place_rate'] = 0
-                        features['show_rate'] = 0
-                        features['win_rate_5'] = 0
-                        features['avg_weight'] = 0
-                    
-                    features['draw'] = r.get('draw', 0) or 0
-                    features['actual_weight'] = r.get('actual_weight', 0) or 0
-                    features['odds'] = r.get('odds', 10) or 10
-                    features['distance'] = distance
-                    features['jockey_win_rate'] = 0
-                    
-                    # 预测
-                    prob = predict_with_model(model, features, model_type)
-                    
-                    # 获取赔率
-                    odds_raw = r.get('odds')
-                    try:
-                        odds = float(odds_raw) if odds_raw else 10
-                    except (ValueError, TypeError):
-                        odds = 10
-                    
-                    runners.append({
-                        "horse_id": horse_id,
-                        "horse_name": horse_name,
-                        "horse_no": r.get('horse_no'),
-                        "finishing_position": r.get('position'),
-                        "win_probability": prob,
-                        "odds_win": odds,
-                    })
-                
-                if not runners:
-                    continue
-                
+                                                
                 # 按胜率排序
                 runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
                 
@@ -7665,17 +7630,23 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
         # 10. 清理进度条
         progress_bar.empty()
         status_text.empty()
-        
+        #-------
         # 11. 计算最终结果
         if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["独赢正确率"] = correct_predictions / result["测试场次"] * 100
             
-            result["前三名命中匹数"] = total_top3_hits
-            result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * 3) * 100
+            # ✅ 修复1：匹数率分母改为预测马匹数（top_n_horses）
+            from scoring_engine import get_ml_config
+            ml_config = get_ml_config()
+            top_n = ml_config.get("top_n_horses", 4)
             
+            result["前三名命中匹数"] = total_top3_hits
+            result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * top_n) * 100
+            
+            # ✅ 修复2：场次率确保不超过100%
             result["前三名命中场次"] = total_top3_hit_races
-            result["前三名命中场次率"] = total_top3_hit_races / result["测试场次"] * 100
+            result["前三名命中场次率"] = min(100, total_top3_hit_races / result["测试场次"] * 100)
             
             result["前三名全中场次"] = total_tri_correct
             result["前三名全中率"] = total_tri_correct / result["测试场次"] * 100
@@ -7683,6 +7654,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
             result["前三名顺序正确场次"] = total_tce_correct
             result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
             
+            # ✅ 修复3：总投入和ROI
             result["总投入"] = total_stake
             result["总回报"] = total_return
             if total_stake > 0:
