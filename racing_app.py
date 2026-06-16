@@ -2784,12 +2784,101 @@ def render_top_buttons():
 # 版本：v1.0
 # 说明：替换原有的 render_home() 函数
 # ============================================================
+# ==================== 评分缓存函数 ====================
 
+def save_horse_scores_to_cache(df: pd.DataFrame) -> bool:
+    """
+    将评分结果保存到缓存表
+    参数：
+        df: 评分DataFrame（列名与显示一致）
+    返回：
+        是否保存成功
+    """
+    if df.empty:
+        return False
+    
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        
+        # 清空旧缓存
+        delete_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
+        delete_response = requests.delete(delete_url, headers=headers)
+        
+        if delete_response.status_code not in [200, 204]:
+            print(f"清空缓存失败: {delete_response.status_code}")
+        
+        # 准备数据
+        records = []
+        for _, row in df.iterrows():
+            # 安全提取各字段
+            horse_id = row.get("Horse_ID", "")
+            name_zh = row.get("馬名(中)", row.get("Name (CN)", ""))
+            name_en = row.get("馬名(英)", row.get("Name (EN)", ""))
+            sex = row.get("性別", row.get("Sex", ""))
+            age = str(row.get("年齡", row.get("Age", "")))
+            avg_weight = str(row.get("平均體重", row.get("Avg Weight", "")))
+            
+            # 处理百分比字符串
+            win_rate_raw = row.get("勝率", row.get("Win Rate", "0%"))
+            if isinstance(win_rate_raw, str):
+                win_rate = float(win_rate_raw.replace("%", ""))
+            else:
+                win_rate = float(win_rate_raw) if win_rate_raw else 0
+            
+            place_rate_raw = row.get("入Q率", row.get("Place Rate", "0%"))
+            if isinstance(place_rate_raw, str):
+                place_rate = float(place_rate_raw.replace("%", ""))
+            else:
+                place_rate = float(place_rate_raw) if place_rate_raw else 0
+            
+            show_rate_raw = row.get("入T率", row.get("Show Rate", "0%"))
+            if isinstance(show_rate_raw, str):
+                show_rate = float(show_rate_raw.replace("%", ""))
+            else:
+                show_rate = float(show_rate_raw) if show_rate_raw else 0
+            
+            basic_score = float(row.get("綜合評分", row.get("Overall Score", 0)))
+            races_count = int(row.get("出賽場次", row.get("Races", 0)))
+            
+            record = {
+                "horse_id": horse_id,
+                "name_zh": name_zh,
+                "name_en": name_en,
+                "sex": sex,
+                "age": age,
+                "avg_weight": avg_weight,
+                "win_rate": win_rate,
+                "place_rate": place_rate,
+                "show_rate": show_rate,
+                "basic_score": basic_score,
+                "races_count": races_count,
+                "calculated_at": datetime.now().isoformat()
+            }
+            records.append(record)
+        
+        if not records:
+            return False
+        
+        # 批量插入
+        insert_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
+        response = requests.post(insert_url, headers=headers, json=records)
+        
+        if response.status_code in [200, 201]:
+            print(f"✅ 缓存保存成功: {len(records)} 条记录")
+            return True
+        else:
+            print(f"❌ 缓存保存失败: {response.text}")
+            return False
+        
+    except Exception as e:
+        print(f"保存缓存异常: {e}")
+        return False
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
 def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.DataFrame:
     """
     获取所有马匹的基础评分（使用新评分引擎）
     包含：基础往绩 + 场次因素 + 赔率因素 + 状态因素
+    支持缓存：优先从 horse_scores_cache 表读取
     """
     try:
         # 获取当前语言
@@ -2797,6 +2886,79 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
         
         headers = get_supabase_headers(use_secret=True)
         
+        # ==================== 新增：检查缓存 ====================
+        cache_check_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache?select=horse_id&limit=1"
+        cache_check = requests.get(cache_check_url, headers=headers)
+        
+        cache_exists = cache_check.status_code == 200 and cache_check.json()
+        
+        if cache_exists:
+            # 从缓存读取
+            cache_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache?order=basic_score.desc&limit={limit}"
+            response = requests.get(cache_url, headers=headers)
+            
+            if response.status_code == 200:
+                cache_data = response.json()
+                
+                if cache_data:
+                    # 构建 DataFrame
+                    df = pd.DataFrame(cache_data)
+                    
+                    # 重命名列（中文）
+                    if lang == "zh":
+                        df_display = df.rename(columns={
+                            "horse_id": "Horse_ID",
+                            "name_zh": "馬名(中)",
+                            "name_en": "馬名(英)",
+                            "sex": "性別",
+                            "age": "年齡",
+                            "avg_weight": "平均體重",
+                            "win_rate": "勝率",
+                            "place_rate": "入Q率",
+                            "show_rate": "入T率",
+                            "basic_score": "綜合評分",
+                            "races_count": "出賽場次"
+                        })
+                    else:
+                        df_display = df.rename(columns={
+                            "horse_id": "Horse_ID",
+                            "name_zh": "Name (CN)",
+                            "name_en": "Name (EN)",
+                            "sex": "Sex",
+                            "age": "Age",
+                            "avg_weight": "Avg Weight",
+                            "win_rate": "Win Rate",
+                            "place_rate": "Place Rate",
+                            "show_rate": "Show Rate",
+                            "basic_score": "Overall Score",
+                            "races_count": "Races"
+                        })
+                    
+                    # 格式化百分比
+                    for col in ["勝率", "入Q率", "入T率", "Win Rate", "Place Rate", "Show Rate"]:
+                        if col in df_display.columns:
+                            df_display[col] = df_display[col].apply(
+                                lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x
+                            )
+                    
+                    # 列顺序
+                    if lang == "zh":
+                        column_order = ["Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "綜合評分", "出賽場次"]
+                    else:
+                        column_order = ["Horse_ID", "Name (CN)", "Name (EN)", "Sex", "Age", "Avg Weight", "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races"]
+                    
+                    df_display = df_display[[c for c in column_order if c in df_display.columns]]
+                    
+                    # 显示缓存时间
+                    calc_time = cache_data[0].get('calculated_at', '')
+                    if calc_time:
+                        calc_time = calc_time[:16].replace('T', ' ')
+                    
+                    st.caption(f"📊 共 {len(df_display)} 匹馬 (緩存於 {calc_time})" if lang == "zh" else f"📊 Total {len(df_display)} horses (cached at {calc_time})")
+                    
+                    return df_display
+        
+        # ==================== 缓存不存在：执行完整计算 ====================
         # ==================== 1. 获取马匹基本信息 ====================
         horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=*"
         horses_response = requests.get(horses_url, headers=headers)
@@ -2935,9 +3097,9 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                     "sex": sex,
                     "age": age,
                     "avg_weight": '-',
-                    "win_rate": "0%",
-                    "place_rate": "0%",
-                    "show_rate": "0%",
+                    "win_rate": 0.0,
+                    "place_rate": 0.0,
+                    "show_rate": 0.0,
                     "basic_score": round(base_score, 1),
                     "races_count": total,
                     "note": note_text
@@ -3054,6 +3216,12 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             st.info(info_msg)
             return df
         
+        # ==================== 保存到缓存 ====================
+        try:
+            save_horse_scores_to_cache(df)
+        except Exception as e:
+            print(f"缓存保存失败: {e}")
+        
         # 重命名列（双语）
         if lang == "zh":
             df_display = df.rename(columns={
@@ -3107,8 +3275,9 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
     except Exception as e:
         error_msg = f"获取马匹评分失败: {e}" if lang == "zh" else f"Failed to get horse scores: {e}"
         st.error(error_msg)
+        import traceback
+        traceback.print_exc()
         return pd.DataFrame()
-
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
     """渲染马匹评分表格（列宽最小化）"""
@@ -3283,10 +3452,11 @@ def render_home():
     
     st.markdown("---")
    
+    #--------------
     # ==================== 数据更新区域 ====================
     st.markdown(f"### {texts.get('data_update', '🔄 數據更新')}")
     
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
         update_btn = st.button(f"🔄 {texts.get('update_all_data', '更新所有数据')}", type="primary", use_container_width=True)
     
@@ -3295,13 +3465,34 @@ def render_home():
             st.warning(texts.get('free_trial_used', '免費次數已用完，請升級到專業版'))
         else:
             with st.spinner(texts.get('checking_update', '正在检查并更新数据...')):
+                # 1. 同步数据（从 API 获取新赛事和成绩）
                 result = sync_all_data()
+                
                 if result.get("success"):
-                    st.success(texts.get('update_complete', '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录').format(
-                        new_races=result.get('new_races', 0), 
-                        new_records=result.get('new_records', 0)
-                    ))
-                    st.rerun()
+                    # 2. 强制刷新评分缓存
+                    try:
+                        with st.spinner("正在刷新评分缓存..."):
+                            # 清空缓存表
+                            headers = get_supabase_headers(use_secret=True)
+                            delete_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
+                            requests.delete(delete_url, headers=headers)
+                            
+                            # 重新计算并保存缓存
+                            df = get_all_horses_base_score(limit=500, recent_games=10)
+                            if not df.empty:
+                                save_horse_scores_to_cache(df)
+                            
+                            st.success(texts.get('update_complete', '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录，評分緩存已刷新').format(
+                                new_races=result.get('new_races', 0), 
+                                new_records=result.get('new_records', 0)
+                            ))
+                            
+                            # 清除 Streamlit 缓存
+                            st.cache_data.clear()
+                            st.rerun()
+                    except Exception as e:
+                        st.warning(f"数据同步成功，但缓存刷新失败: {e}")
+                        st.rerun()
                 else:
                     st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
     
