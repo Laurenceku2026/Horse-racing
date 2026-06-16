@@ -10,7 +10,93 @@ import re
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from supabase import create_client
+#-------------------
+# ==================== 评分配置加载 ====================
 
+def load_scoring_config_from_db() -> Dict:
+    """
+    从 Supabase scoring_config 表加载权重配置
+    如果加载失败，返回默认配置
+    """
+    default_config = {
+        "level1": {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15},
+        "basic": {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15},
+        "race": {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10},
+        "odds": {"win_odds": 0.60, "odds_trend": 0.40},
+        "status": {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20}
+    }
+    
+    try:
+        import requests
+        import streamlit as st
+        
+        SUPABASE_URL = st.secrets.get("SUPABASE_STOCK_URL", "")
+        SUPABASE_KEY = st.secrets.get("SUPABASE_STOCK_SECRET_KEY", "")
+        
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            return default_config
+        
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
+        response = requests.get(url, headers=headers, timeout=5)
+        
+        if response.status_code == 200 and response.json():
+            config = response.json()[0]
+            return {
+                "level1": config.get("level1_weights", default_config["level1"]),
+                "basic": config.get("basic_weights", default_config["basic"]),
+                "race": config.get("race_weights", default_config["race"]),
+                "odds": config.get("odds_weights", default_config["odds"]),
+                "status": config.get("status_weights", default_config["status"])
+            }
+    except Exception as e:
+        print(f"加载评分配置失败，使用默认配置: {e}")
+    
+    return default_config
+
+
+# 内存缓存配置（避免每次调用都查询数据库）
+_scoring_config_cache = None
+_scoring_config_cache_time = 0
+
+
+def get_scoring_config(force_refresh: bool = False) -> Dict:
+    """
+    获取评分配置（带缓存）
+    force_refresh: 强制刷新缓存
+    """
+    import time
+    global _scoring_config_cache, _scoring_config_cache_time
+    
+    current_time = time.time()
+    # 缓存5分钟
+    if force_refresh or _scoring_config_cache is None or (current_time - _scoring_config_cache_time) > 300:
+        _scoring_config_cache = load_scoring_config_from_db()
+        _scoring_config_cache_time = current_time
+    
+    return _scoring_config_cache
+
+
+def get_user_scoring_config_from_session() -> Dict:
+    """
+    从 Streamlit session_state 获取用户临时配置
+    如果不存在，返回数据库默认配置
+    """
+    try:
+        import streamlit as st
+        if hasattr(st, 'session_state') and 'user_scoring_config' in st.session_state:
+            user_config = st.session_state.user_scoring_config
+            if user_config and st.session_state.get('scoring_weights_applied', False):
+                return user_config
+    except Exception:
+        pass
+    
+    return get_scoring_config()
 # ==================== 评分权重常量 ====================
 
 # 一级因子权重
@@ -259,23 +345,65 @@ def calculate_trend_score(performances: List[Dict]) -> float:
         return 50
 
 #--------
-def calculate_basic_score(performances: List[Dict], target_distance: int) -> float:
+def calculate_basic_score(
+    past_performances: List[Dict], 
+    target_distance: int,
+    basic_weights: Dict = None
+) -> float:
     """
-    计算基础往绩评分（0-100）
+    计算基础往绩评分（0-100分）
+    参数：
+        past_performances: 往绩列表（按日期降序）
+        target_distance: 本场路程
+        basic_weights: 二级因子权重（可选，默认使用配置）
     """
-    recent_3_win = calculate_recent_win_rate(performances, 3)
-    recent_10_win = calculate_recent_win_rate(performances, 10)
-    recent_10_place = calculate_recent_place_rate(performances, 10)
-    same_dist_win = calculate_same_distance_win_rate(performances, target_distance)
-    trend_score = calculate_trend_score(performances)
+    if basic_weights is None:
+        config = get_scoring_config()
+        basic_weights = config.get("basic", {})
+    
+    # 按日期排序，最新的在前
+    sorted_perf = sorted(past_performances, key=lambda x: x.get('race_date', ''), reverse=True)
+    total = len(sorted_perf)
+    
+    if total == 0:
+        return 50.0  # 无数据，给默认分
+    
+    # 近3场（不管时间跨度）
+    recent_3 = sorted_perf[:3]
+    recent_10 = sorted_perf[:10]
+    
+    # === 近3场胜率 ===
+    wins_3 = sum(1 for p in recent_3 if p.get('position') == 1)
+    win_rate_3 = (wins_3 / len(recent_3)) * 100 if recent_3 else 0
+    
+    # === 近10场胜率 ===
+    wins_10 = sum(1 for p in recent_10 if p.get('position') == 1)
+    win_rate_10 = (wins_10 / len(recent_10)) * 100 if recent_10 else 0
+    
+    # === 近10场入Q率 ===
+    places_10 = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2])
+    place_rate_10 = (places_10 / len(recent_10)) * 100 if recent_10 else 0
+    
+    # === 近10场入T率 ===
+    shows_10 = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2, 3])
+    show_rate_10 = (shows_10 / len(recent_10)) * 100 if recent_10 else 0
+    
+    # === 同程表现评分 ===
+    distance_rating = calculate_avg_distance_rating(past_performances, target_distance)
+    
+    # === 名次趋势 ===
+    trend = calculate_rating_trend(past_performances)
+    trend_score = 50 + trend * 5
+    trend_score = max(0, min(100, trend_score))
     
     # 加权计算
     score = (
-        recent_3_win * BASIC_WEIGHTS["recent_3_win"] +
-        recent_10_win * BASIC_WEIGHTS["recent_10_win"] +
-        recent_10_place * BASIC_WEIGHTS["recent_10_place"] +
-        same_dist_win * BASIC_WEIGHTS["same_distance"] +
-        trend_score * BASIC_WEIGHTS["trend"]
+        win_rate_3 * basic_weights.get("win_rate_3", 0.20) +
+        win_rate_10 * basic_weights.get("win_rate_10", 0.20) +
+        place_rate_10 * basic_weights.get("place_rate_10", 0.15) +
+        show_rate_10 * basic_weights.get("show_rate_10", 0.15) +
+        distance_rating * basic_weights.get("distance_rating", 0.15) +
+        trend_score * basic_weights.get("trend", 0.15)
     )
     
     return round(score, 2)
@@ -325,29 +453,53 @@ def calculate_same_venue_win_rate(performances: List[Dict], venue: str) -> float
 
 #--------------
 def calculate_race_score(
-    performances: List[Dict],
+    horse_id: str,
     venue: str,
     distance: int,
     draw: int,
-    jockey: str,
-    trainer: str
+    actual_weight: int,
+    jockey_id: str,
+    trainer_id: str,
+    weight_comfort_range: Tuple[int, int],
+    past_performances: List[Dict],
+    race_weights: Dict = None
 ) -> float:
     """
-    计算场次因素评分（0-100）
+    计算场次因素评分（0-100分）
     """
-    draw_score = calculate_draw_score(draw, venue, distance)
-    jockey_score = calculate_jockey_score(jockey)
-    trainer_score = calculate_trainer_score(trainer)
-    same_venue_rate = calculate_same_venue_win_rate(performances, venue)
+    if race_weights is None:
+        config = get_scoring_config()
+        race_weights = config.get("race", {})
     
-    score = (
-        draw_score * RACE_WEIGHTS["draw"] +
-        jockey_score * RACE_WEIGHTS["jockey"] +
-        trainer_score * RACE_WEIGHTS["trainer"] +
-        same_venue_rate * RACE_WEIGHTS["same_venue"]
+    # === 同场地胜率 ===
+    same_course = calculate_same_course_score_from_cache(horse_id, venue, past_performances)
+    
+    # === 同路程胜率 ===
+    same_distance = calculate_same_distance_score_from_cache(horse_id, distance, past_performances)
+    
+    # === 档位优势 ===
+    draw_score = get_draw_score(draw, venue, distance)
+    
+    # === 负磅变化 ===
+    weight_score = get_weight_advantage_score(actual_weight, weight_comfort_range)
+    
+    # === 骑师配合 ===
+    jockey_score = calculate_jockey_score(jockey_id)
+    
+    # === 练马师状态 ===
+    trainer_score = calculate_trainer_score(trainer_id, venue)
+    
+    # 加权计算
+    total_score = (
+        same_course * race_weights.get("same_course", 0.25) +
+        same_distance * race_weights.get("same_distance", 0.25) +
+        draw_score * race_weights.get("draw", 0.15) +
+        weight_score * race_weights.get("weight", 0.10) +
+        jockey_score * race_weights.get("jockey", 0.15) +
+        trainer_score * race_weights.get("trainer", 0.10)
     )
     
-    return round(score, 2)
+    return round(total_score, 2)
 #--------------------
 # ==================== 状态因子计算函数 ====================
 
@@ -598,17 +750,32 @@ def get_past_weights_from_performances(performances: List[Dict]) -> List[Optiona
     return weights
 # ==================== 赔率因素评分 ====================
 
-def calculate_odds_score(odds: float) -> float:
+def calculate_odds_score(
+    odds_win: float,
+    odds_trend_score: float = 50.0,
+    odds_weights: Dict = None
+) -> float:
     """
-    计算赔率评分
-    赔率越低分数越高：1.5倍→100分，99倍→0分
+    计算赔率因素评分（0-100分）
+    参数：
+        odds_win: 独赢赔率
+        odds_trend_score: 赔率变动趋势评分（0-100），默认为50
+        odds_weights: 二级因子权重
     """
-    if odds is None or odds <= 0:
-        return 50
+    if odds_weights is None:
+        config = get_scoring_config()
+        odds_weights = config.get("odds", {})
     
-    odds = min(odds, 99)  # 限制最大99倍
-    score = 100 * (1 - (odds - 1) / 98)
-    return max(0, min(100, score))
+    # 赔率归一化：赔率1.5→100分，99→0分
+    normalized_odds = normalize_odds(odds_win)
+    
+    # 加权计算
+    total_score = (
+        normalized_odds * odds_weights.get("win_odds", 0.60) +
+        odds_trend_score * odds_weights.get("odds_trend", 0.40)
+    )
+    
+    return round(total_score, 2)
 
 
 # ==================== 状态/事件评分 ====================
@@ -704,19 +871,37 @@ def calculate_overall_score(
     basic_score: float,
     race_score: float,
     odds_score: float,
-    status_score: float
+    status_score: float,
+    level1_weights: Dict = None
 ) -> float:
     """
-    计算综合评分（0-100）
+    计算综合评分（0-100分）
+    参数：
+        basic_score: 基础往绩评分
+        race_score: 场次因素评分
+        odds_score: 赔率因素评分
+        status_score: 状态因素评分
+        level1_weights: 一级因子权重（可选，默认从数据库加载）
     """
-    raw_score = (
-        basic_score * LEVEL1_WEIGHTS["basic"] +
-        race_score * LEVEL1_WEIGHTS["race"] +
-        odds_score * LEVEL1_WEIGHTS["odds"] +
-        status_score * LEVEL1_WEIGHTS["status"]
+    if level1_weights is None:
+        config = get_scoring_config()
+        level1_weights = config.get("level1", {})
+    
+    # 权重归一化（防止总和不为1）
+    total = sum(level1_weights.values())
+    if total != 0:
+        normalized = {k: v / total for k, v in level1_weights.items()}
+    else:
+        normalized = {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15}
+    
+    overall = (
+        basic_score * normalized.get("basic", 0.30) +
+        race_score * normalized.get("race", 0.35) +
+        odds_score * normalized.get("odds", 0.20) +
+        status_score * normalized.get("status", 0.15)
     )
     
-    return round(raw_score, 2)
+    return round(overall, 2)
 
 
 # ==================== 胜率转换 ====================
