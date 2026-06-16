@@ -1423,6 +1423,9 @@ __all__ = [
     'calculate_race_scores',
     'analyze_incident',
     # 批量函数
-    'get_horses_performances_batch',  # ← 改为复数形式
-    'calculate_horse_full_score'
+    'get_horses_performances_batch',
+    'calculate_horse_full_score',
+    # ML 配置
+    'get_ml_config',           # ← 添加这一行
+    'set_ml_config'            # ← 如果有 set_ml_config 也添加
 ]
