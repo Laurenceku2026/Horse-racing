@@ -1121,44 +1121,7 @@ def analyze_incident(incident_text: str) -> int:
             total += impact
     
     return max(-20, min(20, total))
-
-
-def calculate_status_score(
-    horse_id: str,
-    race_date: str,
-    body_weight: int,
-    past_weights: List[int],
-    closing_profile: str,
-    incident: str
-) -> float:
-    """
-    计算状态/事件评分（0-100）
-    """
-    # 马龄因子
-    age = calculate_horse_age(horse_id, race_date)
-    age_factor = get_age_factor(age)
-    age_score = age_factor * 100
-    
-    # 体重变化
-    weight_score = calculate_weight_change_score(body_weight, past_weights)
-    
-    # 冲刺能力
-    closing_score = calculate_closing_score(closing_profile)
-    
-    # 事件影响（转换为0-100分制）
-    incident_impact = analyze_incident(incident)
-    incident_score = 50 + incident_impact  # 基准50分，影响±20
-    
-    score = (
-        age_score * STATUS_WEIGHTS["age"] +
-        weight_score * STATUS_WEIGHTS["weight_change"] +
-        closing_score * STATUS_WEIGHTS["closing"] +
-        incident_score * STATUS_WEIGHTS["incident"]
-    )
-    
-    return round(score, 2)
-
-
+#----------------
 # ==================== 综合评分 ====================
 
 def calculate_overall_score(
