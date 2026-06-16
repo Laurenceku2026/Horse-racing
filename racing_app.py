@@ -2693,11 +2693,17 @@ def render_top_buttons():
 
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
 def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.DataFrame:
-    """获取所有马匹的基础评分（基于 horse_id）"""
+    """
+    获取所有马匹的基础评分（使用新评分引擎）
+    包含：基础往绩 + 场次因素 + 赔率因素 + 状态因素
+    """
     try:
+        # 获取当前语言
+        lang = st.session_state.get("lang", "zh")
+        
         headers = get_supabase_headers(use_secret=True)
         
-        # ==================== 1. 获取马匹基本信息（从 horses_v2）====================
+        # ==================== 1. 获取马匹基本信息 ====================
         horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=*"
         horses_response = requests.get(horses_url, headers=headers)
         
@@ -2713,21 +2719,24 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                         'birth_year': h.get('birth_year')
                     }
         else:
-            st.error(f"获取马匹信息失败: {horses_response.status_code}")
+            error_msg = "获取马匹信息失败" if lang == "zh" else "Failed to get horse info"
+            st.error(f"{error_msg}: {horses_response.status_code}")
             return pd.DataFrame()
         
         # ==================== 2. 获取所有成绩记录 ====================
-        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=horse_id,position,body_weight,race_date&limit=50000"
+        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=horse_id,position,body_weight,race_date,venue,distance,draw,actual_weight,jockey,trainer,odds,incident,running_position&limit=50000"
         perf_response = requests.get(perf_url, headers=headers)
         
         if perf_response.status_code != 200:
-            st.error(f"获取成绩数据失败: {perf_response.status_code}")
+            error_msg = "获取成绩数据失败" if lang == "zh" else "Failed to get performance data"
+            st.error(f"{error_msg}: {perf_response.status_code}")
             return pd.DataFrame()
         
         data = perf_response.json()
         
         if not data:
-            st.info("暂无成绩数据")
+            info_msg = "暂无成绩数据" if lang == "zh" else "No performance data available"
+            st.info(info_msg)
             return pd.DataFrame()
         
         # ==================== 3. 按 horse_id 分组 ====================
@@ -2741,14 +2750,47 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             horse_records[horse_id].append({
                 "position": p.get("position"),
                 "body_weight": p.get("body_weight"),
-                "race_date": p.get("race_date")
+                "race_date": p.get("race_date"),
+                "venue": p.get("venue"),
+                "distance": p.get("distance"),
+                "draw": p.get("draw"),
+                "actual_weight": p.get("actual_weight"),
+                "jockey": p.get("jockey"),
+                "trainer": p.get("trainer"),
+                "odds": p.get("odds"),
+                "incident": p.get("incident", ""),
+                "running_position": p.get("running_position", "")
             })
         
-        # ==================== 4. 计算每匹马的评分 ====================
+        # ==================== 4. 加载评分配置 ====================
+        from scoring_engine import get_scoring_config
+        config = get_scoring_config()
+        level1 = config.get('level1', {})
+        basic_w = config.get('basic', {})
+        race_w = config.get('race', {})
+        odds_w = config.get('odds', {})
+        status_w = config.get('status', {})
+        
+        # ==================== 5. 计算每匹马的评分 ====================
+        from scoring_engine import (
+            calculate_basic_score,
+            calculate_race_score,
+            calculate_odds_score,
+            calculate_status_score,
+            calculate_overall_score,
+            get_horse_weight_comfort_range_from_cache
+        )
+        
         current_year = datetime.now().year
         results = []
         
-        for horse_id, records in horse_records.items():
+        # 进度提示
+        total_horses = len(horse_records)
+        if total_horses > 0:
+            progress_text = f"正在计算 {total_horses} 匹马的评分..." if lang == "zh" else f"Calculating scores for {total_horses} horses..."
+            st.caption(progress_text)
+        
+        for idx, (horse_id, records) in enumerate(horse_records.items()):
             # 按日期排序（最新的在前）
             records.sort(key=lambda x: x.get("race_date", ""), reverse=True)
             
@@ -2759,24 +2801,6 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 selected = records[:recent_games]
             
             total = len(selected)
-            if total < 3:
-                continue
-            
-            # 计算胜率、入Q率、入T率
-            wins = sum(1 for r in selected if r.get("position") == 1)
-            places = sum(1 for r in selected if r.get("position") in [1, 2])
-            shows = sum(1 for r in selected if r.get("position") in [1, 2, 3])
-            
-            win_rate = wins / total * 100
-            place_rate = places / total * 100
-            show_rate = shows / total * 100
-            
-            # 基础评分公式
-            basic_score = win_rate * 0.5 + place_rate * 0.3 + show_rate * 0.2
-            
-            # 体重平均值
-            weights = [r.get("body_weight") for r in selected if r.get("body_weight")]
-            avg_weight = sum(weights) / len(weights) if weights else 0
             
             # 获取马匹信息
             info = horse_info.get(horse_id, {})
@@ -2785,11 +2809,131 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             sex = info.get('sex', '-')
             birth_year = info.get('birth_year')
             
-            # 计算实时年龄
+            # 计算年龄
             age = '-'
             if birth_year and isinstance(birth_year, int):
                 age_val = current_year - birth_year
                 age = age_val if 2 <= age_val <= 12 else '-'
+            
+            # ========== 新马处理（出赛不足3场） ==========
+            if total < 3:
+                base_score = 50.0
+                if age != '-' and isinstance(age, int):
+                    if 4 <= age <= 5:
+                        base_score += 12      # 黄金年龄
+                    elif age == 3 or age == 6:
+                        base_score += 5       # 接近黄金期
+                    elif age >= 7:
+                        base_score -= 10      # 老龄马
+                    elif age == 2:
+                        base_score -= 5       # 太年轻
+                
+                # 限制范围
+                base_score = max(25, min(80, base_score))
+                
+                # 新马备注
+                note_text = f"仅出赛{total}场，评分基于年龄评估" if lang == "zh" else f"Only {total} races, score based on age assessment"
+                
+                results.append({
+                    "horse_id": horse_id,
+                    "name_zh": name_zh,
+                    "name_en": name_en,
+                    "sex": sex,
+                    "age": age,
+                    "avg_weight": '-',
+                    "win_rate": "0%",
+                    "place_rate": "0%",
+                    "show_rate": "0%",
+                    "basic_score": round(base_score, 1),
+                    "races_count": total,
+                    "note": note_text
+                })
+                continue
+            
+            # ========== 出赛3场以上：计算完整评分 ==========
+            # 提取往绩数据
+            past_performances = []
+            for r in selected:
+                past_performances.append({
+                    "position": r.get("position"),
+                    "body_weight": r.get("body_weight"),
+                    "race_date": r.get("race_date"),
+                    "venue": r.get("venue"),
+                    "distance": r.get("distance"),
+                    "draw": r.get("draw"),
+                    "actual_weight": r.get("actual_weight"),
+                    "jockey": r.get("jockey"),
+                    "trainer": r.get("trainer"),
+                    "odds": r.get("odds"),
+                    "incident": r.get("incident", ""),
+                    "running_position": r.get("running_position", "")
+                })
+            
+            # 获取最近一场的数据（用于场次和状态评分）
+            latest = selected[0]
+            
+            # 计算负磅舒适区
+            weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_performances)
+            
+            # 计算各维度评分
+            basic_score = calculate_basic_score(
+                past_performances,
+                latest.get('distance', 1200),
+                basic_w
+            )
+            
+            race_score = calculate_race_score(
+                horse_id,
+                latest.get('venue', 'ST'),
+                latest.get('distance', 1200),
+                latest.get('draw'),
+                latest.get('actual_weight'),
+                latest.get('jockey'),
+                latest.get('trainer'),
+                weight_comfort_range,
+                past_performances,
+                race_w
+            )
+            
+            odds_win = latest.get('odds', 10.0)
+            if odds_win is None or odds_win == '':
+                odds_win = 10.0
+            try:
+                odds_win = float(odds_win)
+            except (ValueError, TypeError):
+                odds_win = 10.0
+            
+            odds_score = calculate_odds_score(odds_win, 50.0, odds_w)
+            
+            status_score = calculate_status_score(
+                birth_year,
+                latest.get('body_weight'),
+                [r.get('body_weight') for r in past_performances if r.get('body_weight')],
+                latest.get('incident', ''),
+                latest.get('running_position', ''),
+                latest.get('position'),
+                status_w
+            )
+            
+            overall_score = calculate_overall_score(
+                basic_score,
+                race_score,
+                odds_score,
+                status_score,
+                level1
+            )
+            
+            # 计算传统指标（用于显示）
+            wins = sum(1 for r in selected if r.get('position') == 1)
+            places = sum(1 for r in selected if r.get('position') in [1, 2])
+            shows = sum(1 for r in selected if r.get('position') in [1, 2, 3])
+            
+            win_rate = wins / total * 100
+            place_rate = places / total * 100
+            show_rate = shows / total * 100
+            
+            weights = [r.get("body_weight") for r in selected if r.get("body_weight")]
+            avg_weight = sum(weights) / len(weights) if weights else 0
             
             results.append({
                 "horse_id": horse_id,
@@ -2801,7 +2945,8 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 "win_rate": round(win_rate, 1),
                 "place_rate": round(place_rate, 1),
                 "show_rate": round(show_rate, 1),
-                "basic_score": round(basic_score, 1)
+                "basic_score": overall_score,
+                "races_count": total
             })
         
         # 按评分排序
@@ -2811,35 +2956,63 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
         df = pd.DataFrame(results[:limit])
         
         if df.empty:
+            info_msg = "暂无马匹数据" if lang == "zh" else "No horse data available"
+            st.info(info_msg)
             return df
         
-        # 重命名列（用于显示）
-        df_display = df.rename(columns={
-            "horse_id": "Horse_ID",
-            "name_zh": "馬名(中)",
-            "name_en": "馬名(英)",
-            "sex": "性別",
-            "age": "年齡",
-            "avg_weight": "平均體重",
-            "win_rate": "勝率",
-            "place_rate": "入Q率",
-            "show_rate": "入T率",
-            "basic_score": "基礎評分"
-        })
+        # 重命名列（双语）
+        if lang == "zh":
+            df_display = df.rename(columns={
+                "horse_id": "Horse_ID",
+                "name_zh": "馬名(中)",
+                "name_en": "馬名(英)",
+                "sex": "性別",
+                "age": "年齡",
+                "avg_weight": "平均體重",
+                "win_rate": "勝率",
+                "place_rate": "入Q率",
+                "show_rate": "入T率",
+                "basic_score": "綜合評分",
+                "races_count": "出賽場次"
+            })
+        else:
+            df_display = df.rename(columns={
+                "horse_id": "Horse_ID",
+                "name_zh": "Name (CN)",
+                "name_en": "Name (EN)",
+                "sex": "Sex",
+                "age": "Age",
+                "avg_weight": "Avg Weight",
+                "win_rate": "Win Rate",
+                "place_rate": "Place Rate",
+                "show_rate": "Show Rate",
+                "basic_score": "Overall Score",
+                "races_count": "Races"
+            })
         
         # 格式化百分比
-        df_display["勝率"] = df_display["勝率"].apply(lambda x: f"{x:.1f}%")
-        df_display["入Q率"] = df_display["入Q率"].apply(lambda x: f"{x:.1f}%")
-        df_display["入T率"] = df_display["入T率"].apply(lambda x: f"{x:.1f}%")
+        df_display["勝率"] = df_display["勝率"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+        df_display["入Q率"] = df_display["入Q率"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+        df_display["入T率"] = df_display["入T率"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+        
+        if lang == "en":
+            df_display["Win Rate"] = df_display["Win Rate"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+            df_display["Place Rate"] = df_display["Place Rate"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+            df_display["Show Rate"] = df_display["Show Rate"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
         
         # 调整列顺序
-        column_order = ["Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "基礎評分"]
+        if lang == "zh":
+            column_order = ["Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "綜合評分", "出賽場次"]
+        else:
+            column_order = ["Horse_ID", "Name (CN)", "Name (EN)", "Sex", "Age", "Avg Weight", "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races"]
+        
         df_display = df_display[[c for c in column_order if c in df_display.columns]]
         
         return df_display
         
     except Exception as e:
-        st.error(f"获取马匹评分失败: {e}")
+        error_msg = f"获取马匹评分失败: {e}" if lang == "zh" else f"Failed to get horse scores: {e}"
+        st.error(error_msg)
         return pd.DataFrame()
 
 #------------
@@ -6072,13 +6245,26 @@ def run_single_model_backtest(start_date: str, end_date: str, model_type: str) -
 #-----------
 def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> Dict:
     """
-    回测函数（优化版）
+    回测函数（优化版，支持新评分系统）
     - 批量获取数据，避免 N+1 查询
     - ROI 修正：每场都投注 100 元
     - 增加多个前三名指标
+    - 使用 scoring_config 权重配置
+    - 包含状态因子（马龄、体重、事件、冲刺能力）
     """
+    # 获取当前语言
+    lang = st.session_state.get("lang", "zh")
+    
+    # 模型名称（双语）
+    model_names = {
+        "rule": "评分系统" if lang == "zh" else "Rating System",
+        "lightgbm": "LightGBM",
+        "xgboost": "XGBoost",
+        "ensemble": "集成模型" if lang == "zh" else "Ensemble"
+    }
+    
     result = {
-        "模型": "评分系统" if model_type == "rule" else model_type.upper(),
+        "模型": model_names.get(model_type, model_type),
         "测试场次": 0,
         "预测正确": 0,                    # 独赢正确场次
         "前三名命中匹数": 0,              # 累计命中匹数
@@ -6098,29 +6284,63 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
     }
     
     try:
-        # 1. 批量获取所有数据
-        with st.spinner(f"📥 正在加載 {start_date} 至 {end_date} 的歷史數據..."):
+        # ==================== 1. 加载评分配置 ====================
+        from scoring_engine import get_scoring_config
+        config = get_scoring_config()
+        level1 = config.get('level1', {})
+        basic_w = config.get('basic', {})
+        race_w = config.get('race', {})
+        odds_w = config.get('odds', {})
+        status_w = config.get('status', {})
+        
+        # ==================== 2. 批量获取所有数据 ====================
+        status_text_msg = f"📥 正在加載 {start_date} 至 {end_date} 的歷史數據..." if lang == "zh" else f"📥 Loading historical data from {start_date} to {end_date}..."
+        with st.spinner(status_text_msg):
             all_performances = get_performances_batch(start_date, end_date)
         
         if not all_performances:
-            st.error("未獲取到任何數據")
+            error_msg = "未獲取到任何數據" if lang == "zh" else "No data retrieved"
+            st.error(error_msg)
             return result
         
-        # 2. 构建马匹往绩缓存
+        # ==================== 3. 构建马匹往绩缓存 ====================
         horse_cache = build_horse_performances_cache(all_performances)
         
-        # 3. 提取赛事列表
+        # 获取马匹信息（含出生年份）
+        try:
+            headers = get_supabase_headers(use_secret=True)
+            horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=horse_id,birth_year"
+            horses_response = requests.get(horses_url, headers=headers)
+            horse_birth_years = {}
+            if horses_response.status_code == 200:
+                for h in horses_response.json():
+                    horse_id = h.get('horse_id')
+                    if horse_id:
+                        horse_birth_years[horse_id] = h.get('birth_year')
+        except Exception as e:
+            print(f"获取马匹出生年份失败: {e}")
+            horse_birth_years = {}
+        
+        # ==================== 4. 提取赛事列表 ====================
         races = get_races_from_performances(all_performances)
         result["测试场次"] = len(races)
         
         if result["测试场次"] == 0:
-            st.warning("未找到任何賽事")
+            warn_msg = "未找到任何賽事" if lang == "zh" else "No races found"
+            st.warning(warn_msg)
             return result
         
-        # 4. 获取马名缓存
-       # past_performances_v2
+        # ==================== 5. 导入评分引擎函数 ====================
+        from scoring_engine import (
+            calculate_basic_score,
+            calculate_race_score,
+            calculate_odds_score,
+            calculate_status_score,
+            calculate_overall_score,
+            get_horse_weight_comfort_range_from_cache
+        )
         
-        # 5. 初始化统计变量
+        # ==================== 6. 初始化统计变量 ====================
         correct_predictions = 0
         total_top3_hits = 0
         total_top3_hit_races = 0
@@ -6129,15 +6349,16 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         total_stake = 0
         total_return = 0
         
-        # 6. 创建进度条
+        # ==================== 7. 创建进度条 ====================
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # 7. 遍历每场赛事
+        # ==================== 8. 遍历每场赛事 ====================
         for idx, race in enumerate(races):
             # 取消检查点
             if st.session_state.get("stop_backtest", False):
-                st.warning("⚠️ 回測已被用戶取消")
+                warn_msg = "⚠️ 回測已被用戶取消" if lang == "zh" else "⚠️ Backtest cancelled by user"
+                st.warning(warn_msg)
                 result["cancelled"] = True
                 break
             
@@ -6146,7 +6367,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             race_no = race['race_no']
             distance = race.get('distance', 1200)
             
-            status_text.text(f"正在回測: {race_date} 第{race_no}場 ({idx+1}/{result['测试场次']})")
+            progress_msg = f"正在回測: {race_date} 第{race_no}場 ({idx+1}/{result['测试场次']})" if lang == "zh" else f"Backtesting: {race_date} Race {race_no} ({idx+1}/{result['测试场次']})"
+            status_text.text(progress_msg)
             progress_bar.progress((idx + 1) / result['测试场次'])
             
             # 获取该场赛事的出赛马匹
@@ -6173,30 +6395,60 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                                    if p.get('race_date', '') < race_date]
                 past_before_race = past_before_race[:10]
                 
-                # 计算基础评分
-                basic_score = calculate_basic_score_fast(past_before_race, distance)
+                # ========== 使用新评分引擎 ==========
+                # 获取负磅舒适区
+                weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_before_race)
                 
-                # 计算场次评分
-                draw = r.get('draw')
-                if draw and isinstance(draw, (int, float)) and 1 <= draw <= 14:
-                    draw_score = max(20, 100 - (draw - 1) * 6)
-                else:
-                    draw_score = 50
+                # 基础往绩评分
+                basic_score = calculate_basic_score(
+                    past_before_race,
+                    distance,
+                    basic_w
+                )
                 
-                # 赔率评分
+                # 场次因素评分
+                race_score = calculate_race_score(
+                    horse_id,
+                    venue,
+                    distance,
+                    r.get('draw'),
+                    r.get('actual_weight'),
+                    r.get('jockey'),
+                    r.get('trainer'),
+                    weight_comfort_range,
+                    past_before_race,
+                    race_w
+                )
+                
+                # 赔率因素评分
                 odds_raw = r.get('odds')
                 try:
-                    odds = float(odds_raw) if odds_raw else 10
+                    odds_win = float(odds_raw) if odds_raw else 10.0
                 except (ValueError, TypeError):
-                    odds = 10
+                    odds_win = 10.0
                 
-                if odds > 0 and odds <= 99:
-                    odds_score = 100 * (1 - (odds - 1) / 98)
-                    odds_score = max(0, min(100, odds_score))
-                else:
-                    odds_score = 50
+                odds_score = calculate_odds_score(odds_win, 50.0, odds_w)
                 
-                combined_score = basic_score * 0.30 + draw_score * 0.40 + odds_score * 0.30
+                # 状态因素评分
+                birth_year = horse_birth_years.get(horse_id)
+                status_score = calculate_status_score(
+                    birth_year,
+                    r.get('body_weight'),
+                    [p.get('body_weight') for p in past_before_race if p.get('body_weight')],
+                    r.get('incident', ''),
+                    r.get('running_position', ''),
+                    r.get('position'),
+                    status_w
+                )
+                
+                # 综合评分
+                combined_score = calculate_overall_score(
+                    basic_score,
+                    race_score,
+                    odds_score,
+                    status_score,
+                    level1
+                )
                 
                 runners.append({
                     "horse_id": horse_id,
@@ -6204,7 +6456,11 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                     "horse_no": r.get('horse_no'),
                     "finishing_position": r.get('position'),
                     "combined_score": combined_score,
-                    "odds_win": odds,
+                    "odds_win": odds_win,
+                    "basic_score": basic_score,
+                    "race_score": race_score,
+                    "odds_score": odds_score,
+                    "status_score": status_score
                 })
             
             if not runners:
@@ -6223,11 +6479,9 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             actual_2nd = None
             actual_3rd = None
             actual_top3_set = set()
-            actual_top3_names = []      # 保留但可以不使用
             
             for r in runners_data_sorted:
                 pos = r.get('position')
-                horse_id = r.get('horse_id')
                 horse_name = r.get('horse_name', '')
                 if pos == 1:
                     actual_1st = horse_name
@@ -6238,7 +6492,6 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 elif pos == 3:
                     actual_3rd = horse_name
                     actual_top3_set.add(horse_name)
-                    # ⭐ 不要添加 actual_top3_set = set(actual_top3_names) 这行
             
             # 统计各指标
             is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
@@ -6268,30 +6521,46 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                     odds = 3.0
                 total_return += 100 * odds
             
-            # 记录调试详情
-            result["debug_details"].append({
-                "赛期": race_date,
-                "场次": race_no,
-                "预测第1名": predicted_1st or "-",
-                "预测第2名": predicted_2nd or "-",
-                "预测第3名": predicted_3rd or "-",
-                "实际第1名": actual_1st or "-",
-                "实际第2名": actual_2nd or "-",
-                "实际第3名": actual_3rd or "-",
-                "独赢正确": "✅" if is_correct else "❌",
-                "前3名命中匹数": hits,
-                "前3名全中": "✅" if tri_correct else "❌",
-                "前3名顺序正确": "✅" if tce_correct else "❌"
-            })
+            # 记录调试详情（双语）
+            if lang == "zh":
+                result["debug_details"].append({
+                    "赛期": race_date,
+                    "场次": race_no,
+                    "预测第1名": predicted_1st or "-",
+                    "预测第2名": predicted_2nd or "-",
+                    "预测第3名": predicted_3rd or "-",
+                    "实际第1名": actual_1st or "-",
+                    "实际第2名": actual_2nd or "-",
+                    "实际第3名": actual_3rd or "-",
+                    "独赢正确": "✅" if is_correct else "❌",
+                    "前3名命中匹数": hits,
+                    "前3名全中": "✅" if tri_correct else "❌",
+                    "前3名顺序正确": "✅" if tce_correct else "❌"
+                })
+            else:
+                result["debug_details"].append({
+                    "Date": race_date,
+                    "Race": race_no,
+                    "Pred 1st": predicted_1st or "-",
+                    "Pred 2nd": predicted_2nd or "-",
+                    "Pred 3rd": predicted_3rd or "-",
+                    "Actual 1st": actual_1st or "-",
+                    "Actual 2nd": actual_2nd or "-",
+                    "Actual 3rd": actual_3rd or "-",
+                    "Win": "✅" if is_correct else "❌",
+                    "Top3 Hits": hits,
+                    "Trio": "✅" if tri_correct else "❌",
+                    "Trifecta": "✅" if tce_correct else "❌"
+                })
             
             if is_correct:
                 correct_predictions += 1
         
-        # 8. 清理进度条
+        # ==================== 9. 清理进度条 ====================
         progress_bar.empty()
         status_text.empty()
         
-        # 9. 计算最终结果
+        # ==================== 10. 计算最终结果 ====================
         if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["独赢正确率"] = correct_predictions / result["测试场次"] * 100
@@ -6314,10 +6583,12 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 result["ROI"] = (total_return - total_stake) / total_stake * 100
         
         if not result["cancelled"]:
-            st.success(f"✅ 回測完成: {result['测试场次']} 場, 獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%")
+            success_msg = f"✅ 回測完成: {result['测试场次']} 場, 獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%" if lang == "zh" else f"✅ Backtest complete: {result['测试场次']} races, Win Rate {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%"
+            st.success(success_msg)
         
     except Exception as e:
-        st.error(f"回測失敗: {e}")
+        error_msg = f"回測失敗: {e}" if lang == "zh" else f"Backtest failed: {e}"
+        st.error(error_msg)
         print(f"回測失敗 ({model_type}): {e}")
     
     st.session_state.stop_backtest = False
