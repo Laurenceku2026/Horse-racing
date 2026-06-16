@@ -2032,8 +2032,8 @@ def render_admin_panel():
                 )
                 weight_change = st.number_input(
                     "体重变化" if lang == "zh" else "Weight Change",
-                    min_value=0, max_value=100, value=int(status_w.get("weight_change", 0.25) * 100),
-                    step=1, key="admin_status_weight_change"
+                    min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25) * 100),
+                    step=1, key="user_status_weight_change"  # ← 改为这个 key
                 )
             with col2:
                 incident = st.number_input(
