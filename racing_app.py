@@ -1562,7 +1562,7 @@ def render_admin_panel():
     st.markdown(f"## ⚙️ {t()['admin_panel']}")
     
     # 创建选项卡
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 数据编辑器", "📈 回测", "👥 用户管理", "🌐 马名映射"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 数据编辑器", "📈 回测", "👥 用户管理", "⚙️ 评分权重设置"])
     
     # ==================== Tab1: 数据编辑器 ====================
     with tab1:
@@ -1769,50 +1769,341 @@ def render_admin_panel():
     # ==================== Tab3: 用户管理 ====================
     with tab3:
         render_user_management()
-    
-    # ==================== Tab4: 马名映射管理 ====================
+    #-----------------
+    # ==================== Tab4: 评分设置 ====================
     with tab4:
-        st.markdown("### 🌐 中英文马名映射")
-        st.caption("管理马名的中英文对应关系，用于界面语言切换")
+        st.markdown("### ⚙️ 评分权重设置")
+        st.caption("设置各级评分因子的权重（所有权重总和必须为100%）")
         
-        # 强制清除函数缓存
-        get_horse_name_mapping.clear()
+        # 获取当前语言
+        lang = st.session_state.get("lang", "zh")
         
-        # 获取当前映射
-        mapping_data = get_horse_name_mapping()
+        # 从数据库加载当前配置
+        @st.cache_data(ttl=60, show_spinner=False)
+        def load_scoring_config():
+            try:
+                headers = get_supabase_headers(use_secret=True)
+                url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
+                response = requests.get(url, headers=headers)
+                if response.status_code == 200 and response.json():
+                    return response.json()[0]
+                return None
+            except Exception as e:
+                st.error(f"加载配置失败: {e}")
+                return None
         
-        if mapping_data:
-            mapping_df = pd.DataFrame([
-                {"中文名": zh, "英文名": en} for zh, en in mapping_data.items()
-            ])
-            
-            # 使用 unique key 强制刷新编辑器
-            editor_key = f"mapping_editor_{hash(str(mapping_data))}"
-            
-            edited_mapping = st.data_editor(
-                mapping_df,
-                use_container_width=True,
-                hide_index=True,
-                key=editor_key,
-                column_config={
-                    "中文名": st.column_config.TextColumn("中文名", disabled=True),
-                    "英文名": st.column_config.TextColumn("英文名")
-                }
-            )
-            
-            if st.button("💾 保存映射", type="primary"):
-                for _, row in edited_mapping.iterrows():
-                    zh = row["中文名"]
-                    en = row["英文名"]
-                    if zh and en:
-                        headers = get_supabase_headers(use_secret=True)
-                        url = f"{SUPABASE_URL}/rest/v1/horse_name_mapping?name_zh=eq.{zh}"
-                        requests.patch(url, headers=headers, json={"name_en": en})
-                st.success("映射已保存")
-                st.cache_data.clear()
-                st.rerun()
+        # 保存配置到数据库
+        def save_scoring_config(config_data):
+            try:
+                headers = get_supabase_headers(use_secret=True)
+                url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
+                response = requests.patch(url, headers=headers, json=config_data)
+                if response.status_code in [200, 204]:
+                    # 清除缓存，重新加载
+                    st.cache_data.clear()
+                    return True
+                else:
+                    st.error(f"保存失败: {response.text}")
+                    return False
+            except Exception as e:
+                st.error(f"保存失败: {e}")
+                return False
+        
+        # 加载当前配置
+        config = load_scoring_config()
+        
+        if config is None:
+            st.error("无法加载评分配置，请检查数据库表 scoring_config 是否存在")
+            return
+        
+        # 初始化 session_state 中的临时配置
+        if "admin_scoring_config" not in st.session_state:
+            st.session_state.admin_scoring_config = {
+                "level1_weights": config.get("level1_weights", {}),
+                "basic_weights": config.get("basic_weights", {}),
+                "race_weights": config.get("race_weights", {}),
+                "odds_weights": config.get("odds_weights", {}),
+                "status_weights": config.get("status_weights", {})
+            }
+        
+        # 获取当前编辑的配置
+        level1 = st.session_state.admin_scoring_config["level1_weights"].copy()
+        basic_w = st.session_state.admin_scoring_config["basic_weights"].copy()
+        race_w = st.session_state.admin_scoring_config["race_weights"].copy()
+        odds_w = st.session_state.admin_scoring_config["odds_weights"].copy()
+        status_w = st.session_state.admin_scoring_config["status_weights"].copy()
+        
+        # 辅助函数：检查一级因子总和
+        def check_level1_sum():
+            total = level1.get("basic", 0) + level1.get("race", 0) + level1.get("odds", 0) + level1.get("status", 0)
+            return total
+        
+        # ==================== 一级因子设置 ====================
+        if lang == "zh":
+            st.markdown("#### 📊 一级因子权重")
+            st.caption("调整各主要维度的权重，总和必须为100%")
         else:
-            st.info("暂无映射数据")
+            st.markdown("#### 📊 Level 1 Weights")
+            st.caption("Adjust main dimension weights, total must be 100%")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            basic_val = st.number_input(
+                "基础往绩" if lang == "zh" else "Basic Performance",
+                min_value=0, max_value=100, value=int(level1.get("basic", 0.30) * 100),
+                step=1, key="admin_basic_weight"
+            )
+            level1["basic"] = basic_val / 100
+        
+        with col2:
+            race_val = st.number_input(
+                "场次因素" if lang == "zh" else "Race Factors",
+                min_value=0, max_value=100, value=int(level1.get("race", 0.35) * 100),
+                step=1, key="admin_race_weight"
+            )
+            level1["race"] = race_val / 100
+        
+        with col3:
+            odds_val = st.number_input(
+                "赔率因素" if lang == "zh" else "Odds Factors",
+                min_value=0, max_value=100, value=int(level1.get("odds", 0.20) * 100),
+                step=1, key="admin_odds_weight"
+            )
+            level1["odds"] = odds_val / 100
+        
+        with col4:
+            status_val = st.number_input(
+                "状态因素" if lang == "zh" else "Status Factors",
+                min_value=0, max_value=100, value=int(level1.get("status", 0.15) * 100),
+                step=1, key="admin_status_weight"
+            )
+            level1["status"] = status_val / 100
+        
+        # 显示总和校验
+        total_level1 = check_level1_sum()
+        if total_level1 == 100:
+            st.success(f"✅ 当前总和: {total_level1}%" if lang == "zh" else f"✅ Total: {total_level1}%")
+        else:
+            st.error(f"❌ 当前总和: {total_level1}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1}%, must be 100%")
+        
+        st.markdown("---")
+        
+        # ==================== 基础往绩二级因子 ====================
+        with st.expander("📈 基础往绩 - 二级因子权重" if lang == "zh" else "📈 Basic Performance - Level 2 Weights", expanded=False):
+            st.caption("调整基础往绩内部的子因子权重，总和必须为100%" if lang == "zh" else "Adjust sub-factor weights, total must be 100%")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                win3 = st.number_input(
+                    "近3场胜率" if lang == "zh" else "Win Rate (Last 3)",
+                    min_value=0, max_value=100, value=int(basic_w.get("win_rate_3", 0.20) * 100),
+                    step=1, key="admin_win3"
+                )
+                win10 = st.number_input(
+                    "近10场胜率" if lang == "zh" else "Win Rate (Last 10)",
+                    min_value=0, max_value=100, value=int(basic_w.get("win_rate_10", 0.20) * 100),
+                    step=1, key="admin_win10"
+                )
+                place10 = st.number_input(
+                    "近10场入Q率" if lang == "zh" else "Place Rate (Last 10)",
+                    min_value=0, max_value=100, value=int(basic_w.get("place_rate_10", 0.15) * 100),
+                    step=1, key="admin_place10"
+                )
+            with col2:
+                show10 = st.number_input(
+                    "近10场入T率" if lang == "zh" else "Show Rate (Last 10)",
+                    min_value=0, max_value=100, value=int(basic_w.get("show_rate_10", 0.15) * 100),
+                    step=1, key="admin_show10"
+                )
+                distance_rating = st.number_input(
+                    "同程表现评分" if lang == "zh" else "Distance Rating",
+                    min_value=0, max_value=100, value=int(basic_w.get("distance_rating", 0.15) * 100),
+                    step=1, key="admin_distance"
+                )
+                trend = st.number_input(
+                    "名次趋势" if lang == "zh" else "Ranking Trend",
+                    min_value=0, max_value=100, value=int(basic_w.get("trend", 0.15) * 100),
+                    step=1, key="admin_trend"
+                )
+            
+            # 更新权重字典
+            basic_w["win_rate_3"] = win3 / 100
+            basic_w["win_rate_10"] = win10 / 100
+            basic_w["place_rate_10"] = place10 / 100
+            basic_w["show_rate_10"] = show10 / 100
+            basic_w["distance_rating"] = distance_rating / 100
+            basic_w["trend"] = trend / 100
+            
+            total_basic = sum(basic_w.values()) * 100
+            if abs(total_basic - 100) < 0.1:
+                st.success(f"✅ 当前总和: {total_basic:.0f}%" if lang == "zh" else f"✅ Total: {total_basic:.0f}%")
+            else:
+                st.error(f"❌ 当前总和: {total_basic:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_basic:.0f}%, must be 100%")
+        
+        # ==================== 场次因素二级因子 ====================
+        with st.expander("🏟️ 场次因素 - 二级因子权重" if lang == "zh" else "🏟️ Race Factors - Level 2 Weights", expanded=False):
+            st.caption("调整场次因素内部的子因子权重，总和必须为100%" if lang == "zh" else "Adjust sub-factor weights, total must be 100%")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                same_course = st.number_input(
+                    "同场地胜率" if lang == "zh" else "Same Course",
+                    min_value=0, max_value=100, value=int(race_w.get("same_course", 0.25) * 100),
+                    step=1, key="admin_same_course"
+                )
+                same_distance = st.number_input(
+                    "同路程胜率" if lang == "zh" else "Same Distance",
+                    min_value=0, max_value=100, value=int(race_w.get("same_distance", 0.25) * 100),
+                    step=1, key="admin_same_distance"
+                )
+                draw = st.number_input(
+                    "档位优势" if lang == "zh" else "Draw Advantage",
+                    min_value=0, max_value=100, value=int(race_w.get("draw", 0.15) * 100),
+                    step=1, key="admin_draw"
+                )
+            with col2:
+                weight = st.number_input(
+                    "负磅变化" if lang == "zh" else "Weight Change",
+                    min_value=0, max_value=100, value=int(race_w.get("weight", 0.10) * 100),
+                    step=1, key="admin_weight"
+                )
+                jockey = st.number_input(
+                    "骑师配合" if lang == "zh" else "Jockey",
+                    min_value=0, max_value=100, value=int(race_w.get("jockey", 0.15) * 100),
+                    step=1, key="admin_jockey"
+                )
+                trainer = st.number_input(
+                    "练马师状态" if lang == "zh" else "Trainer",
+                    min_value=0, max_value=100, value=int(race_w.get("trainer", 0.10) * 100),
+                    step=1, key="admin_trainer"
+                )
+            
+            race_w["same_course"] = same_course / 100
+            race_w["same_distance"] = same_distance / 100
+            race_w["draw"] = draw / 100
+            race_w["weight"] = weight / 100
+            race_w["jockey"] = jockey / 100
+            race_w["trainer"] = trainer / 100
+            
+            total_race = sum(race_w.values()) * 100
+            if abs(total_race - 100) < 0.1:
+                st.success(f"✅ 当前总和: {total_race:.0f}%" if lang == "zh" else f"✅ Total: {total_race:.0f}%")
+            else:
+                st.error(f"❌ 当前总和: {total_race:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_race:.0f}%, must be 100%")
+        
+        # ==================== 赔率因素二级因子 ====================
+        with st.expander("💰 赔率因素 - 二级因子权重" if lang == "zh" else "💰 Odds Factors - Level 2 Weights", expanded=False):
+            st.caption("调整赔率因素内部的子因子权重，总和必须为100%" if lang == "zh" else "Adjust sub-factor weights, total must be 100%")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                win_odds = st.number_input(
+                    "独赢赔率" if lang == "zh" else "Win Odds",
+                    min_value=0, max_value=100, value=int(odds_w.get("win_odds", 0.60) * 100),
+                    step=1, key="admin_win_odds"
+                )
+            with col2:
+                odds_trend = st.number_input(
+                    "赔率变动趋势" if lang == "zh" else "Odds Trend",
+                    min_value=0, max_value=100, value=int(odds_w.get("odds_trend", 0.40) * 100),
+                    step=1, key="admin_odds_trend"
+                )
+            
+            odds_w["win_odds"] = win_odds / 100
+            odds_w["odds_trend"] = odds_trend / 100
+            
+            total_odds = sum(odds_w.values()) * 100
+            if abs(total_odds - 100) < 0.1:
+                st.success(f"✅ 当前总和: {total_odds:.0f}%" if lang == "zh" else f"✅ Total: {total_odds:.0f}%")
+            else:
+                st.error(f"❌ 当前总和: {total_odds:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_odds:.0f}%, must be 100%")
+        
+        # ==================== 状态因素二级因子 ====================
+        with st.expander("🩺 状态因素 - 二级因子权重" if lang == "zh" else "🩺 Status Factors - Level 2 Weights", expanded=False):
+            st.caption("调整状态因素内部的子因子权重，总和必须为100%" if lang == "zh" else "Adjust sub-factor weights, total must be 100%")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                age = st.number_input(
+                    "马龄因子" if lang == "zh" else "Age Factor",
+                    min_value=0, max_value=100, value=int(status_w.get("age", 0.30) * 100),
+                    step=1, key="admin_age"
+                )
+                weight_change = st.number_input(
+                    "体重变化" if lang == "zh" else "Weight Change",
+                    min_value=0, max_value=100, value=int(status_w.get("weight_change", 0.25) * 100),
+                    step=1, key="admin_status_weight_change"
+                )
+            with col2:
+                incident = st.number_input(
+                    "事件报告" if lang == "zh" else "Incident",
+                    min_value=0, max_value=100, value=int(status_w.get("incident", 0.25) * 100),
+                    step=1, key="admin_incident"
+                )
+                burst = st.number_input(
+                    "冲刺能力" if lang == "zh" else "Burst Ability",
+                    min_value=0, max_value=100, value=int(status_w.get("burst", 0.20) * 100),
+                    step=1, key="admin_burst"
+                )
+            
+            status_w["age"] = age / 100
+            status_w["weight_change"] = weight_change / 100
+            status_w["incident"] = incident / 100
+            status_w["burst"] = burst / 100
+            
+            total_status = sum(status_w.values()) * 100
+            if abs(total_status - 100) < 0.1:
+                st.success(f"✅ 当前总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
+            else:
+                st.error(f"❌ 当前总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
+        
+        st.markdown("---")
+        
+        # ==================== 保存按钮 ====================
+        col1, col2, col3 = st.columns([1, 1, 2])
+        
+        with col1:
+            if st.button("💾 保存配置" if lang == "zh" else "💾 Save Config", type="primary", use_container_width=True):
+                # 检查一级因子总和
+                if check_level1_sum() != 100:
+                    st.error("一级因子总和必须为100%，请调整后重试" if lang == "zh" else "Level 1 weights must sum to 100%")
+                elif abs(sum(basic_w.values()) - 1) > 0.01:
+                    st.error("基础往绩二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Basic weights must sum to 100%")
+                elif abs(sum(race_w.values()) - 1) > 0.01:
+                    st.error("场次因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Race weights must sum to 100%")
+                elif abs(sum(odds_w.values()) - 1) > 0.01:
+                    st.error("赔率因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Odds weights must sum to 100%")
+                elif abs(sum(status_w.values()) - 1) > 0.01:
+                    st.error("状态因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Status weights must sum to 100%")
+                else:
+                    config_data = {
+                        "level1_weights": level1,
+                        "basic_weights": basic_w,
+                        "race_weights": race_w,
+                        "odds_weights": odds_w,
+                        "status_weights": status_w,
+                        "updated_by": st.session_state.user_email,
+                        "updated_at": datetime.now().isoformat()
+                    }
+                    if save_scoring_config(config_data):
+                        st.success("配置已保存" if lang == "zh" else "Config saved")
+                        st.cache_data.clear()
+                        st.rerun()
+        
+        with col2:
+            if st.button("🔄 重置为默认" if lang == "zh" else "🔄 Reset to Default", use_container_width=True):
+                # 重置为默认值
+                st.session_state.admin_scoring_config = {
+                    "level1_weights": {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15},
+                    "basic_weights": {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15},
+                    "race_weights": {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10},
+                    "odds_weights": {"win_odds": 0.60, "odds_trend": 0.40},
+                    "status_weights": {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20}
+                }
+                st.rerun()
+        
+        st.caption("💡 提示：修改权重后需要点击「保存配置」才会生效，所有用户将使用新配置" if lang == "zh" else "💡 Hint: Click 'Save Config' after modification, all users will use the new configuration")
     #-----------------
     # ==================== 预计算评分 ====================
     st.markdown("---")
@@ -4004,7 +4295,323 @@ def render_smart_betting(show_title: bool = True):
             st.markdown(f"**{t()['rating_weights']}**")
             st.caption(f"{t()['basic_weight']} | {t()['race_weight']} | {t()['odds_weight']}")
             st.caption(f"{t()['temperature']} | {t()['odds_mix']}")
-    
+    #-----------------
+    lang = st.session_state.get("lang", "zh")
+    # ==================== 评分权重设置（用户临时调整） ====================
+    with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=False):
+        st.caption("调整评分因子权重，仅对当前会话有效，退出后恢复默认值" if lang == "zh" else "Adjust rating weights, only valid for current session")
+        
+        # 从数据库加载默认配置
+        @st.cache_data(ttl=300, show_spinner=False)
+        def load_scoring_config_user():
+            try:
+                headers = get_supabase_headers(use_secret=True)
+                url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
+                response = requests.get(url, headers=headers)
+                if response.status_code == 200 and response.json():
+                    return response.json()[0]
+                return None
+            except Exception:
+                return None
+        
+        config = load_scoring_config_user()
+        
+        # 如果配置不存在，使用默认值
+        if config is None:
+            default_level1 = {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15}
+            default_basic = {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15}
+            default_race = {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10}
+            default_odds = {"win_odds": 0.60, "odds_trend": 0.40}
+            default_status = {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20}
+        else:
+            default_level1 = config.get("level1_weights", {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15})
+            default_basic = config.get("basic_weights", {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15})
+            default_race = config.get("race_weights", {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10})
+            default_odds = config.get("odds_weights", {"win_odds": 0.60, "odds_trend": 0.40})
+            default_status = config.get("status_weights", {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20})
+        
+        # 初始化 session_state 中的用户临时配置
+        if "user_scoring_config" not in st.session_state:
+            st.session_state.user_scoring_config = {
+                "level1_weights": default_level1.copy(),
+                "basic_weights": default_basic.copy(),
+                "race_weights": default_race.copy(),
+                "odds_weights": default_odds.copy(),
+                "status_weights": default_status.copy()
+            }
+        
+        # 检查是否应用了权重
+        if "scoring_weights_applied" not in st.session_state:
+            st.session_state.scoring_weights_applied = False
+        
+        # 获取当前用户编辑的配置（从 session_state）
+        user_level1 = st.session_state.user_scoring_config["level1_weights"].copy()
+        user_basic = st.session_state.user_scoring_config["basic_weights"].copy()
+        user_race = st.session_state.user_scoring_config["race_weights"].copy()
+        user_odds = st.session_state.user_scoring_config["odds_weights"].copy()
+        user_status = st.session_state.user_scoring_config["status_weights"].copy()
+        
+        # ==================== 一级因子设置 ====================
+        if lang == "zh":
+            st.markdown("**一级因子权重**")
+        else:
+            st.markdown("**Level 1 Weights**")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            basic_val = st.number_input(
+                "基础往绩" if lang == "zh" else "Basic",
+                min_value=0, max_value=100, value=int(user_level1.get("basic", 0.30) * 100),
+                step=1, key="user_basic_weight"
+            )
+            user_level1["basic"] = basic_val / 100
+        
+        with col2:
+            race_val = st.number_input(
+                "场次因素" if lang == "zh" else "Race",
+                min_value=0, max_value=100, value=int(user_level1.get("race", 0.35) * 100),
+                step=1, key="user_race_weight"
+            )
+            user_level1["race"] = race_val / 100
+        
+        with col3:
+            odds_val = st.number_input(
+                "赔率因素" if lang == "zh" else "Odds",
+                min_value=0, max_value=100, value=int(user_level1.get("odds", 0.20) * 100),
+                step=1, key="user_odds_weight"
+            )
+            user_level1["odds"] = odds_val / 100
+        
+        with col4:
+            status_val = st.number_input(
+                "状态因素" if lang == "zh" else "Status",
+                min_value=0, max_value=100, value=int(user_level1.get("status", 0.15) * 100),
+                step=1, key="user_status_weight"
+            )
+            user_level1["status"] = status_val / 100
+        
+        # 显示一级因子总和
+        total_level1 = sum(user_level1.values()) * 100
+        if abs(total_level1 - 100) < 0.1:
+            st.success(f"✅ 总和: {total_level1:.0f}%" if lang == "zh" else f"✅ Total: {total_level1:.0f}%")
+        else:
+            st.error(f"❌ 总和: {total_level1:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1:.0f}%, must be 100%")
+        
+        # ==================== 二级因子折叠区域 ====================
+        # 基础往绩二级因子
+        with st.expander("📈 基础往绩二级因子" if lang == "zh" else "📈 Basic Performance Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                win3 = st.number_input(
+                    "近3场胜率" if lang == "zh" else "Win Rate (L3)",
+                    min_value=0, max_value=100, value=int(user_basic.get("win_rate_3", 0.20) * 100),
+                    step=1, key="user_win3"
+                )
+                win10 = st.number_input(
+                    "近10场胜率" if lang == "zh" else "Win Rate (L10)",
+                    min_value=0, max_value=100, value=int(user_basic.get("win_rate_10", 0.20) * 100),
+                    step=1, key="user_win10"
+                )
+                place10 = st.number_input(
+                    "近10场入Q率" if lang == "zh" else "Place Rate (L10)",
+                    min_value=0, max_value=100, value=int(user_basic.get("place_rate_10", 0.15) * 100),
+                    step=1, key="user_place10"
+                )
+            with col2:
+                show10 = st.number_input(
+                    "近10场入T率" if lang == "zh" else "Show Rate (L10)",
+                    min_value=0, max_value=100, value=int(user_basic.get("show_rate_10", 0.15) * 100),
+                    step=1, key="user_show10"
+                )
+                distance_rating = st.number_input(
+                    "同程表现评分" if lang == "zh" else "Distance Rating",
+                    min_value=0, max_value=100, value=int(user_basic.get("distance_rating", 0.15) * 100),
+                    step=1, key="user_distance"
+                )
+                trend = st.number_input(
+                    "名次趋势" if lang == "zh" else "Ranking Trend",
+                    min_value=0, max_value=100, value=int(user_basic.get("trend", 0.15) * 100),
+                    step=1, key="user_trend"
+                )
+            
+            user_basic["win_rate_3"] = win3 / 100
+            user_basic["win_rate_10"] = win10 / 100
+            user_basic["place_rate_10"] = place10 / 100
+            user_basic["show_rate_10"] = show10 / 100
+            user_basic["distance_rating"] = distance_rating / 100
+            user_basic["trend"] = trend / 100
+            
+            total_basic = sum(user_basic.values()) * 100
+            if abs(total_basic - 100) < 0.1:
+                st.success(f"✅ 总和: {total_basic:.0f}%" if lang == "zh" else f"✅ Total: {total_basic:.0f}%")
+            else:
+                st.error(f"❌ 总和: {total_basic:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_basic:.0f}%, must be 100%")
+        
+        # 场次因素二级因子
+        with st.expander("🏟️ 场次因素二级因子" if lang == "zh" else "🏟️ Race Factors Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                same_course = st.number_input(
+                    "同场地胜率" if lang == "zh" else "Same Course",
+                    min_value=0, max_value=100, value=int(user_race.get("same_course", 0.25) * 100),
+                    step=1, key="user_same_course"
+                )
+                same_distance = st.number_input(
+                    "同路程胜率" if lang == "zh" else "Same Distance",
+                    min_value=0, max_value=100, value=int(user_race.get("same_distance", 0.25) * 100),
+                    step=1, key="user_same_distance"
+                )
+                draw = st.number_input(
+                    "档位优势" if lang == "zh" else "Draw",
+                    min_value=0, max_value=100, value=int(user_race.get("draw", 0.15) * 100),
+                    step=1, key="user_draw"
+                )
+            with col2:
+                weight = st.number_input(
+                    "负磅变化" if lang == "zh" else "Weight",
+                    min_value=0, max_value=100, value=int(user_race.get("weight", 0.10) * 100),
+                    step=1, key="user_weight"
+                )
+                jockey = st.number_input(
+                    "骑师配合" if lang == "zh" else "Jockey",
+                    min_value=0, max_value=100, value=int(user_race.get("jockey", 0.15) * 100),
+                    step=1, key="user_jockey"
+                )
+                trainer = st.number_input(
+                    "练马师状态" if lang == "zh" else "Trainer",
+                    min_value=0, max_value=100, value=int(user_race.get("trainer", 0.10) * 100),
+                    step=1, key="user_trainer"
+                )
+            
+            user_race["same_course"] = same_course / 100
+            user_race["same_distance"] = same_distance / 100
+            user_race["draw"] = draw / 100
+            user_race["weight"] = weight / 100
+            user_race["jockey"] = jockey / 100
+            user_race["trainer"] = trainer / 100
+            
+            total_race = sum(user_race.values()) * 100
+            if abs(total_race - 100) < 0.1:
+                st.success(f"✅ 总和: {total_race:.0f}%" if lang == "zh" else f"✅ Total: {total_race:.0f}%")
+            else:
+                st.error(f"❌ 总和: {total_race:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_race:.0f}%, must be 100%")
+        
+        # 赔率因素二级因子
+        with st.expander("💰 赔率因素二级因子" if lang == "zh" else "💰 Odds Factors Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                win_odds = st.number_input(
+                    "独赢赔率" if lang == "zh" else "Win Odds",
+                    min_value=0, max_value=100, value=int(user_odds.get("win_odds", 0.60) * 100),
+                    step=1, key="user_win_odds"
+                )
+            with col2:
+                odds_trend = st.number_input(
+                    "赔率变动趋势" if lang == "zh" else "Odds Trend",
+                    min_value=0, max_value=100, value=int(user_odds.get("odds_trend", 0.40) * 100),
+                    step=1, key="user_odds_trend"
+                )
+            
+            user_odds["win_odds"] = win_odds / 100
+            user_odds["odds_trend"] = odds_trend / 100
+            
+            total_odds = sum(user_odds.values()) * 100
+            if abs(total_odds - 100) < 0.1:
+                st.success(f"✅ 总和: {total_odds:.0f}%" if lang == "zh" else f"✅ Total: {total_odds:.0f}%")
+            else:
+                st.error(f"❌ 总和: {total_odds:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_odds:.0f}%, must be 100%")
+        
+        # 状态因素二级因子
+        with st.expander("🩺 状态因素二级因子" if lang == "zh" else "🩺 Status Factors Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                age = st.number_input(
+                    "马龄因子" if lang == "zh" else "Age",
+                    min_value=0, max_value=100, value=int(user_status.get("age", 0.30) * 100),
+                    step=1, key="user_age"
+                )
+                weight_change = st.number_input(
+                    "体重变化" if lang == "zh" else "Weight Change",
+                    min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25) * 100),
+                    step=1, key="user_status_weight"
+                )
+            with col2:
+                incident = st.number_input(
+                    "事件报告" if lang == "zh" else "Incident",
+                    min_value=0, max_value=100, value=int(user_status.get("incident", 0.25) * 100),
+                    step=1, key="user_incident"
+                )
+                burst = st.number_input(
+                    "冲刺能力" if lang == "zh" else "Burst",
+                    min_value=0, max_value=100, value=int(user_status.get("burst", 0.20) * 100),
+                    step=1, key="user_burst"
+                )
+            
+            user_status["age"] = age / 100
+            user_status["weight_change"] = weight_change / 100
+            user_status["incident"] = incident / 100
+            user_status["burst"] = burst / 100
+            
+            total_status = sum(user_status.values()) * 100
+            if abs(total_status - 100) < 0.1:
+                st.success(f"✅ 总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
+            else:
+                st.error(f"❌ 总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
+        
+        # ==================== 按钮区域 ====================
+        col1, col2, col3 = st.columns([1, 1, 2])
+        
+        with col1:
+            # 保存用户临时配置到 session_state
+            if st.button("✅ 应用权重并刷新" if lang == "zh" else "✅ Apply & Refresh", type="primary", use_container_width=True):
+                # 检查一级因子总和
+                if abs(sum(user_level1.values()) - 1) > 0.01:
+                    st.error("一级因子总和必须为100%，请调整后重试" if lang == "zh" else "Level 1 weights must sum to 100%")
+                elif abs(sum(user_basic.values()) - 1) > 0.01:
+                    st.error("基础往绩二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Basic weights must sum to 100%")
+                elif abs(sum(user_race.values()) - 1) > 0.01:
+                    st.error("场次因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Race weights must sum to 100%")
+                elif abs(sum(user_odds.values()) - 1) > 0.01:
+                    st.error("赔率因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Odds weights must sum to 100%")
+                elif abs(sum(user_status.values()) - 1) > 0.01:
+                    st.error("状态因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Status weights must sum to 100%")
+                else:
+                    # 保存到 session_state
+                    st.session_state.user_scoring_config = {
+                        "level1_weights": user_level1,
+                        "basic_weights": user_basic,
+                        "race_weights": user_race,
+                        "odds_weights": user_odds,
+                        "status_weights": user_status
+                    }
+                    st.session_state.scoring_weights_applied = True
+                    st.success("权重已应用，正在刷新数据..." if lang == "zh" else "Weights applied, refreshing...")
+                    st.cache_data.clear()
+                    st.rerun()
+        
+        with col2:
+            if st.button("🔄 恢复默认值" if lang == "zh" else "🔄 Reset to Default", use_container_width=True):
+                # 恢复到数据库默认配置
+                st.session_state.user_scoring_config = {
+                    "level1_weights": default_level1.copy(),
+                    "basic_weights": default_basic.copy(),
+                    "race_weights": default_race.copy(),
+                    "odds_weights": default_odds.copy(),
+                    "status_weights": default_status.copy()
+                }
+                st.session_state.scoring_weights_applied = False
+                st.success("已恢复到默认权重" if lang == "zh" else "Reset to default weights")
+                st.rerun()
+        
+        # 显示当前状态
+        if st.session_state.scoring_weights_applied:
+            st.info("✅ 当前使用自定义权重" if lang == "zh" else "✅ Currently using custom weights")
+        else:
+            st.info("📌 当前使用管理员默认权重" if lang == "zh" else "📌 Currently using admin default weights")
+        
+        st.caption("💡 修改后需点击「应用权重并刷新」才会生效" if lang == "zh" else "💡 Click 'Apply & Refresh' after modification to take effect")
+    #------------------
     st.markdown("---")
     
     #-------    
