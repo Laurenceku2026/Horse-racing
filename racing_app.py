@@ -1895,11 +1895,13 @@ def render_admin_panel():
             level1["status"] = status_val / 100
         
         # 显示总和校验
+        # 显示总和校验
         total_level1 = check_level1_sum()
-        if total_level1 == 100:
-            st.success(f"✅ 当前总和: {total_level1}%" if lang == "zh" else f"✅ Total: {total_level1}%")
+        # ✅ 使用 round() 解决浮点数精度问题
+        if abs(total_level1 - 100) < 0.01:
+            st.success(f"✅ 当前总和: {round(total_level1)}%" if lang == "zh" else f"✅ Total: {round(total_level1)}%")
         else:
-            st.error(f"❌ 当前总和: {total_level1}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1}%, must be 100%")
+            st.error(f"❌ 当前总和: {total_level1:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1:.0f}%, must be 100%")
         
         st.markdown("---")
         
@@ -2046,8 +2048,8 @@ def render_admin_panel():
                 )
                 weight_change = st.number_input(
                     "体重变化" if lang == "zh" else "Weight Change",
-                    min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25) * 100),
-                    step=1, key="admin_weight_change"  # ← 改为这个 key
+                    min_value=0, max_value=100, value=int(status_w.get("weight_change", 0.25) * 100),
+                    step=1, key="admin_weight_change"  # ← 改为 admin_weight_change
                 )
             with col2:
                 incident = st.number_input(
@@ -2056,7 +2058,7 @@ def render_admin_panel():
                     step=1, key="admin_incident"
                 )
                 burst = st.number_input(
-                    "冲刺能力" if lang == "zh" else "Burst Ability",
+                    "冲刺能力" if lang == "zh" else "Burst",
                     min_value=0, max_value=100, value=int(status_w.get("burst", 0.20) * 100),
                     step=1, key="admin_burst"
                 )
@@ -2067,8 +2069,9 @@ def render_admin_panel():
             status_w["burst"] = burst / 100
             
             total_status = sum(status_w.values()) * 100
-            if abs(total_status - 100) < 0.1:
-                st.success(f"✅ 当前总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
+            # ✅ 使用 round() 解决浮点数精度问题
+            if abs(total_status - 100) < 0.01:
+                st.success(f"✅ 当前总和: {round(total_status)}%" if lang == "zh" else f"✅ Total: {round(total_status)}%")
             else:
                 st.error(f"❌ 当前总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
         
