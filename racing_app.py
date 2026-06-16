@@ -269,12 +269,12 @@ TEXTS = {
         "qin_recommendation": "🔗 連贏推薦",
         
         # ==================== 过关推荐 ====================
-        "parlay_recommendation": "🎲 过关投注推荐",
-        "select_parlay_races": "选择要过关的场次",
-        "select_2_6_races": "选择2-6场比赛（按顺序）",
-        "selected_races_count": "已选择 {count} 场比赛",
-        "generate_parlay": "🎲 生成过关推荐",
-        "best_parlay": "🏆 最佳推荐",
+        "parlay_recommendation": "🎲 過関投注推薦",
+        "select_parlay_races": "選擇要過關的場次",
+        "select_2_6_races": "選擇2-6場比賽（按順序）",
+        "selected_races_count": "已選擇 {count} 場比賽",
+        "generate_parlay": "🎲 生成過關推薦",
+        "best_parlay": "🏆 最佳推薦",
         
         # ==================== 全天优化 ====================
         "full_day_optimization": "🌟 全天優化投注",
@@ -5504,7 +5504,7 @@ def render_smart_betting(show_title: bool = True):
     
     st.markdown("---")
     
-    # ==================== 新增：过关投注推荐器 ====================
+    # ==================== 新增：過関投注推薦器 ====================
     st.markdown(f"## {t()['parlay_recommendation']}")
     st.caption(t()["parlay_description"])
     
@@ -5512,8 +5512,8 @@ def render_smart_betting(show_title: bool = True):
     current_races_for_parlay = races  # races 是前面定义的当前赛日所有赛事
     
     if current_races_for_parlay and len(current_races_for_parlay) >= 2:
-        # 让用户选择要过关的场次
-        st.markdown("**选择要过关的场次**")
+        # 让用户選擇要過關的場次
+        st.markdown("**選擇要過關的場次**")
         
         parlay_race_options = []
         for r in current_races_for_parlay:
@@ -5523,7 +5523,7 @@ def render_smart_betting(show_title: bool = True):
         
         # 多选框
         selected_parlay_indices = st.multiselect(
-            "选择2-6场比赛（按顺序）",
+            "選擇2-6場比賽（按順序）",
             options=range(len(parlay_race_options)),
             format_func=lambda x: parlay_race_options[x],
             default=range(min(3, len(parlay_race_options))),
@@ -5631,9 +5631,9 @@ def render_smart_betting(show_title: bool = True):
                                         # 投注建议
                                         st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
                                 
-                                # 最佳推荐汇总
+                                # 最佳推薦汇总
                                 st.markdown("---")
-                                st.markdown("#### 🏆 最佳推荐")
+                                st.markdown("#### 🏆 最佳推薦")
                                 
                                 # 找出ROI最高的推荐
                                 best_rec = None
