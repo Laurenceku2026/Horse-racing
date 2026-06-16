@@ -21,16 +21,30 @@ from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db
 from parlay_recommender import ParlayRecommender
-from scoring_engine import (
-    calculate_race_scores,
-    softmax_probabilities,
-    get_horse_performances_batch,
-    calculate_horse_age,
-    analyze_incident,
-    LEVEL1_WEIGHTS
-)
+# ==================== 从 scoring_engine 导入 ====================
 try:
-    from scoring_engine import calculate_basic_score
+    from scoring_engine import (
+        # 核心评分函数
+        calculate_basic_score,
+        calculate_race_score,
+        calculate_odds_score,
+        calculate_status_score,
+        calculate_overall_score,
+        # 状态因子函数
+        calculate_age_score,
+        calculate_weight_change_score,
+        calculate_incident_score,
+        calculate_burst_score,
+        # 辅助函数
+        softmax_probabilities,
+        get_horses_performances_batch,
+        get_horse_past_performances_v2_optimized,
+        get_horse_weight_comfort_range_from_cache,
+        # 配置加载
+        get_scoring_config,
+        # 旧版兼容
+        normalize_odds,
+    )
     print("✅ scoring_engine 导入成功")
 except ImportError as e:
     print(f"❌ scoring_engine 导入失败: {e}")
