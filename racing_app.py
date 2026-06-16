@@ -3562,111 +3562,114 @@ def save_scores_to_cache(race_date: str, race_no: int, venue: str, runners: List
 def calculate_all_horses_scores_v2(runners: List[Dict], user_weights: Dict) -> Tuple[List[Dict], List[float]]:
     """
     计算一场赛事所有马匹的评分和胜率（使用新评分引擎）
-    批量获取马匹往绩，避免 N+1 查询
     """
     if not runners:
         return [], []
     
-    # ==================== 第1步：批量获取所有马匹的往绩 ====================
-    horse_ids = []
-    for runner in runners:
-        horse_id = runner.get("horse_id")
-        if horse_id:
-            horse_ids.append(horse_id)
+    # 批量获取所有马匹的往绩
+    horse_ids = [r.get('horse_id') for r in runners if r.get('horse_id')]
     
-    # 去重
-    unique_horse_ids = list(set(horse_ids))
+    # 使用 scoring_engine 中的批量获取函数
+    from scoring_engine import get_horses_performances_batch
     
-    # 批量获取（只有1次HTTP请求）
-    perf_cache = get_horses_performances_batch(unique_horse_ids)
+    # 转换为元组（因为 @st.cache_data 要求 hashable）
+    horse_ids_tuple = tuple(set(horse_ids))
+    perf_cache = get_horses_performances_batch(horse_ids_tuple)
     
-    # ==================== 第2步：计算每匹马的评分 ====================
     scores = []
     basic_scores = []
     race_scores = []
     odds_scores = []
+    status_scores = []
     
-    # 获取赛事信息（从第一匹马获取）
-    race_date = datetime.now().strftime('%Y-%m-%d')
+    # 获取赛事信息
     venue = runners[0].get('venue', 'ST') if runners else 'ST'
     distance = runners[0].get('distance', 1200) if runners else 1200
+    race_date = datetime.now().strftime('%Y-%m-%d')
     
     for runner in runners:
-        horse_id = runner.get("horse_id")
+        horse_id = runner.get('horse_id')
         if not horse_id:
             # 没有 horse_id 的马匹，使用默认评分
             basic_scores.append(50.0)
             race_scores.append(50.0)
             odds_scores.append(50.0)
+            status_scores.append(50.0)
             scores.append({
                 "horse_id": None,
                 "basic_score": 50.0,
                 "race_score": 50.0,
                 "odds_score": 50.0,
                 "combined_score": 50.0,
-                "status_score": 50.0
+                "win_probability": 50.0
             })
             continue
         
         # 从缓存获取往绩
-        performances = perf_cache.get(horse_id, [])
-        
-        # 获取赔率
-        odds_win = runner.get("odds_win")
-        if odds_win is None or odds_win == '':
-            odds_win = 10.0
+        from scoring_engine import get_horse_past_performances_v2_optimized
+        past_performances = get_horse_past_performances_v2_optimized(horse_id, perf_cache, limit=10)
         
         # 获取本场参数
-        draw = runner.get("draw")
-        actual_weight = runner.get("actual_weight")
+        draw = runner.get('draw')
+        actual_weight = runner.get('actual_weight')
         jockey = runner.get('jockey_name')
-        trainer = runner.get("trainer")
-        body_weight = runner.get("body_weight")
-        closing_profile = runner.get("closing_profile", 'Even')
-        incident = runner.get("incident", '')
+        trainer = runner.get('trainer')
+        body_weight = runner.get('body_weight')
+        closing_profile = runner.get('closing_profile', 'Even')
+        incident = runner.get('incident', '')
+        odds_win = runner.get('odds_win', 10.0)
         
-        # 使用 scoring_engine 模块计算
+        # 使用 scoring_engine 中的函数计算评分
         from scoring_engine import (
             calculate_basic_score,
             calculate_race_score,
             calculate_odds_score,
             calculate_status_score,
-            calculate_overall_score
+            calculate_overall_score,
+            get_horse_weight_comfort_range_from_cache
         )
         
         # 计算各维度评分
-        basic_score = calculate_basic_score(performances, distance)
-        race_score = calculate_race_score(performances, venue, distance, draw, jockey, trainer)
-        odds_score = calculate_odds_score(float(odds_win))
+        basic_score = calculate_basic_score(past_performances, distance, user_weights)
+        weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_performances)
         
-        # 提取历史体重
-        past_weights = [p.get('body_weight') for p in performances if p.get('body_weight')]
-        status_score = calculate_status_score(horse_id, race_date, body_weight, past_weights, closing_profile, incident)
+        race_score = calculate_race_score(
+            horse_id, venue, distance, draw, actual_weight,
+            jockey, trainer, weight_comfort_range, past_performances, user_weights
+        )
         
-        # 综合评分
-        combined_score = calculate_overall_score(basic_score, race_score, odds_score, status_score)
+        odds_score = calculate_odds_score(odds_win)
+        status_score = calculate_status_score(
+            None, body_weight,
+            [p.get('body_weight') for p in past_performances if p.get('body_weight')],
+            incident, runner.get('running_position', ''), None, user_weights
+        )
+        
+        combined_score = calculate_overall_score(
+            basic_score, race_score, odds_score, status_score, user_weights
+        )
         
         scores.append({
             "horse_id": horse_id,
             "basic_score": round(basic_score, 2),
             "race_score": round(race_score, 2),
             "odds_score": round(odds_score, 2),
-            "status_score": round(status_score, 2),
             "combined_score": round(combined_score, 2),
         })
         
         basic_scores.append(basic_score)
         race_scores.append(race_score)
         odds_scores.append(odds_score)
+        status_scores.append(status_score)
     
-    # ==================== 第3步：计算胜率 ====================
+    # 计算胜率
     from scoring_engine import softmax_probabilities
     probabilities = softmax_probabilities([s["combined_score"] for s in scores], temperature=0.8)
     
-    # 转换为百分比
-    prob_percent = [p * 100 for p in probabilities]
+    for i, prob in enumerate(probabilities):
+        scores[i]["win_probability"] = round(prob * 100, 2)
     
-    return scores, prob_percent
+    return scores, probabilities
 
 
 def get_horses_performances_batch(horse_ids: List[str], limit: int = 10) -> Dict[str, List[Dict]]:
