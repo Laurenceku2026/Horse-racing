@@ -2570,6 +2570,8 @@ def admin_sign_out():
 def render_sidebar():
     """渲染侧边栏"""
     with st.sidebar:
+        # 获取当前语言
+        lang = st.session_state.get("lang", "zh")
         st.markdown(f"## {t()['app_title']}")
         st.markdown("---")
         #-------------
