@@ -258,7 +258,7 @@ def calculate_trend_score(performances: List[Dict]) -> float:
     else:
         return 50
 
-
+#--------
 def calculate_basic_score(performances: List[Dict], target_distance: int) -> float:
     """
     计算基础往绩评分（0-100）
@@ -279,7 +279,7 @@ def calculate_basic_score(performances: List[Dict], target_distance: int) -> flo
     )
     
     return round(score, 2)
-
+#-------------
 
 # ==================== 场次因素评分 ====================
 
@@ -348,8 +348,254 @@ def calculate_race_score(
     )
     
     return round(score, 2)
+#--------------------
+# ==================== 状态因子计算函数 ====================
+
+def calculate_age_score(birth_year: Optional[int], current_year: int = None) -> float:
+    """
+    计算马龄因子评分
+    参数：
+        birth_year: 出生年份
+        current_year: 当前年份（默认自动获取）
+    返回：
+        0-100 分
+    """
+    if current_year is None:
+        current_year = datetime.now().year
+    
+    if not birth_year or birth_year <= 0:
+        return 50.0  # 无出生年份数据，给中等分
+    
+    age = current_year - birth_year
+    
+    # 黄金年龄 4-5 岁
+    if 4 <= age <= 5:
+        return 100.0
+    # 接近黄金期 3 岁或 6 岁
+    elif age == 3 or age == 6:
+        return 70.0
+    # 偏年轻或偏老 2 岁或 7 岁
+    elif age == 2 or age == 7:
+        return 50.0
+    # 过老 8 岁以上
+    elif age >= 8:
+        return 30.0
+    # 其他情况（1岁或未知）
+    else:
+        return 40.0
 
 
+def calculate_weight_change_score(current_weight: Optional[int], past_weights: List[Optional[int]]) -> float:
+    """
+    计算体重变化因子评分
+    参数：
+        current_weight: 本场体重
+        past_weights: 往绩体重列表（按日期排序，最新的在前）
+    返回：
+        0-100 分
+    """
+    if not current_weight or current_weight <= 0:
+        return 50.0  # 无体重数据，给中等分
+    
+    # 获取上次出赛体重
+    last_weight = None
+    for w in past_weights:
+        if w and w > 0:
+            last_weight = w
+            break
+    
+    if not last_weight:
+        return 50.0  # 无上次体重对比，给中等分
+    
+    change = abs(current_weight - last_weight)
+    
+    # 体重变化评分
+    if change <= 5:
+        return 100.0      # 稳定
+    elif change <= 10:
+        return 70.0       # 轻微变化
+    elif change <= 15:
+        return 40.0       # 明显变化
+    else:
+        return 20.0       # 大幅变化
+
+
+def calculate_incident_score(incident_text: str) -> float:
+    """
+    计算事件报告影响评分（基于关键词匹配）
+    参数：
+        incident_text: 事件报告文本
+    返回：
+        -20 到 +20 的影响值（负数表示不利影响）
+    """
+    if not incident_text or incident_text in ['无特别报告。', '無特別報告。', '']:
+        return 0.0
+    
+    # 不利影响关键词及扣分
+    negative_keywords = [
+        ('流鼻血', -20),
+        ('不良於行', -18),
+        ('喘鳴症', -15),
+        ('心律不正', -15),
+        ('試閘', -10),
+        ('勒避', -8),
+        ('受阻', -8),
+        ('收慢', -6),
+        ('外疊', -6),
+        ('走外疊', -6),
+        ('搶口', -5),
+        ('出閘笨拙', -5),
+        ('內閃', -4),
+        ('外閃', -4),
+        ('失去平衡', -3),
+        ('被碰撞', -2),
+    ]
+    
+    # 有利影响关键词及加分
+    positive_keywords = [
+        ('順利', 5),
+        ('望空', 4),
+        ('節省腳程', 3),
+    ]
+    
+    score = 0
+    text_lower = incident_text
+    
+    for keyword, impact in negative_keywords:
+        if keyword in text_lower:
+            score += impact
+            break  # 只取最严重的一个负面事件
+    
+    for keyword, impact in positive_keywords:
+        if keyword in text_lower:
+            score += impact
+            break  # 只取一个正面事件
+    
+    # 限制在 -20 到 +20 范围内
+    return max(-20.0, min(20.0, float(score)))
+
+
+def calculate_burst_score(running_position: str, finishing_position: int = None) -> float:
+    """
+    计算冲刺能力评分（基于走位图）
+    参数：
+        running_position: 走位图字符串，如 "9981", "1111", "121212"
+        finishing_position: 最终名次（可选，用于微调）
+    返回：
+        0-100 分
+    """
+    if not running_position or running_position == '0' or running_position == '---':
+        return 50.0  # 无数据，给中等分
+    
+    # 提取所有数字
+    positions = []
+    for char in str(running_position):
+        if char.isdigit():
+            positions.append(int(char))
+    
+    if len(positions) < 2:
+        return 50.0
+    
+    first_pos = positions[0]      # 早段位置
+    last_pos = positions[-1]       # 终点位置
+    improvement = first_pos - last_pos  # 进步马位数（正数为进步）
+    
+    # 1. 进步幅度评分
+    if improvement >= 5:
+        burst_score = 95.0
+    elif improvement >= 3:
+        burst_score = 85.0
+    elif improvement >= 1:
+        burst_score = 70.0
+    elif improvement == 0:
+        burst_score = 60.0
+    else:
+        burst_score = 40.0
+    
+    # 2. 特殊模式识别
+    # "1111" 全程领放 → 实力超群
+    if all(p == 1 for p in positions):
+        burst_score = min(100.0, burst_score + 10)
+    
+    # "121212" 名次波动大 → 不稳定
+    unique_count = len(set(positions))
+    if unique_count >= 4:
+        burst_score = max(30.0, burst_score - 15)
+    
+    # 3. 最终名次微调（如果提供）
+    if finishing_position and finishing_position <= 3:
+        burst_score = min(100.0, burst_score + (4 - finishing_position) * 3)
+    
+    return round(burst_score, 2)
+
+
+def calculate_status_score(
+    birth_year: Optional[int],
+    current_weight: Optional[int],
+    past_weights: List[Optional[int]],
+    incident_text: str,
+    running_position: str,
+    finishing_position: int = None,
+    status_weights: Dict = None
+) -> float:
+    """
+    计算状态因子综合评分（0-100分）
+    参数：
+        birth_year: 出生年份
+        current_weight: 本场体重
+        past_weights: 往绩体重列表
+        incident_text: 事件报告文本
+        running_position: 走位图
+        finishing_position: 最终名次
+        status_weights: 二级因子权重（可选，默认使用配置）
+    返回：
+        0-100 分
+    """
+    # 默认权重（与数据库配置一致）
+    if status_weights is None:
+        status_weights = {
+            "age": 0.30,
+            "weight_change": 0.25,
+            "incident": 0.25,
+            "burst": 0.20
+        }
+    
+    # 计算各因子得分
+    age_score = calculate_age_score(birth_year)
+    weight_change_score = calculate_weight_change_score(current_weight, past_weights)
+    incident_adjustment = calculate_incident_score(incident_text)
+    burst_score = calculate_burst_score(running_position, finishing_position)
+    
+    # 事件报告是调整分（-20到+20），需要转换为0-100分
+    # 转换公式：incident_adjustment = -20 → 0分, 0 → 50分, +20 → 100分
+    incident_score = 50 + incident_adjustment
+    
+    # 加权计算
+    total_score = (
+        age_score * status_weights.get("age", 0.30) +
+        weight_change_score * status_weights.get("weight_change", 0.25) +
+        incident_score * status_weights.get("incident", 0.25) +
+        burst_score * status_weights.get("burst", 0.20)
+    )
+    
+    return round(total_score, 2)
+
+
+# ==================== 辅助函数：获取马匹往绩体重列表 ====================
+
+def get_past_weights_from_performances(performances: List[Dict]) -> List[Optional[int]]:
+    """
+    从往绩列表中提取体重序列（按日期降序）
+    用于 calculate_weight_change_score
+    """
+    weights = []
+    for p in performances:
+        weight = p.get('body_weight')
+        if weight and str(weight).isdigit():
+            weights.append(int(weight))
+        else:
+            weights.append(None)
+    return weights
 # ==================== 赔率因素评分 ====================
 
 def calculate_odds_score(odds: float) -> float:
