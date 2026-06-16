@@ -3026,7 +3026,7 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
         race_w = config.get('race', {})
         odds_w = config.get('odds', {})
         status_w = config.get('status', {})
-        
+        #------------
         # ==================== 5. 计算每匹马的评分 ====================
         from scoring_engine import (
             calculate_basic_score,
@@ -3040,13 +3040,19 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
         current_year = datetime.now().year
         results = []
         
-        # 进度提示
+        # ✅ 创建进度条（替换 st.caption）
         total_horses = len(horse_records)
+        progress_bar = None
         if total_horses > 0:
             progress_text = f"正在计算 {total_horses} 匹马的评分..." if lang == "zh" else f"Calculating scores for {total_horses} horses..."
-            st.caption(progress_text)
+            progress_bar = st.progress(0, text=progress_text)
         
         for idx, (horse_id, records) in enumerate(horse_records.items()):
+            # ✅ 更新进度条（每5匹更新一次，减少刷新开销）
+            if progress_bar and (idx % 5 == 0 or idx == total_horses - 1):
+                progress_pct = min((idx + 1) / total_horses, 1.0)
+                progress_bar.progress(progress_pct, text=f"{progress_text} ({idx+1}/{total_horses})")
+            
             # 按日期排序（最新的在前）
             records.sort(key=lambda x: x.get("race_date", ""), reverse=True)
             
@@ -3204,6 +3210,10 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 "basic_score": overall_score,
                 "races_count": total
             })
+        
+        # ✅ 进度条完成
+        if progress_bar:
+            progress_bar.progress(1.0, text="✅ 计算完成!" if lang == "zh" else "✅ Complete!")
         
         # 按评分排序
         results.sort(key=lambda x: x["basic_score"], reverse=True)
