@@ -1505,7 +1505,7 @@ def clear_model_cache():
     _model_cache = {}
     print("🗑️ 模型缓存已清空")
 
-
+#----------
 def get_cache_key_from_params(
     model_type: str,
     start_date: str,
@@ -1513,18 +1513,19 @@ def get_cache_key_from_params(
     weights_config: Dict
 ) -> str:
     """
-    从回测参数生成缓存键
+    从回测参数生成缓存键（包含模型类型，确保不同模型不会共用缓存）
     """
     import hashlib
     
-    # 生成权重哈希
+    # 生成权重哈希（包含模型类型，确保不同模型不同缓存）
     weight_str = str(sorted(weights_config.items()))
     weight_hash = hashlib.md5(weight_str.encode()).hexdigest()[:8]
     
     # 日期范围
     date_range = f"{start_date}_to_{end_date}"
     
-    return get_cache_key(model_type, date_range, weight_hash)
+    # ⭐ 关键：包含模型类型
+    return f"{model_type}_{date_range}_{weight_hash}"
 
 
 def get_current_weights_hash() -> str:
