@@ -933,6 +933,11 @@ def consume_free_trial(user_id: str) -> bool:
     """消耗一次免费次数"""
     print(f"consume_free_trial 收到的 user_id: {user_id}")
     
+    # ⭐ 新增：管理员无限免费（后台静默跳过）
+    if user_id == "admin":
+        print("✅ 管理员特权：不消耗免费次数")
+        return True
+    
     profile = get_user_profile(user_id)
     print(f"获取到的 profile: {profile}")
     
