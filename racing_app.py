@@ -7549,7 +7549,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
             predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
             predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
-            
+            #-------
             # 获取实际结果
             runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
             actual_1st = None
@@ -8370,7 +8370,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             if model is None:
                 status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
                 continue
-            
+            #-----------
             # 9.2 预测 current_date 当天的所有赛事
             for race in races_by_date[current_date]:
                 # 内层循环取消检查点
@@ -8392,17 +8392,16 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     continue
                 
                 # ⭐ 修复：使用赔率排序（赛前数据），而不是 position（赛后数据）
-                # 赔率越低，越被看好，优先预测
-                runners_data_sorted = sorted(
-                    runners_data, 
-                    key=lambda x: x.get('odds', 999) if x.get('odds', 999) and x.get('odds', 999) > 0 else 999
-                )
-                
-                # 步骤2：只对前 N 名马进行预测（默认4名）
                 from scoring_engine import get_ml_config
                 ml_config = get_ml_config()
                 top_n_horses = ml_config.get("top_n_horses", 4)
                 recent_games = ml_config.get("recent_games", 30)
+                
+                # 按赔率排序（赔率低的排在前面，表示更被看好）
+                runners_data_sorted = sorted(
+                    runners_data, 
+                    key=lambda x: x.get('odds', 999) if x.get('odds', 999) and x.get('odds', 999) > 0 else 999
+                )
                 
                 # 获取预测目标（按赔率排序的前 N 名）
                 target_runners = runners_data_sorted[:top_n_horses]
