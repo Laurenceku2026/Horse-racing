@@ -1461,6 +1461,88 @@ def calculate_race_scores(
     return scores, probabilities
 
 #--------
+# ==================== 模型缓存（内存缓存）====================
+
+# 全局模型缓存字典
+_model_cache = {}
+
+# 缓存键生成函数
+def get_cache_key(model_type: str, date_range: str, weight_hash: str) -> str:
+    """
+    生成缓存键
+    参数：
+        model_type: 'lightgbm' | 'xgboost' | 'ensemble'
+        date_range: '2026-01-01_to_2026-06-01'
+        weight_hash: 权重配置的哈希值（前8位）
+    返回：
+        缓存键字符串
+    """
+    return f"{model_type}_{date_range}_{weight_hash}"
+
+
+def get_cached_model(cache_key: str):
+    """
+    从缓存获取模型
+    返回：
+        模型对象 或 None
+    """
+    return _model_cache.get(cache_key)
+
+
+def set_cached_model(cache_key: str, model):
+    """
+    将模型存入缓存
+    """
+    _model_cache[cache_key] = model
+    print(f"✅ 模型已缓存: {cache_key}")
+
+
+def clear_model_cache():
+    """
+    清空所有模型缓存（管理员强制刷新时使用）
+    """
+    global _model_cache
+    _model_cache = {}
+    print("🗑️ 模型缓存已清空")
+
+
+def get_cache_key_from_params(
+    model_type: str,
+    start_date: str,
+    end_date: str,
+    weights_config: Dict
+) -> str:
+    """
+    从回测参数生成缓存键
+    """
+    import hashlib
+    
+    # 生成权重哈希
+    weight_str = str(sorted(weights_config.items()))
+    weight_hash = hashlib.md5(weight_str.encode()).hexdigest()[:8]
+    
+    # 日期范围
+    date_range = f"{start_date}_to_{end_date}"
+    
+    return get_cache_key(model_type, date_range, weight_hash)
+
+
+def get_current_weights_hash() -> str:
+    """
+    获取当前权重配置的哈希值
+    用于判断权重是否变化
+    """
+    import hashlib
+    
+    try:
+        config = get_scoring_config()
+        # 只取一级因子权重（因为二级因子变化也会影响ML输入）
+        level1 = config.get("level1", {})
+        weight_str = str(sorted(level1.items()))
+        return hashlib.md5(weight_str.encode()).hexdigest()[:8]
+    except Exception as e:
+        print(f"获取权重哈希失败: {e}")
+        return "default"
 # ==================== 模块导出 ====================
 
 __all__ = [
@@ -1488,4 +1570,10 @@ __all__ = [
     'get_ml_config',
     'update_ml_config',
     'reset_ml_config',
+    # 新增缓存函数
+    'get_cached_model',
+    'set_cached_model',
+    'clear_model_cache',
+    'get_cache_key_from_params',
+    'get_current_weights_hash',
 ]
