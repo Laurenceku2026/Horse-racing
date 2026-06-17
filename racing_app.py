@@ -1854,7 +1854,7 @@ def render_admin_backtest():
                                       "总投入", "总回报", "ROI"]
                     available_cols = [c for c in display_columns if c in compare_df.columns]
                     compare_df = compare_df[available_cols]
-                    
+                    #-----
                     st.dataframe(
                         compare_df.style.format({
                             '独赢正确率': '{:.1f}%',
@@ -1867,7 +1867,19 @@ def render_admin_backtest():
                             '总投入': '${:.0f}'
                         }),
                         use_container_width=True,
-                        hide_index=True
+                        hide_index=True,
+                        column_config={
+                            "模型": st.column_config.TextColumn("模型", width="small"),
+                            "测试场次": st.column_config.NumberColumn("场次", width="small"),
+                            "独赢正确率": st.column_config.NumberColumn("独赢", width="small", format="%.1f%%"),
+                            "前三名命中匹数率": st.column_config.NumberColumn("匹数率", width="small", format="%.1f%%"),
+                            "前三名命中场次率": st.column_config.NumberColumn("场次率", width="small", format="%.1f%%"),
+                            "前三名全中率": st.column_config.NumberColumn("全中率", width="small", format="%.1f%%"),
+                            "前三名顺序正确率": st.column_config.NumberColumn("顺序率", width="small", format="%.1f%%"),
+                            "总投入": st.column_config.NumberColumn("投入", width="small", format="$%.0f"),
+                            "总回报": st.column_config.NumberColumn("回报", width="small", format="$%.0f"),
+                            "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
+                        }
                     )
                     
                     # ==================== ⭐ 新增：特征重要性展示 ====================
@@ -1929,9 +1941,10 @@ def render_admin_backtest():
                     st.caption('SHAP值可以显示每个因子是"正向"还是"负向"影响预测结果')
                     
                     # 检查是否有可用的ML模型
+                    # 检查是否有可用的ML模型（检查 feature_importance 而非 model）
                     has_ml_model = any(
                         r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] 
-                        and r.get("model") is not None 
+                        and r.get("feature_importance") is not None 
                         for r in completed_results
                     )
                     
@@ -8019,6 +8032,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
             
             # ⭐ 使用新的缓存系统（检查缓存）
+            # ⭐ 使用新的缓存系统（检查缓存）
             import hashlib
             
             # 生成权重哈希
@@ -8041,9 +8055,11 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 if model is not None:
                     set_cached_model(cache_key, model)
                     result["from_cache"] = False
-                    # 保存最后一个模型用于特征重要性
-                    last_model = model
-                    last_feature_names = list(train_X.columns) if train_X is not None else []
+            
+            # ⭐ 重要：无论缓存命中还是新训练，都保存模型信息
+            if model is not None:
+                last_model = model
+                last_feature_names = list(train_X.columns) if train_X is not None else []
 
             if model is None:
                 status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
