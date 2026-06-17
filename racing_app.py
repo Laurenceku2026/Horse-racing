@@ -8258,7 +8258,16 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             # ⭐ 重要：无论缓存命中还是新训练，都保存模型信息
             if model is not None:
                 last_model = model
-                last_feature_names = list(train_X.columns) if train_X is not None else []
+                # ⭐ 修复：确保 train_X 存在且有效
+                if train_X is not None and hasattr(train_X, 'columns'):
+                    last_feature_names = list(train_X.columns)
+                    print(f"✅ 保存特征名称: {len(last_feature_names)} 个因子")
+                else:
+                    last_feature_names = []
+                    print(f"⚠️ train_X 无效，特征名称为空")
+                print(f"✅ 模型已保存: {model_type}, 特征数: {len(last_feature_names)}")
+            else:
+                print(f"⚠️ model 为 None，跳过保存")
 
             if model is None:
                 status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
@@ -8563,9 +8572,99 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
     except Exception as e:
         st.error(f"ML回測失敗 ({model_type}): {e}")
         print(f"ML回測失敗: {e}")
-    
+    #----------
     # 重置取消标志
     st.session_state.stop_backtest = False
+    
+    # ==================== ⭐ 添加调试日志和强制保存特征重要性 ====================
+    print(f"\n{'='*60}")
+    print(f"🔍 回测完成 - 最终模型状态检查")
+    print(f"{'='*60}")
+    print(f"📌 模型类型: {model_type}")
+    print(f"📌 测试场次: {result.get('测试场次', 0)}")
+    print(f"📌 模型对象 (last_model): {type(last_model) if 'last_model' in dir() and last_model else 'None'}")
+    print(f"📌 特征名称 (last_feature_names): {last_feature_names[:5] if 'last_feature_names' in dir() and last_feature_names else 'None'}...")
+    print(f"📌 result 中是否已有 feature_importance: {result.get('feature_importance') is not None}")
+    
+    # ⭐ 如果 last_model 存在但 result 中没有 feature_importance，强制保存
+    if 'last_model' in dir() and last_model is not None:
+        print(f"\n🔄 强制保存特征重要性...")
+        
+        try:
+            # 获取特征名称
+            if 'last_feature_names' in dir() and last_feature_names:
+                feature_names = last_feature_names
+            else:
+                feature_names = []
+                print(f"⚠️ last_feature_names 不存在，尝试从模型获取")
+                # 尝试从模型获取特征名称（如果有）
+                if hasattr(last_model, 'feature_name_'):
+                    feature_names = list(last_model.feature_name_)
+                    print(f"✅ 从模型获取特征名称: {len(feature_names)} 个")
+            
+            # 提取特征重要性
+            if model_type == 'ensemble':
+                # 集成模型
+                lgb_imp = None
+                xgb_imp = None
+                if last_model.get('lightgbm') is not None:
+                    lgb_imp = last_model['lightgbm'].feature_importances_
+                if last_model.get('xgboost') is not None:
+                    xgb_imp = last_model['xgboost'].feature_importances_
+                
+                if lgb_imp is not None and xgb_imp is not None:
+                    importance = (lgb_imp + xgb_imp) / 2
+                elif lgb_imp is not None:
+                    importance = lgb_imp
+                elif xgb_imp is not None:
+                    importance = xgb_imp
+                else:
+                    importance = None
+            else:
+                # 单模型
+                if hasattr(last_model, 'feature_importances_'):
+                    importance = last_model.feature_importances_
+                    print(f"✅ 成功提取 feature_importances_: {len(importance)} 个值")
+                else:
+                    importance = None
+                    print(f"⚠️ 模型没有 feature_importances_ 属性: {type(last_model)}")
+            
+            if importance is not None and feature_names:
+                import pandas as pd
+                imp_df = pd.DataFrame({
+                    '特征': feature_names,
+                    '重要性': importance
+                }).sort_values('重要性', ascending=False)
+                
+                result["model"] = last_model
+                result["feature_names"] = feature_names
+                result["feature_importance"] = imp_df
+                
+                print(f"✅ 特征重要性已保存到 result")
+                print(f"   - 因子数量: {len(imp_df)}")
+                print(f"   - Top 5 因子:")
+                for _, row in imp_df.head(5).iterrows():
+                    print(f"     {row['特征']}: {row['重要性']:.4f}")
+            else:
+                print(f"⚠️ 无法保存特征重要性")
+                print(f"   - importance is None: {importance is None}")
+                print(f"   - feature_names 为空: {not feature_names}")
+                result["feature_importance"] = None
+                
+        except Exception as e:
+            print(f"❌ 强制保存特征重要性失败: {e}")
+            import traceback
+            traceback.print_exc()
+            result["feature_importance"] = None
+    else:
+        print(f"⚠️ last_model 为 None，无法保存特征重要性")
+        result["feature_importance"] = None
+    
+    print(f"\n📌 最终 result 状态:")
+    print(f"   - 模型: {result.get('model') is not None}")
+    print(f"   - 特征名称: {result.get('feature_names') is not None}")
+    print(f"   - 特征重要性: {result.get('feature_importance') is not None}")
+    print(f"{'='*60}\n")
     
     return result
 #-----------
