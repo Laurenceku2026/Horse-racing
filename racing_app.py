@@ -8381,7 +8381,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 venue = race['venue']
                 race_no = race['race_no']
                 distance = race.get('distance', 1200)
-                
+                #----------
                 # 获取该场赛事的出赛马匹
                 runners_data = [p for p in all_performances 
                                if p['race_date'] == race_date 
@@ -8391,8 +8391,12 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 if not runners_data:
                     continue
                 
-                # 步骤1：先使用评分系统对马匹排序（或直接按名次排序）
-                runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
+                # ⭐ 修复：使用赔率排序（赛前数据），而不是 position（赛后数据）
+                # 赔率越低，越被看好，优先预测
+                runners_data_sorted = sorted(
+                    runners_data, 
+                    key=lambda x: x.get('odds', 999) if x.get('odds', 999) and x.get('odds', 999) > 0 else 999
+                )
                 
                 # 步骤2：只对前 N 名马进行预测（默认4名）
                 from scoring_engine import get_ml_config
@@ -8400,15 +8404,14 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 top_n_horses = ml_config.get("top_n_horses", 4)
                 recent_games = ml_config.get("recent_games", 30)
                 
-                # 获取实际前 N 名（用于对比）
-                actual_top_n = runners_data_sorted[:top_n_horses]
-                actual_top_n_ids = [r.get('horse_id') for r in actual_top_n if r.get('horse_id')]
+                # 获取预测目标（按赔率排序的前 N 名）
+                target_runners = runners_data_sorted[:top_n_horses]
                 
                 # 构建特征并预测
                 runners = []
                 
-                # 只对实际前 N 名的马匹进行预测
-                for r in actual_top_n:
+                # 只对前 N 名的马匹进行预测
+                for r in target_runners:
                     horse_id = r.get('horse_id')
                     if not horse_id:
                         continue
@@ -8474,10 +8477,10 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         "horse_id": horse_id,
                         "horse_name": horse_name,
                         "horse_no": r.get('horse_no'),
-                        "finishing_position": r.get('position'),
+                        "finishing_position": r.get('position'),  # 用于验证
                         "win_probability": prob,
                         "odds_win": odds,
-                        "actual_position": r.get('position')
+                        "actual_position": r.get('position')  # 用于验证
                     })
                 
                 if not runners:
@@ -8492,13 +8495,14 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
                 predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
                 
-                # 获取实际结果（所有马匹的实际名次）
+                # ⭐ 获取实际结果（用于验证，不用于预测）
+                runners_data_sorted_actual = sorted(runners_data, key=lambda x: x.get('position', 99))
                 actual_1st = None
                 actual_2nd = None
                 actual_3rd = None
                 actual_top3_set = set()
                 
-                for r in runners_data_sorted:
+                for r in runners_data_sorted_actual:
                     pos = r.get('position')
                     horse_name = r.get('horse_name', '')
                     if pos == 1:
@@ -8509,40 +8513,6 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         actual_top3_set.add(horse_name)
                     elif pos == 3:
                         actual_3rd = horse_name
-                        actual_top3_set.add(horse_name)
-                                                
-                # 按胜率排序
-                runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
-                
-                # 获取预测前三名
-                predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
-                predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
-                predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
-                predicted_top3_names = [predicted_1st, predicted_2nd, predicted_3rd]
-                predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
-                
-                # 获取实际结果（按名次排序）
-                runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
-                actual_1st = None
-                actual_2nd = None
-                actual_3rd = None
-                actual_top3_names = []
-                actual_top3_set = set()
-                for r in runners_data_sorted:
-                    pos = r.get('position')
-                    horse_id = r.get('horse_id')
-                    horse_name = r.get('horse_name', '')
-                    if pos == 1:
-                        actual_1st = horse_name
-                        actual_top3_names.append(horse_name)
-                        actual_top3_set.add(horse_name)
-                    elif pos == 2:
-                        actual_2nd = horse_name
-                        actual_top3_names.append(horse_name)
-                        actual_top3_set.add(horse_name)
-                    elif pos == 3:
-                        actual_3rd = horse_name
-                        actual_top3_names.append(horse_name)
                         actual_top3_set.add(horse_name)
                 
                 # 统计命中情况
