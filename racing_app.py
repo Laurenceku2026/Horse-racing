@@ -8315,26 +8315,14 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
             
             # ⭐ 使用新的缓存系统（检查缓存）
-            # ⭐ 简化缓存键：只包含模型类型和日期范围
-            cache_key = f"{model_type}_{start_date}_{end_date}"
-            print(f"🔑 缓存键: {cache_key}")
+            # ⭐ 完全禁用缓存 - 每次都用新的随机 key
+            import uuid
+            cache_key = f"{model_type}_{uuid.uuid4().hex[:8]}"
+            print(f"🔑 强制新训练: {cache_key}")
             
-            # 尝试从缓存获取模型
-            cached_model = get_cached_model(cache_key)
-            
-            if cached_model is not None and not force_refresh:
-                # ✅ 缓存命中
-                model = cached_model
-                print(f"✅ 使用缓存模型: {cache_key}")
-                result["from_cache"] = True
-            else:
-                # ⭐ 训练新模型
-                print(f"🔄 训练新模型: {cache_key}")
-                model = get_or_train_model(train_X, train_y, model_type, cache_key)
-                # 保存到缓存
-                if model is not None:
-                    set_cached_model(cache_key, model)
-                    result["from_cache"] = False
+            # 直接训练，不检查缓存
+            model = get_or_train_model(train_X, train_y, model_type, cache_key)
+            result["from_cache"] = False
             
             # ⭐ 重要：无论缓存命中还是新训练，都保存模型信息
             if model is not None:
