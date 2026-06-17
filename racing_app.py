@@ -1747,7 +1747,7 @@ def compute_correlation_heatmap(start_date: str, end_date: str) -> Optional[go.F
 
 def render_admin_backtest():
     """管理员专用回测页面（包含特征重要性分析）"""
-    
+    import pandas as pd  # ⭐ 添加这一行
     lang = st.session_state.get("lang", "zh")
     
     st.markdown(f"## {t()['model_comparison']}")
