@@ -8326,15 +8326,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
             
             # ⭐ 使用新的缓存系统（检查缓存）
-            # ⭐ 生成缓存键（包含模型类型）
-            import hashlib
-            
-            # 获取权重哈希
-            weight_hash = get_current_weights_hash()
-            
-            # ⭐ 明确包含模型类型，防止LightGBM和XGBoost共用缓存
-            cache_key = f"{model_type}_{start_date}_{end_date}_{weight_hash}"
-            
+            # ⭐ 简化缓存键：只包含模型类型和日期范围
+            cache_key = f"{model_type}_{start_date}_{end_date}"
             print(f"🔑 缓存键: {cache_key}")
             
             # 尝试从缓存获取模型
