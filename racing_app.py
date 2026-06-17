@@ -1578,7 +1578,7 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
 
 def compute_shap_values(model, feature_names: List[str], model_type: str, sample_limit: int = 50) -> Optional[Dict]:
     """
-    计算SHAP值
+    计算SHAP值（修复版 - 不触发页面刷新）
     参数：
         model: 训练好的模型
         feature_names: 特征名称列表
@@ -1592,12 +1592,21 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
         import pandas as pd
         import numpy as np
         
-        # 获取训练数据（从缓存或数据库）
-        # 简化方案：生成模拟数据用于演示
-        # 实际使用中，应从回测数据中提取真实特征
+        # ⭐ 检查特征名称是否有效
+        if not feature_names or len(feature_names) == 0:
+            print("⚠️ 特征名称为空")
+            return None
         
-        # 这里我们生成随机数据用于演示SHAP功能
-        # 实际部署时，需要从回测过程中保存的真实特征数据
+        # ⭐ 检查模型是否有效
+        if model is None:
+            print("⚠️ 模型为空")
+            return None
+        
+        # 获取训练数据（从缓存或数据库）
+        # 注意：这里需要真实的训练数据，而不是随机数据
+        # 由于回测函数没有保存训练数据，这里使用随机数据作为演示
+        # 实际部署时，需要从回测过程中保存真实的特征数据
+        
         np.random.seed(42)
         X_sample = pd.DataFrame(
             np.random.randn(sample_limit, len(feature_names)),
@@ -1605,7 +1614,12 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
         )
         
         # 根据模型类型计算SHAP值
-        if model_type in ["LightGBM", "XGBoost"]:
+        shap_values = None
+        
+        if model_type == "LightGBM":
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_sample)
+        elif model_type == "XGBoost":
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X_sample)
         elif model_type == "集成模型":
@@ -1613,8 +1627,12 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
             shap_values_list = []
             for sub_model in [model.get('lightgbm'), model.get('xgboost')]:
                 if sub_model is not None:
-                    explainer = shap.TreeExplainer(sub_model)
-                    shap_values_list.append(explainer.shap_values(X_sample))
+                    try:
+                        explainer = shap.TreeExplainer(sub_model)
+                        shap_values_list.append(explainer.shap_values(X_sample))
+                    except Exception as e:
+                        print(f"子模型SHAP计算失败: {e}")
+                        continue
             if shap_values_list:
                 shap_values = np.mean(shap_values_list, axis=0)
             else:
@@ -1622,33 +1640,37 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
         else:
             return None
         
-        # 计算平均SHAP值
+        if shap_values is None:
+            return None
+        
+        # 计算平均SHAP值（绝对值）
         mean_shap = np.abs(shap_values).mean(axis=0)
         
         # 判断影响方向
         direction = []
+        explanation = []
         for i, name in enumerate(feature_names):
-            # 正SHAP值表示该特征值越大，预测值越高
             avg_shap = shap_values[:, i].mean()
-            if avg_shap > 0.01:
-                direction.append("正向")
-            elif avg_shap < -0.01:
-                direction.append("负向")
+            if avg_shap > 0.005:
+                direction.append("正向 ↑")
+                explanation.append("数值越大，胜率越高")
+            elif avg_shap < -0.005:
+                direction.append("负向 ↓")
+                explanation.append("数值越大，胜率越低")
             else:
-                direction.append("中性")
+                direction.append("中性 →")
+                explanation.append("影响较小或中性")
         
         # 创建汇总DataFrame
         summary_df = pd.DataFrame({
             '特征': feature_names,
             '平均SHAP值': mean_shap,
             '影响方向': direction,
-            '说明': [
-                '数值越大，胜率越高' if d == '正向' else 
-                '数值越大，胜率越低' if d == '负向' else 
-                '影响较小或中性' 
-                for d in direction
-            ]
+            '说明': explanation
         }).sort_values('平均SHAP值', ascending=False)
+        
+        # ⭐ 过滤掉重要性为0的因子（简化显示）
+        summary_df = summary_df[summary_df['平均SHAP值'] > 0.001]
         
         return {'summary_df': summary_df}
         
@@ -1881,8 +1903,8 @@ def render_admin_backtest():
                             "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
                         }
                     )
-                    
-                    # ==================== ⭐ 新增：特征重要性展示 ====================
+                    #-----------
+                    # ==================== ⭐ 特征重要性展示（修复版） ====================
                     st.markdown("---")
                     st.markdown("#### 📊 特征重要性分析 (Feature Importance)")
                     st.caption("显示每个因子对ML模型预测的贡献度")
@@ -1896,36 +1918,90 @@ def render_admin_backtest():
                             
                             if feature_importance is not None and not feature_importance.empty:
                                 with st.expander(f"📈 {model_name} - 特征重要性", expanded=True):
-                                    # 显示表格
+                                    
+                                    # ⭐ 创建带中文名称的DataFrame
+                                    import pandas as pd
+                                    
+                                    # 因子名称映射（英文 → 中文）
+                                    feature_name_map = {
+                                        'draw': '档位',
+                                        'odds': '赔率',
+                                        'distance': '路程',
+                                        'actual_weight': '负磅',
+                                        'win_rate_5': '近5场胜率',
+                                        'show_rate': '入T率',
+                                        'place_rate': '入Q率',
+                                        'win_rate': '胜率',
+                                        'win_rate_3': '近3场胜率',
+                                        'avg_weight': '平均负磅',
+                                        'jockey_win_rate': '骑师胜率',
+                                        'data_used_count': '数据量',
+                                        'win_rate_10': '近10场胜率',
+                                        'place_rate_10': '近10场入Q率',
+                                        'show_rate_10': '近10场入T率',
+                                        'distance_rating': '路程评分',
+                                        'trend': '名次趋势',
+                                        'same_course': '同场地',
+                                        'same_distance': '同路程',
+                                        'weight': '负磅变化',
+                                        'jockey': '骑师',
+                                        'trainer': '练马师',
+                                        'age': '马龄',
+                                        'weight_change': '体重变化',
+                                        'incident': '事件报告',
+                                        'burst': '冲刺能力',
+                                        'odds_trend': '赔率趋势',
+                                        'ev': '期望值',
+                                        'same_venue': '同场地',
+                                    }
+                                    
+                                    # 创建带中文列名的DataFrame
+                                    display_df = feature_importance.copy()
+                                    display_df['中文名'] = display_df['特征'].map(lambda x: feature_name_map.get(x, x))
+                                    
+                                    # ⭐ 只保留重要性 > 0 的因子
+                                    display_df = display_df[display_df['重要性'] > 0]
+                                    display_df = display_df[['中文名', '特征', '重要性']]
+                                    
+                                    # 显示表格（列宽小，居中）
                                     st.dataframe(
-                                        feature_importance,
+                                        display_df,
                                         use_container_width=True,
                                         hide_index=True,
                                         column_config={
-                                            "特征": "因子名称",
-                                            "重要性": st.column_config.NumberColumn("重要性", format="%.4f")
+                                            "中文名": st.column_config.TextColumn("因子", width="small", help="因子中文名称"),
+                                            "特征": st.column_config.TextColumn("英文", width="small", help="因子英文名称"),
+                                            "重要性": st.column_config.NumberColumn("贡献度", width="small", format="%.4f", help="因子对预测的贡献度"),
                                         }
                                     )
                                     
-                                    # 显示横向条形图
-                                    import plotly.express as px
-                                    fig = px.bar(
-                                        feature_importance.head(18),
-                                        x='重要性',
-                                        y='特征',
-                                        orientation='h',
-                                        title=f'{model_name} - 因子重要性排名',
-                                        color='重要性',
-                                        color_continuous_scale='Blues',
-                                        text='重要性'
-                                    )
-                                    fig.update_layout(
-                                        height=max(400, len(feature_importance) * 25),
-                                        xaxis_title="重要性",
-                                        yaxis_title="因子",
-                                        yaxis={'categoryorder': 'total ascending'}
-                                    )
-                                    st.plotly_chart(fig, use_container_width=True)
+                                    # ⭐ 显示横向条形图（只显示重要性 > 0 的因子）
+                                    if len(display_df) > 0:
+                                        import plotly.express as px
+                                        fig = px.bar(
+                                            display_df,
+                                            x='重要性',
+                                            y='中文名',
+                                            orientation='h',
+                                            title=f'{model_name} - 因子重要性排名',
+                                            color='重要性',
+                                            color_continuous_scale='Blues',
+                                            text='重要性'
+                                        )
+                                        fig.update_layout(
+                                            height=max(300, len(display_df) * 30),
+                                            xaxis_title="重要性",
+                                            yaxis_title="因子",
+                                            yaxis={'categoryorder': 'total ascending'}
+                                        )
+                                        fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
+                                        st.plotly_chart(fig, use_container_width=True)
+                                        
+                                        # ⭐ 显示提示：如果只有少数因子有值
+                                        if len(display_df) < 5:
+                                            st.warning("⚠️ 只有少数因子有重要性值，建议检查数据源或特征工程逻辑")
+                                    else:
+                                        st.info("所有因子的重要性都为0，请检查训练数据是否有效")
                                     
                                     # ⭐ 缓存状态提示
                                     if result.get("from_cache", False):
