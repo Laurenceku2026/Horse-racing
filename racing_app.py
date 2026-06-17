@@ -2010,13 +2010,13 @@ def render_admin_backtest():
                                         st.success("✅ 该结果来自全新训练")
                             else:
                                 st.info(f"{model_name}: 无特征重要性数据")
-                    
+                    #----------
                     # ==================== SHAP值分析（按需加载）====================
                     st.markdown("---")
                     st.markdown("#### 🔬 SHAP值分析（深度解释）")
                     st.caption('SHAP值可以显示每个因子是"正向"还是"负向"影响预测结果')
                     
-                    # 检查是否有可用的ML模型
+                    # 检查是否有可用的ML模型（检查 feature_importance 是否存在）
                     has_ml_model = any(
                         r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] 
                         and r.get("feature_importance") is not None 
@@ -2024,92 +2024,90 @@ def render_admin_backtest():
                     )
                     
                     if has_ml_model:
-                        col_shap_btn, col_shap_info = st.columns([1, 3])
-                        with col_shap_btn:
-                            compute_shap_btn = st.button("🔬 计算SHAP值（最近50场）", type="secondary", use_container_width=True, key="compute_shap_btn")
-                        with col_shap_info:
-                            st.caption("⏱️ 预计耗时 2-5 分钟，仅计算最近50场比赛的SHAP值")
-                        
-                        if compute_shap_btn:
-                            # ⭐ 使用 st.spinner 而不是直接计算，避免页面刷新
-                            with st.spinner("正在计算SHAP值，请稍候..."):
-                                # 选择第一个可用的ML模型
-                                ml_result = None
-                                for r in completed_results:
-                                    if r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] and r.get("model") is not None:
-                                        ml_result = r
-                                        break
-                                
-                                if ml_result:
-                                    # ⭐ 显示计算进度
-                                    progress_text = st.empty()
-                                    progress_text.text("正在初始化SHAP计算...")
+                        # ⭐ 使用 form 防止页面刷新
+                        with st.form(key="shap_form"):
+                            col_shap_btn, col_shap_info = st.columns([1, 3])
+                            with col_shap_btn:
+                                compute_shap_btn = st.form_submit_button("🔬 计算SHAP值（最近50场）", type="secondary", use_container_width=True)
+                            with col_shap_info:
+                                st.caption("⏱️ 预计耗时 2-5 分钟，仅计算最近50场比赛的SHAP值")
+                            
+                            if compute_shap_btn:
+                                # ⭐ 使用 st.spinner
+                                with st.spinner("正在计算SHAP值，请稍候..."):
+                                    # 选择第一个可用的ML模型
+                                    ml_result = None
+                                    for r in completed_results:
+                                        if r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] and r.get("model") is not None:
+                                            ml_result = r
+                                            break
                                     
-                                    shap_results = compute_shap_values(
-                                        ml_result.get("model"),
-                                        ml_result.get("feature_names", []),
-                                        model_type=ml_result.get("模型"),
-                                        sample_limit=50
-                                    )
-                                    
-                                    progress_text.empty()
-                                    
-                                    if shap_results:
-                                        st.success("✅ SHAP值计算完成！")
+                                    if ml_result:
+                                        shap_results = compute_shap_values(
+                                            ml_result.get("model"),
+                                            ml_result.get("feature_names", []),
+                                            model_type=ml_result.get("模型"),
+                                            sample_limit=50
+                                        )
                                         
-                                        # 显示SHAP条形图
-                                        st.markdown("**SHAP值汇总（因子方向性）**")
-                                        st.caption("绿色=正向影响（数值越大，胜率越高）| 红色=负向影响（数值越大，胜率越低）")
-                                        
-                                        shap_df = shap_results.get("summary_df")
-                                        if shap_df is not None and not shap_df.empty:
-                                            import plotly.express as px
+                                        if shap_results:
+                                            st.success("✅ SHAP值计算完成！")
                                             
-                                            # 只显示有影响的因子
-                                            shap_df_display = shap_df[shap_df['平均SHAP值'] > 0.001]
+                                            # 显示SHAP条形图
+                                            st.markdown("**SHAP值汇总（因子方向性）**")
                                             
-                                            if not shap_df_display.empty:
-                                                # 颜色映射
-                                                color_map = {
-                                                    '正向 ↑': 'green',
-                                                    '负向 ↓': 'red',
-                                                    '中性 →': 'gray'
-                                                }
+                                            shap_df = shap_results.get("summary_df")
+                                            if shap_df is not None and not shap_df.empty:
+                                                import plotly.express as px
                                                 
-                                                fig = px.bar(
-                                                    shap_df_display,
-                                                    x='平均SHAP值',
-                                                    y='特征',
-                                                    orientation='h',
-                                                    title='SHAP值 - 因子影响方向',
-                                                    color='影响方向',
-                                                    color_discrete_map=color_map,
-                                                    text='平均SHAP值'
-                                                )
-                                                fig.update_layout(
-                                                    height=max(300, len(shap_df_display) * 30),
-                                                    xaxis_title="平均SHAP值",
-                                                    yaxis_title="因子"
-                                                )
-                                                fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
-                                                st.plotly_chart(fig, use_container_width=True)
+                                                # 只显示有影响的因子
+                                                shap_df_display = shap_df[shap_df['平均SHAP值'] > 0.001]
                                                 
-                                                # 显示表格
-                                                st.dataframe(
-                                                    shap_df_display,
-                                                    use_container_width=True,
-                                                    hide_index=True,
-                                                    column_config={
-                                                        "特征": st.column_config.TextColumn("因子", width="medium"),
-                                                        "平均SHAP值": st.column_config.NumberColumn("SHAP值", format="%.4f"),
-                                                        "影响方向": st.column_config.TextColumn("方向", width="small"),
-                                                        "说明": st.column_config.TextColumn("说明", width="medium"),
+                                                if not shap_df_display.empty:
+                                                    color_map = {
+                                                        '正向 ↑': 'green',
+                                                        '负向 ↓': 'red',
+                                                        '中性 →': 'gray'
                                                     }
-                                                )
+                                                    
+                                                    fig = px.bar(
+                                                        shap_df_display,
+                                                        x='平均SHAP值',
+                                                        y='特征',
+                                                        orientation='h',
+                                                        title='SHAP值 - 因子影响方向',
+                                                        color='影响方向',
+                                                        color_discrete_map=color_map,
+                                                        text='平均SHAP值'
+                                                    )
+                                                    fig.update_layout(
+                                                        height=max(300, len(shap_df_display) * 30),
+                                                        xaxis_title="平均SHAP值",
+                                                        yaxis_title="因子"
+                                                    )
+                                                    fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
+                                                    st.plotly_chart(fig, use_container_width=True)
+                                                    
+                                                    # 显示表格
+                                                    st.dataframe(
+                                                        shap_df_display,
+                                                        use_container_width=True,
+                                                        hide_index=True,
+                                                        column_config={
+                                                            "特征": st.column_config.TextColumn("因子", width="medium"),
+                                                            "平均SHAP值": st.column_config.NumberColumn("SHAP值", format="%.4f"),
+                                                            "影响方向": st.column_config.TextColumn("方向", width="small"),
+                                                            "说明": st.column_config.TextColumn("说明", width="medium"),
+                                                        }
+                                                    )
+                                                else:
+                                                    st.info("所有因子的SHAP值都很小，可能模型未学到有效特征")
                                             else:
-                                                st.info("所有因子的SHAP值都很小，可能模型未学到有效特征")
+                                                st.warning("SHAP数据为空")
+                                        else:
+                                            st.warning("SHAP值计算失败，请检查模型是否支持")
                                     else:
-                                        st.warning("SHAP值计算失败，请检查模型是否支持")
+                                        st.warning("未找到可用的ML模型")
                     else:
                         st.info("请先运行LightGBM或XGBoost回测，然后才能计算SHAP值")
                     
@@ -8129,6 +8127,11 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
     返回：
         回测结果字典（包含模型和特征重要性）
     """
+    # ⭐ 如果是强制刷新，清理该模型类型的缓存
+    if force_refresh:
+        from scoring_engine import clear_model_cache
+        clear_model_cache()
+        print(f"🗑️ 已清空所有模型缓存")
     # ⭐ 导入缓存函数
     from scoring_engine import get_cached_model, set_cached_model, get_cache_key_from_params, get_current_weights_hash
     
@@ -8226,17 +8229,21 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             if train_X is None or len(train_X) < 50:
                 status_text.text(f"⚠️ {current_date} 訓練數據不足 ({len(train_X) if train_X is not None else 0} 條)，跳過")
                 continue
-            
+            #-----------
             # 显示训练数据量
             status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
             
             # ⭐ 使用新的缓存系统（检查缓存）
-            # ⭐ 使用新的缓存系统（检查缓存）
+            # ⭐ 生成缓存键（包含模型类型）
             import hashlib
             
-            # 生成权重哈希
+            # 获取权重哈希
             weight_hash = get_current_weights_hash()
-            cache_key = get_cache_key_from_params(model_type, start_date, end_date, {"weight_hash": weight_hash})
+            
+            # ⭐ 明确包含模型类型，防止LightGBM和XGBoost共用缓存
+            cache_key = f"{model_type}_{start_date}_{end_date}_{weight_hash}"
+            
+            print(f"🔑 缓存键: {cache_key}")
             
             # 尝试从缓存获取模型
             cached_model = get_cached_model(cache_key)
@@ -8258,7 +8265,6 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             # ⭐ 重要：无论缓存命中还是新训练，都保存模型信息
             if model is not None:
                 last_model = model
-                # ⭐ 修复：确保 train_X 存在且有效
                 if train_X is not None and hasattr(train_X, 'columns'):
                     last_feature_names = list(train_X.columns)
                     print(f"✅ 保存特征名称: {len(last_feature_names)} 个因子")
