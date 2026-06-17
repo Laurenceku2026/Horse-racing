@@ -1744,7 +1744,78 @@ def compute_correlation_heatmap(start_date: str, end_date: str) -> Optional[go.F
         print(f"计算相关性热力图失败: {e}")
         return None
 # ==================== 管理员专用回测（带特征重要性）====================
+# ==================== 独立的特征重要性提取函数 ====================
 
+def extract_feature_importance_from_result(result: Dict) -> Optional[pd.DataFrame]:
+    """
+    从回测结果中独立提取特征重要性（不影响回测逻辑）
+    
+    参数：
+        result: run_ml_backtest 返回的结果字典
+    
+    返回：
+        特征重要性 DataFrame 或 None
+    """
+    model = result.get("model")
+    feature_names = result.get("feature_names")
+    
+    if model is None:
+        print("⚠️ 模型为 None，无法提取特征重要性")
+        return None
+    
+    if not feature_names:
+        print("⚠️ 特征名称为空，无法提取特征重要性")
+        return None
+    
+    print(f"🔍 提取特征重要性: {len(feature_names)} 个特征")
+    print(f"📌 模型类型: {type(model)}")
+    
+    try:
+        # 检查是否是集成模型（字典）
+        if isinstance(model, dict):
+            print("📌 检测到集成模型")
+            # 集成模型：尝试提取子模型的重要性
+            importance_list = []
+            for sub_name, sub_model in model.items():
+                if sub_model is not None and hasattr(sub_model, 'feature_importances_'):
+                    imp = sub_model.feature_importances_
+                    importance_list.append(imp)
+                    print(f"   - {sub_name}: {len(imp)} 个重要性值")
+            
+            if not importance_list:
+                print("⚠️ 集成模型无法提取特征重要性")
+                return None
+            
+            # 平均所有子模型的重要性
+            importance = np.mean(importance_list, axis=0)
+            print(f"✅ 集成模型特征重要性已平均")
+            
+        elif hasattr(model, 'feature_importances_'):
+            # 单模型
+            importance = model.feature_importances_
+            print(f"✅ 单模型特征重要性提取成功: {len(importance)} 个值")
+        else:
+            print(f"⚠️ 模型没有 feature_importances_ 属性: {type(model)}")
+            return None
+        
+        # 创建 DataFrame
+        import pandas as pd
+        imp_df = pd.DataFrame({
+            '特征': feature_names,
+            '重要性': importance
+        }).sort_values('重要性', ascending=False)
+        
+        print(f"✅ 特征重要性DataFrame创建成功: {len(imp_df)} 行")
+        print(f"   Top 5: {imp_df.head(5)['特征'].tolist()}")
+        
+        return imp_df
+        
+    except Exception as e:
+        print(f"❌ 提取特征重要性失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+#----------------
 def render_admin_backtest():
     """管理员专用回测页面（包含特征重要性分析）"""
     import pandas as pd  # ⭐ 添加这一行
@@ -1904,7 +1975,7 @@ def render_admin_backtest():
                         }
                     )
                     #-----------
-                    # ==================== ⭐ 特征重要性展示（修复版） ====================
+                    # ==================== ⭐ 特征重要性展示（使用独立函数） ====================
                     st.markdown("---")
                     st.markdown("#### 📊 特征重要性分析 (Feature Importance)")
                     st.caption("显示每个因子对ML模型预测的贡献度")
@@ -1914,12 +1985,14 @@ def render_admin_backtest():
                         model_name = result.get("模型", "")
                         # 只对ML模型显示（排除评分系统）
                         if model_name in ["LightGBM", "XGBoost", "集成模型"]:
-                            feature_importance = result.get("feature_importance")
+                            
+                            # ⭐ 使用独立的特征重要性提取函数
+                            feature_importance = extract_feature_importance_from_result(result)
                             
                             if feature_importance is not None and not feature_importance.empty:
                                 with st.expander(f"📈 {model_name} - 特征重要性", expanded=True):
                                     
-                                    # ⭐ 创建带中文名称的DataFrame
+                                    # 创建带中文名称的DataFrame
                                     import pandas as pd
                                     
                                     # 因子名称映射（英文 → 中文）
@@ -1959,23 +2032,23 @@ def render_admin_backtest():
                                     display_df = feature_importance.copy()
                                     display_df['中文名'] = display_df['特征'].map(lambda x: feature_name_map.get(x, x))
                                     
-                                    # ⭐ 只保留重要性 > 0 的因子
+                                    # 只保留重要性 > 0 的因子
                                     display_df = display_df[display_df['重要性'] > 0]
                                     display_df = display_df[['中文名', '特征', '重要性']]
                                     
-                                    # 显示表格（列宽小，居中）
+                                    # 显示表格
                                     st.dataframe(
                                         display_df,
                                         use_container_width=True,
                                         hide_index=True,
                                         column_config={
-                                            "中文名": st.column_config.TextColumn("因子", width="small", help="因子中文名称"),
-                                            "特征": st.column_config.TextColumn("英文", width="small", help="因子英文名称"),
-                                            "重要性": st.column_config.NumberColumn("贡献度", width="small", format="%.4f", help="因子对预测的贡献度"),
+                                            "中文名": st.column_config.TextColumn("因子", width="small"),
+                                            "特征": st.column_config.TextColumn("英文", width="small"),
+                                            "重要性": st.column_config.NumberColumn("贡献度", width="small", format="%.4f"),
                                         }
                                     )
                                     
-                                    # ⭐ 显示横向条形图（只显示重要性 > 0 的因子）
+                                    # 显示横向条形图
                                     if len(display_df) > 0:
                                         import plotly.express as px
                                         fig = px.bar(
@@ -1997,13 +2070,12 @@ def render_admin_backtest():
                                         fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
                                         st.plotly_chart(fig, use_container_width=True)
                                         
-                                        # ⭐ 显示提示：如果只有少数因子有值
                                         if len(display_df) < 5:
                                             st.warning("⚠️ 只有少数因子有重要性值，建议检查数据源或特征工程逻辑")
                                     else:
                                         st.info("所有因子的重要性都为0，请检查训练数据是否有效")
                                     
-                                    # ⭐ 缓存状态提示
+                                    # 缓存状态提示
                                     if result.get("from_cache", False):
                                         st.info("💡 该结果来自缓存（权重和日期范围未变化）")
                                     else:
@@ -8041,22 +8113,27 @@ _model_cache = {}
 
 def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     """
-    获取或训练模型（带缓存，统一缓存键格式）
+    获取或训练模型（带缓存）
     参数：
         X_train: 训练特征
         y_train: 训练标签
         model_type: 'lightgbm', 'xgboost', 'ensemble'
-        cache_key: 唯一缓存键（已包含模型类型）
+        cache_key: 唯一缓存键（应包含模型类型）
     返回：
         训练好的模型
     """
     global _model_cache
     
-    # ✅ 如果是集成模型，使用统一的缓存键格式
+    # ⭐ 关键修复1：缓存键必须包含模型类型（防止LightGBM和XGBoost共用）
+    # 如果 cache_key 没有以模型类型开头，强制添加
+    if not cache_key.startswith(model_type):
+        cache_key = f"{model_type}_{cache_key}"
+    
+    # ⭐ 关键修复2：如果是集成模型，使用独立的缓存键格式
     if model_type == 'ensemble':
-        # ✅ 关键修复：与单独训练使用相同的缓存键格式
-        lgb_key = f"lightgbm_{cache_key}"      # ← 与单独训练一致
-        xgb_key = f"xgboost_{cache_key}"       # ← 与单独训练一致
+        # 集成模型使用统一的缓存键
+        lgb_key = f"lightgbm_{cache_key.replace('ensemble_', '')}"
+        xgb_key = f"xgboost_{cache_key.replace('ensemble_', '')}"
         
         lgb_model = get_or_train_model(X_train, y_train, 'lightgbm', lgb_key)
         xgb_model = get_or_train_model(X_train, y_train, 'xgboost', xgb_key)
@@ -8065,13 +8142,15 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     
     # 检查缓存
     if cache_key in _model_cache:
+        print(f"✅ 缓存命中: {cache_key}")
         return _model_cache[cache_key]
     
-    # ✅ 从配置获取参数
+    # ⭐ 训练新模型
+    print(f"🔄 训练新模型: {cache_key}")
+    
     from scoring_engine import get_ml_config
     config = get_ml_config()
     
-    # 训练新模型
     if model_type == 'lightgbm' and LGB_AVAILABLE:
         model = lgb.LGBMClassifier(
             n_estimators=config.get("lgb_n_estimators", 50),
@@ -8084,6 +8163,7 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
             colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
         )
         model.fit(X_train, y_train)
+        
     elif model_type == 'xgboost' and XGB_AVAILABLE:
         model = xgb.XGBClassifier(
             n_estimators=config.get("xgb_n_estimators", 80),
@@ -8097,18 +8177,28 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
             colsample_bytree=config.get("xgb_colsample_bytree", 0.8)
         )
         model.fit(X_train, y_train)
+        
     else:
         return None
     
-    # 存入缓存
-    _model_cache[cache_key] = model
+    # ⭐ 存入缓存
+    if model is not None:
+        _model_cache[cache_key] = model
+        print(f"✅ 模型已缓存: {cache_key}")
+    
     return model
 
 
 def clear_model_cache():
-    """清空模型缓存（用于测试或强制重新训练）"""
+    """清空所有模型缓存（管理员强制刷新时使用）"""
     global _model_cache
     _model_cache = {}
+    print("🗑️ 模型缓存已清空")
+
+
+def get_model_cache_keys():
+    """获取当前缓存的所有键（用于调试）"""
+    return list(_model_cache.keys())
 #----------
 def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refresh: bool = False) -> Dict:
     """
@@ -8169,8 +8259,10 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             st.error("未獲取到任何數據")
             return result
         
-        # 2. 构建马匹往绩缓存
+        # 2. 构建马匹往绩缓存（只使用截止日期前的数据，防止数据泄露）
+        # 注意：all_performances 已经只包含 cutoff_date 之前的数据
         horse_cache = build_horse_performances_cache(all_performances)
+        print(f"📊 构建马匹缓存: {len(horse_cache)} 匹马")
         
         # 3. 获取按日期排序的赛事列表
         races = get_races_from_performances(all_performances)
@@ -8581,97 +8673,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
     #----------
     # 重置取消标志
     st.session_state.stop_backtest = False
-    
-    # ==================== ⭐ 添加调试日志和强制保存特征重要性 ====================
-    print(f"\n{'='*60}")
-    print(f"🔍 回测完成 - 最终模型状态检查")
-    print(f"{'='*60}")
-    print(f"📌 模型类型: {model_type}")
-    print(f"📌 测试场次: {result.get('测试场次', 0)}")
-    print(f"📌 模型对象 (last_model): {type(last_model) if 'last_model' in dir() and last_model else 'None'}")
-    print(f"📌 特征名称 (last_feature_names): {last_feature_names[:5] if 'last_feature_names' in dir() and last_feature_names else 'None'}...")
-    print(f"📌 result 中是否已有 feature_importance: {result.get('feature_importance') is not None}")
-    
-    # ⭐ 如果 last_model 存在但 result 中没有 feature_importance，强制保存
-    if 'last_model' in dir() and last_model is not None:
-        print(f"\n🔄 强制保存特征重要性...")
-        
-        try:
-            # 获取特征名称
-            if 'last_feature_names' in dir() and last_feature_names:
-                feature_names = last_feature_names
-            else:
-                feature_names = []
-                print(f"⚠️ last_feature_names 不存在，尝试从模型获取")
-                # 尝试从模型获取特征名称（如果有）
-                if hasattr(last_model, 'feature_name_'):
-                    feature_names = list(last_model.feature_name_)
-                    print(f"✅ 从模型获取特征名称: {len(feature_names)} 个")
-            
-            # 提取特征重要性
-            if model_type == 'ensemble':
-                # 集成模型
-                lgb_imp = None
-                xgb_imp = None
-                if last_model.get('lightgbm') is not None:
-                    lgb_imp = last_model['lightgbm'].feature_importances_
-                if last_model.get('xgboost') is not None:
-                    xgb_imp = last_model['xgboost'].feature_importances_
-                
-                if lgb_imp is not None and xgb_imp is not None:
-                    importance = (lgb_imp + xgb_imp) / 2
-                elif lgb_imp is not None:
-                    importance = lgb_imp
-                elif xgb_imp is not None:
-                    importance = xgb_imp
-                else:
-                    importance = None
-            else:
-                # 单模型
-                if hasattr(last_model, 'feature_importances_'):
-                    importance = last_model.feature_importances_
-                    print(f"✅ 成功提取 feature_importances_: {len(importance)} 个值")
-                else:
-                    importance = None
-                    print(f"⚠️ 模型没有 feature_importances_ 属性: {type(last_model)}")
-            
-            if importance is not None and feature_names:
-                import pandas as pd
-                imp_df = pd.DataFrame({
-                    '特征': feature_names,
-                    '重要性': importance
-                }).sort_values('重要性', ascending=False)
-                
-                result["model"] = last_model
-                result["feature_names"] = feature_names
-                result["feature_importance"] = imp_df
-                
-                print(f"✅ 特征重要性已保存到 result")
-                print(f"   - 因子数量: {len(imp_df)}")
-                print(f"   - Top 5 因子:")
-                for _, row in imp_df.head(5).iterrows():
-                    print(f"     {row['特征']}: {row['重要性']:.4f}")
-            else:
-                print(f"⚠️ 无法保存特征重要性")
-                print(f"   - importance is None: {importance is None}")
-                print(f"   - feature_names 为空: {not feature_names}")
-                result["feature_importance"] = None
-                
-        except Exception as e:
-            print(f"❌ 强制保存特征重要性失败: {e}")
-            import traceback
-            traceback.print_exc()
-            result["feature_importance"] = None
-    else:
-        print(f"⚠️ last_model 为 None，无法保存特征重要性")
-        result["feature_importance"] = None
-    
-    print(f"\n📌 最终 result 状态:")
-    print(f"   - 模型: {result.get('model') is not None}")
-    print(f"   - 特征名称: {result.get('feature_names') is not None}")
-    print(f"   - 特征重要性: {result.get('feature_importance') is not None}")
-    print(f"{'='*60}\n")
-    
+         
     return result
 #-----------
 def render_backtest_page(show_title: bool = True):
