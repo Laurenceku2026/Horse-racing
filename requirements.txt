@@ -16,3 +16,4 @@ scikit-learn>=1.3.0
 
 # DeepSeek API
 openai>=1.0.0
+shap==0.44.0
