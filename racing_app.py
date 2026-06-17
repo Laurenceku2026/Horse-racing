@@ -8114,26 +8114,16 @@ _model_cache = {}
 def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     """
     获取或训练模型（带缓存）
-    参数：
-        X_train: 训练特征
-        y_train: 训练标签
-        model_type: 'lightgbm', 'xgboost', 'ensemble'
-        cache_key: 唯一缓存键（应包含模型类型）
-    返回：
-        训练好的模型
     """
     global _model_cache
     
-    # ⭐ 关键修复1：缓存键必须包含模型类型（防止LightGBM和XGBoost共用）
-    # 如果 cache_key 没有以模型类型开头，强制添加
-    if not cache_key.startswith(model_type):
-        cache_key = f"{model_type}_{cache_key}"
+    # ⭐ 强制在缓存键末尾添加模型类型，确保绝对不同
+    cache_key = f"{cache_key}_{model_type}"
     
-    # ⭐ 关键修复2：如果是集成模型，使用独立的缓存键格式
+    # ⭐ 如果是集成模型，使用独立的缓存键格式
     if model_type == 'ensemble':
-        # 集成模型使用统一的缓存键
-        lgb_key = f"lightgbm_{cache_key.replace('ensemble_', '')}"
-        xgb_key = f"xgboost_{cache_key.replace('ensemble_', '')}"
+        lgb_key = f"{cache_key}_lightgbm"
+        xgb_key = f"{cache_key}_xgboost"
         
         lgb_model = get_or_train_model(X_train, y_train, 'lightgbm', lgb_key)
         xgb_model = get_or_train_model(X_train, y_train, 'xgboost', xgb_key)
@@ -8145,7 +8135,7 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
         print(f"✅ 缓存命中: {cache_key}")
         return _model_cache[cache_key]
     
-    # ⭐ 训练新模型
+    # 训练新模型
     print(f"🔄 训练新模型: {cache_key}")
     
     from scoring_engine import get_ml_config
@@ -8181,7 +8171,6 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     else:
         return None
     
-    # ⭐ 存入缓存
     if model is not None:
         _model_cache[cache_key] = model
         print(f"✅ 模型已缓存: {cache_key}")
