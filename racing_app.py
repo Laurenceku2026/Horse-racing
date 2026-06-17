@@ -1926,7 +1926,7 @@ def render_admin_backtest():
                     # ==================== SHAP值分析（按需加载）====================
                     st.markdown("---")
                     st.markdown("#### 🔬 SHAP值分析（深度解释）")
-                    st.caption("SHAP值可以显示每个因子是"正向"还是"负向"影响预测结果")
+                    st.caption('SHAP值可以显示每个因子是"正向"还是"负向"影响预测结果')
                     
                     # 检查是否有可用的ML模型
                     has_ml_model = any(
@@ -1962,8 +1962,8 @@ def render_admin_backtest():
                                         st.success("✅ SHAP值计算完成！")
                                         
                                         # 显示SHAP条形图
-                                        st.markdown("**SHAP值汇总（因子方向性）**")
-                                        st.caption("绿色=正向影响（数值越大，胜率越高）| 红色=负向影响（数值越大，胜率越低）")
+                                        st.markdown('**SHAP值汇总（因子方向性）**')
+                                        st.caption('绿色=正向影响（数值越大，胜率越高）| 红色=负向影响（数值越大，胜率越低）')
                                         
                                         shap_df = shap_results.get("summary_df")
                                         if shap_df is not None:
@@ -1999,8 +1999,8 @@ def render_admin_backtest():
                     
                     # ==================== 相关性热力图 ====================
                     st.markdown("---")
-                    st.markdown("#### 🔥 因子相关性热力图")
-                    st.caption("显示18个因子之间的相关关系（帮助识别冗余因子）")
+                    st.markdown('#### 🔥 因子相关性热力图')
+                    st.caption('显示18个因子之间的相关关系（帮助识别冗余因子）')
                     
                     if st.button("📊 计算相关性热力图", use_container_width=True):
                         with st.spinner("正在计算相关性..."):
@@ -2240,8 +2240,8 @@ def render_admin_panel():
     #-----------------
     # ==================== Tab4: 评分设置 ====================
     with tab4:
-        st.markdown("### ⚙️ 评分权重设置")
-        st.caption("设置各级评分因子的权重（所有权重总和必须为100%）")
+        st.markdown('### ⚙️ 评分权重设置')
+        st.caption('设置各级评分因子的权重（所有权重总和必须为100%）')
         
         # 获取当前语言
         lang = st.session_state.get("lang", "zh")
@@ -2308,7 +2308,7 @@ def render_admin_panel():
         #-----------
         # ==================== 一级因子设置 ====================
         if lang == "zh":
-            st.markdown("#### 📊 一级因子权重")
+            st.markdown('#### 📊 一级因子权重')
             st.caption("调整各主要维度的权重，总和必须为100%")
         else:
             st.markdown("#### 📊 Level 1 Weights")
