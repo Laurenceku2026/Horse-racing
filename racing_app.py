@@ -8118,7 +8118,7 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     global _model_cache
     
     # ⭐ 强制在缓存键末尾添加模型类型，确保绝对不同
-    cache_key = f"{cache_key}_{model_type}"
+   # cache_key = f"{cache_key}_{model_type}"
     
     # ⭐ 如果是集成模型，使用独立的缓存键格式
     if model_type == 'ensemble':
@@ -8527,7 +8527,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["独赢正确率"] = correct_predictions / result["测试场次"] * 100
-            
+            #---------
             from scoring_engine import get_ml_config
             ml_config = get_ml_config()
             top_n = ml_config.get("top_n_horses", 4)
