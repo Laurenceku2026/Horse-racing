@@ -7933,17 +7933,17 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 features['avg_weight'] = sum(weights) / len(weights) if weights else 0
             else:
                 # 无数据，填充默认值
-                features['win_rate_3'] = 0
-                features['win_rate_10'] = 0
-                features['place_rate_10'] = 0
-                features['show_rate_10'] = 0
-                features['win_rate_5'] = 0
-                features['win_rate'] = 0
-                features['place_rate'] = 0
-                features['show_rate'] = 0
+                features['win_rate_3'] = 50
+                features['win_rate_10'] = 50
+                features['place_rate_10'] = 50
+                features['show_rate_10'] = 50
+                features['win_rate_5'] = 50
+                features['win_rate'] = 50
+                features['place_rate'] = 50
+                features['show_rate'] = 50
                 features['distance_rating'] = 50
-                features['trend'] = 0
-                features['avg_weight'] = 0
+                features['trend'] = 50
+                features['avg_weight'] = 50
             
             # ---- 2. 场次因素 ----
             # 同场地胜率
@@ -8476,17 +8476,17 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         features['avg_weight'] = sum(weights) / len(weights) if weights else 0
                     else:
                         # 无数据，填充默认值
-                        features['win_rate_3'] = 0
-                        features['win_rate_10'] = 0
-                        features['place_rate_10'] = 0
-                        features['show_rate_10'] = 0
-                        features['win_rate_5'] = 0
-                        features['win_rate'] = 0
-                        features['place_rate'] = 0
-                        features['show_rate'] = 0
+                        features['win_rate_3'] = 50
+                        features['win_rate_10'] = 50
+                        features['place_rate_10'] = 50
+                        features['show_rate_10'] = 50
+                        features['win_rate_5'] = 50
+                        features['win_rate'] = 50
+                        features['place_rate'] = 50
+                        features['show_rate'] = 50
                         features['distance_rating'] = 50
-                        features['trend'] = 0
-                        features['avg_weight'] = 0
+                        features['trend'] = 50
+                        features['avg_weight'] = 50
                     
                     # ---- 2. 场次因素 ----
                     # 同场地胜率
