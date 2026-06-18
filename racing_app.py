@@ -8003,11 +8003,22 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             # 目标：是否跑入前三
             position = r.get('position', 0)
             y_list.append(1 if position and position <= 3 else 0)
-    
+    #---------
     if len(X_list) < 50:
         return None, None
     
     X_df = pd.DataFrame(X_list).fillna(0)
+    
+    # ⭐ 调试：打印各特征非零值统计
+    st.write("🔍 训练数据特征非零值统计:")
+    for col in X_df.columns:
+        non_zero = (X_df[col] != 0).sum()
+        pct = non_zero / len(X_df) * 100
+        if pct > 0:
+            st.write(f"   ✅ {col}: {non_zero}/{len(X_df)} ({pct:.1f}%)")
+        else:
+            st.write(f"   ❌ {col}: 全部为 0")
+    
     y_series = pd.Series(y_list)
     
     return X_df, y_series
@@ -8309,10 +8320,17 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             #----------
             train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
             
-            # ⭐ 调试：显示训练特征数量
+            # ⭐ 调试：显示训练特征数量和非零值统计
             if train_X is not None:
                 st.write(f"🔍 训练特征数量: {len(train_X.columns)}")
-                st.write(f"🔍 训练特征列表: {list(train_X.columns)}")
+                st.write("🔍 各特征非零值统计:")
+                for col in train_X.columns:
+                    non_zero = (train_X[col] != 0).sum()
+                    pct = non_zero / len(train_X) * 100
+                    if pct > 0:
+                        st.write(f"   ✅ {col}: {non_zero}/{len(train_X)} ({pct:.1f}%)")
+                    else:
+                        st.write(f"   ❌ {col}: 全部为 0")
             
             if train_X is None or len(train_X) < 50:
                 status_text.text(f"⚠️ {current_date} 訓練數據不足 ({len(train_X) if train_X is not None else 0} 條)，跳過")
