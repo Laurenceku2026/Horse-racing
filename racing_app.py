@@ -8306,8 +8306,13 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             
             # 8.1 使用 current_date 之前的所有数据训练模型
             status_text.text(f"正在訓練模型: {current_date} (準備訓練數據中...)")
-            
+            #----------
             train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
+            
+            # ⭐ 调试：显示训练特征数量
+            if train_X is not None:
+                st.write(f"🔍 训练特征数量: {len(train_X.columns)}")
+                st.write(f"🔍 训练特征列表: {list(train_X.columns)}")
             
             if train_X is None or len(train_X) < 50:
                 status_text.text(f"⚠️ {current_date} 訓練數據不足 ({len(train_X) if train_X is not None else 0} 條)，跳過")
@@ -8385,9 +8390,13 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 from scoring_engine import get_ml_config
                 ml_config = get_ml_config()
                 recent_games = ml_config.get("recent_games", 30)
-                
+                #----------
                 # 构建特征并预测 - 对所有马匹进行预测
                 runners = []
+                
+                # ⭐ 调试：显示预测特征数量（只显示第一次）
+                if len(runners) == 0:
+                    st.write(f"🔍 预测特征将构建，预计28个特征")
                 
                 for r in runners_data:
                     horse_id = r.get('horse_id')
@@ -8540,6 +8549,11 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     features['data_used_count'] = len(past_before)
                     features['actual_weight'] = r.get('actual_weight', 0) or 0
                     features['distance'] = distance
+                    #-------------
+                    # ⭐ 调试：显示实际特征数量（只显示第一次）
+                    if len(runners) == 0:
+                        st.write(f"🔍 实际预测特征数量: {len(features)}")
+                        st.write(f"🔍 预测特征列表: {list(features.keys())}")
                     
                     # 预测
                     prob = predict_with_model(model, features, model_type)
