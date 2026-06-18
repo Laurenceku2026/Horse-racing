@@ -8363,11 +8363,11 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             from scoring_engine import get_ml_config
             ml_config = get_ml_config()
             recent_games = ml_config.get("recent_games", 30)
-            
-            # 构建特征并预测 - 对所有马匹进行预测
-            runners = []
-            
-            for r in runners_data:  # ← 改为遍历所有马匹
+                #-----------
+                # 构建特征并预测 - 对所有马匹进行预测
+                runners = []
+                
+                for r in runners_data:
                     horse_id = r.get('horse_id')
                     if not horse_id:
                         continue
@@ -8378,7 +8378,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     all_past = horse_cache.get(horse_id, [])
                     past_before = [p for p in all_past if p.get('race_date', '') < race_date]
                     past_before = past_before[:recent_games]
-                    #--------------
+                    
                     # ========== 构建完整的28个特征（与训练一致）==========
                     features = {}
                     
