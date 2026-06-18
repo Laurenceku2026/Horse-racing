@@ -2026,6 +2026,7 @@ def render_admin_backtest():
                                         'odds_trend': '赔率趋势',
                                         'ev': '期望值',
                                         'same_venue': '同场地',
+                                        'rating_score': '评分系统',  # ← 新增
                                     }
                                     
                                     # 创建带中文列名的DataFrame
@@ -7992,11 +7993,55 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             features['jockey'] = 0
             features['trainer'] = 0
             features['jockey_win_rate'] = 0
-            
+            #------------
             # ---- 6. 额外字段 ----
             features['data_used_count'] = len(past_before)
             features['actual_weight'] = r.get('actual_weight', 0) or 0
             features['distance'] = distance
+            
+            # ---- 7. 评分系统分数 ----
+            # 使用评分系统的逻辑计算综合评分
+            from scoring_engine import calculate_basic_score, calculate_race_score, calculate_odds_score, calculate_status_score, calculate_overall_score, get_horse_weight_comfort_range_from_cache
+            
+            # 获取该马匹的往绩（用于评分系统，限制10场）
+            all_past_score = horse_cache.get(horse_id, [])
+            past_before_score = [p for p in all_past_score if p.get('race_date', '') < race_date]
+            past_before_score = past_before_score[:10]
+            
+            # 计算负磅舒适区
+            weight_comfort_range_score = get_horse_weight_comfort_range_from_cache(horse_id, past_before_score)
+            
+            # 基础往绩评分
+            basic_score = calculate_basic_score(past_before_score, distance)
+            
+            # 场次因素评分
+            race_score = calculate_race_score(
+                horse_id, venue, distance, r.get('draw'), r.get('actual_weight'),
+                r.get('jockey'), r.get('trainer'), weight_comfort_range_score, past_before_score
+            )
+            
+            # 赔率因素评分
+            odds_raw_score = r.get('odds', 10.0)
+            try:
+                odds_win_score = float(odds_raw_score) if odds_raw_score else 10.0
+            except (ValueError, TypeError):
+                odds_win_score = 10.0
+            odds_score = calculate_odds_score(odds_win_score, 50.0)
+            
+            # 状态因素评分
+            status_score = calculate_status_score(
+                None,  # birth_year
+                r.get('body_weight'),
+                [p.get('body_weight') for p in past_before_score if p.get('body_weight')],
+                r.get('incident', ''),
+                r.get('running_position', ''),
+                None,  # finishing_position
+                None   # status_weights
+            )
+            
+            # 综合评分
+            rating_score = calculate_overall_score(basic_score, race_score, odds_score, status_score)
+            features['rating_score'] = rating_score
             
             X_list.append(features)
             
@@ -8562,16 +8607,55 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     features['jockey'] = 0
                     features['trainer'] = 0
                     features['jockey_win_rate'] = 0
-                    
+                    #--------
                     # ---- 6. 额外字段 ----
                     features['data_used_count'] = len(past_before)
                     features['actual_weight'] = r.get('actual_weight', 0) or 0
                     features['distance'] = distance
-                    #-------------
-                    # ⭐ 调试：显示实际特征数量（只显示第一次）
-                    if len(runners) == 0:
-                        st.write(f"🔍 实际预测特征数量: {len(features)}")
-                        st.write(f"🔍 预测特征列表: {list(features.keys())}")
+                    
+                    # ---- 7. 评分系统分数 ----
+                    # 使用评分系统的逻辑计算综合评分
+                    from scoring_engine import calculate_basic_score, calculate_race_score, calculate_odds_score, calculate_status_score, calculate_overall_score, get_horse_weight_comfort_range_from_cache
+                    
+                    # 获取该马匹的往绩（用于评分系统，限制10场）
+                    all_past_score = horse_cache.get(horse_id, [])
+                    past_before_score = [p for p in all_past_score if p.get('race_date', '') < race_date]
+                    past_before_score = past_before_score[:10]
+                    
+                    # 计算负磅舒适区
+                    weight_comfort_range_score = get_horse_weight_comfort_range_from_cache(horse_id, past_before_score)
+                    
+                    # 基础往绩评分
+                    basic_score = calculate_basic_score(past_before_score, distance)
+                    
+                    # 场次因素评分
+                    race_score = calculate_race_score(
+                        horse_id, venue, distance, r.get('draw'), r.get('actual_weight'),
+                        r.get('jockey'), r.get('trainer'), weight_comfort_range_score, past_before_score
+                    )
+                    
+                    # 赔率因素评分
+                    odds_raw_score = r.get('odds', 10.0)
+                    try:
+                        odds_win_score = float(odds_raw_score) if odds_raw_score else 10.0
+                    except (ValueError, TypeError):
+                        odds_win_score = 10.0
+                    odds_score = calculate_odds_score(odds_win_score, 50.0)
+                    
+                    # 状态因素评分
+                    status_score = calculate_status_score(
+                        None,  # birth_year
+                        r.get('body_weight'),
+                        [p.get('body_weight') for p in past_before_score if p.get('body_weight')],
+                        r.get('incident', ''),
+                        r.get('running_position', ''),
+                        None,  # finishing_position
+                        None   # status_weights
+                    )
+                    
+                    # 综合评分
+                    rating_score = calculate_overall_score(basic_score, race_score, odds_score, status_score)
+                    features['rating_score'] = rating_score
                     
                     # 预测
                     prob = predict_with_model(model, features, model_type)
