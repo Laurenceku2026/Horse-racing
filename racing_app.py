@@ -7801,7 +7801,7 @@ def calculate_basic_score_fast(past_performances_v2: List[Dict], target_distance
 #-------------
 # ==================== ML 模型回测专用：时间滑窗训练 ====================
 
-def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict], horse_cache: Dict) -> Tuple[pd.DataFrame, pd.Series]:
+def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict], horse_cache: Dict, horse_birth_years: Dict = None) -> Tuple[pd.DataFrame, pd.Series]:
     """
     准备截止到 cutoff_date 之前的训练数据
     使用与评分系统相同的18个因子
@@ -7810,6 +7810,7 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
         cutoff_date: 截止日期（只使用该日期之前的数据）
         all_performances: 所有历史比赛数据
         horse_cache: 马匹往绩缓存
+        horse_birth_years: 马匹出生年份字典 {horse_id: birth_year}
     
     返回：
         (X_features, y_labels)
@@ -7819,6 +7820,9 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
     ml_config = get_ml_config()
     recent_games = ml_config.get("recent_games", 30)
     top_n_horses = ml_config.get("top_n_horses", 4)
+    
+    if horse_birth_years is None:
+        horse_birth_years = {}
     
     X_list = []
     y_list = []
@@ -7858,7 +7862,7 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             past_before = [p for p in all_past if p.get('race_date', '') < race_date]
             past_before = past_before[:recent_games]
             
-            # ========== 构建18个特征 ==========
+            # ========== 构建完整的18个因子 ==========
             features = {}
             
             # ---- 1. 基础往绩因子 ----
@@ -7888,10 +7892,10 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 wins_5 = sum(1 for p in recent_5 if p.get('position') == 1)
                 features['win_rate_5'] = wins_5 / len(recent_5) if recent_5 else 0
                 
-                # 近10场入Q率（兼容旧版）
+                # 兼容旧版字段
+                features['win_rate'] = features['win_rate_10']
                 features['place_rate'] = features['place_rate_10']
                 features['show_rate'] = features['show_rate_10']
-                features['win_rate'] = features['win_rate_10']
                 
                 # 路程评分（同程表现）
                 distance_scores = []
@@ -7899,7 +7903,6 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                     p_distance = p.get('distance', 0)
                     if p_distance == 0:
                         continue
-                    # 路程差异越小，权重越高
                     diff = abs(p_distance - distance)
                     weight = 1.0 - min(0.7, diff / 400)
                     pos = p.get('position', 0)
@@ -7921,12 +7924,11 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 # 名次趋势（最近5场）
                 positions = [p.get('position', 0) for p in recent_5 if p.get('position', 0) > 0]
                 if len(positions) >= 2:
-                    # 简单趋势：最近3场平均名次变化
                     if len(positions) >= 3:
-                        trend = (positions[-3] - positions[-1])  # 正数表示进步
+                        trend = (positions[-3] - positions[-1])
                     else:
                         trend = positions[-2] - positions[-1]
-                    features['trend'] = max(-10, min(10, trend)) / 10  # 归一化到 -1 ~ 1
+                    features['trend'] = max(-10, min(10, trend)) / 10
                 else:
                     features['trend'] = 0
                 
@@ -7967,34 +7969,160 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             # 档位优势（数字越小越有利）
             draw_val = r.get('draw', 0)
             if draw_val and draw_val > 0:
-                features['draw'] = 100 - (draw_val - 1) * (80 / 13)  # 1档100分，14档20分
+                features['draw'] = 100 - (draw_val - 1) * (80 / 13)
             else:
                 features['draw'] = 50
             
-            # 负磅变化
+            # 负磅
             features['weight'] = r.get('actual_weight', 0) or 0
-            
-            # 骑师（使用名称作为特征，后续可编码）
-            features['jockey'] = 0  # 需要编码，暂时用0
-            features['trainer'] = 0  # 需要编码，暂时用0
             
             # ---- 3. 赔率因素 ----
             odds_val = r.get('odds', 0)
             if odds_val and odds_val > 0:
-                features['odds'] = min(100, max(0, 100 * (1 - (odds_val - 1) / 98)))  # 归一化
+                features['odds'] = min(100, max(0, 100 * (1 - (odds_val - 1) / 98)))
             else:
                 features['odds'] = 50
             
-            features['odds_trend'] = 50  # 需要历史数据计算，暂时用50
-            features['ev'] = 0  # 期望值，暂时用0
+            # ⭐ 修复：odds_trend - 计算赔率变化趋势
+            # 使用最近3场的赔率变化
+            if len(past_before) >= 3:
+                odds_list = []
+                for p in past_before[:3]:
+                    o = p.get('odds', 0)
+                    if o and o > 0:
+                        odds_list.append(o)
+                if len(odds_list) >= 2:
+                    # 赔率下降表示被看好，上升表示被看淡
+                    trend_odds = (odds_list[-1] - odds_list[0]) / odds_list[0] if odds_list[0] > 0 else 0
+                    # 赔率下降 → 正向（分数高），赔率上升 → 负向（分数低）
+                    features['odds_trend'] = 50 - trend_odds * 50
+                    features['odds_trend'] = max(0, min(100, features['odds_trend']))
+                else:
+                    features['odds_trend'] = 50
+            else:
+                features['odds_trend'] = 50
+            
+            # ⭐ 修复：ev - 期望值
+            # EV = 胜率 × 赔率 - 1，这里胜率用近10场胜率估算
+            prob_win = features.get('win_rate_10', 0) / 100
+            if prob_win > 0 and odds_val and odds_val > 0:
+                features['ev'] = prob_win * odds_val - 1
+                features['ev'] = max(-1, min(10, features['ev']))  # 限制范围
+            else:
+                features['ev'] = 0
             
             # ---- 4. 状态因素 ----
-            features['age'] = 50  # 需要从horse表获取，暂时用50
-            features['weight_change'] = 50  # 需要历史体重，暂时用50
-            features['incident'] = 50  # 需要事件分析，暂时用50
-            features['burst'] = 50  # 需要走位分析，暂时用50
+            # ⭐ 修复：age - 从 horse_birth_years 获取出生年份计算年龄
+            birth_year = horse_birth_years.get(horse_id)
+            if birth_year and birth_year > 0:
+                current_year = datetime.now().year
+                age = current_year - birth_year
+                if 4 <= age <= 5:
+                    features['age'] = 100
+                elif age == 3 or age == 6:
+                    features['age'] = 70
+                elif age == 2 or age == 7:
+                    features['age'] = 50
+                elif age >= 8:
+                    features['age'] = 30
+                else:
+                    features['age'] = 40
+            else:
+                features['age'] = 50
             
-            # ---- 额外字段（兼容性） ----
+            # ⭐ 修复：weight_change - 计算体重变化
+            past_weights = [p.get('body_weight') for p in past_before if p.get('body_weight') and p.get('body_weight') > 0]
+            current_weight = r.get('body_weight', 0)
+            if current_weight and current_weight > 0 and past_weights:
+                # 取最近一次出赛体重
+                last_weight = past_weights[0] if past_weights else None
+                if last_weight:
+                    change = abs(current_weight - last_weight)
+                    if change <= 5:
+                        features['weight_change'] = 100
+                    elif change <= 10:
+                        features['weight_change'] = 70
+                    elif change <= 15:
+                        features['weight_change'] = 40
+                    else:
+                        features['weight_change'] = 20
+                else:
+                    features['weight_change'] = 50
+            else:
+                features['weight_change'] = 50
+            
+            # ⭐ 修复：incident - 分析事件报告
+            incident_text = r.get('incident', '')
+            if incident_text and incident_text not in ['无特别报告。', '無特別報告。', '']:
+                # 负面关键词
+                negative_keywords = ['流鼻血', '不良於行', '喘鳴症', '心律不正', '勒避', '受阻', '走外疊', '搶口', '出閘笨拙']
+                positive_keywords = ['順利', '望空', '節省腳程']
+                
+                score = 50
+                for kw in negative_keywords:
+                    if kw in incident_text:
+                        score -= 15
+                        break
+                for kw in positive_keywords:
+                    if kw in incident_text:
+                        score += 10
+                        break
+                features['incident'] = max(0, min(100, score))
+            else:
+                features['incident'] = 50
+            
+            # ⭐ 修复：burst - 分析走位图冲刺能力
+            running_position = r.get('running_position', '')
+            if running_position and running_position != '0' and running_position != '---':
+                positions = []
+                for char in str(running_position):
+                    if char.isdigit():
+                        positions.append(int(char))
+                if len(positions) >= 2:
+                    first_pos = positions[0]
+                    last_pos = positions[-1]
+                    improvement = first_pos - last_pos
+                    if improvement >= 5:
+                        features['burst'] = 95
+                    elif improvement >= 3:
+                        features['burst'] = 85
+                    elif improvement >= 1:
+                        features['burst'] = 70
+                    elif improvement == 0:
+                        features['burst'] = 60
+                    else:
+                        features['burst'] = 40
+                    # 全程领放加分
+                    if all(p == 1 for p in positions):
+                        features['burst'] = min(100, features['burst'] + 10)
+                else:
+                    features['burst'] = 50
+            else:
+                features['burst'] = 50
+            
+            # ---- 5. 骑师和练马师评分 ----
+            # ⭐ 修复：jockey - 骑师评分
+            jockey_name = r.get('jockey', '')
+            jockey_scores = {
+                "潘頓": 100, "布文": 95, "田泰安": 85, "艾兆禮": 80,
+                "潘明輝": 75, "何澤堯": 75, "巴度": 70, "希威森": 70,
+                "梁家俊": 65, "霍宏聲": 65, "班德禮": 60, "艾道拿": 60,
+                "蔡明紹": 55, "周俊樂": 55, "其他": 50
+            }
+            features['jockey'] = jockey_scores.get(jockey_name, 50)
+            
+            # ⭐ 修复：trainer - 练马师评分
+            trainer_name = r.get('trainer', '')
+            trainer_scores = {
+                "蔡約翰": 100, "大衛希斯": 95, "姚本輝": 90, "告東尼": 90,
+                "羅富全": 85, "呂健威": 85, "沈集成": 80, "方嘉柏": 80,
+                "伍鵬志": 80, "韋達": 75, "蘇偉賢": 70, "文家良": 70,
+                "賀賢": 65, "鄭俊偉": 65, "葉楚航": 60, "徐雨石": 60,
+                "其他": 50
+            }
+            features['trainer'] = trainer_scores.get(trainer_name, 50)
+            
+            # ---- 6. 额外字段（兼容性，但不作为核心因子） ----
             features['data_used_count'] = len(past_before)
             features['jockey_win_rate'] = 0
             features['actual_weight'] = r.get('actual_weight', 0) or 0
@@ -8305,7 +8433,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             # 9.1 使用 current_date 之前的所有数据训练模型
             status_text.text(f"正在訓練模型: {current_date} (準備訓練數據中...)")
             
-            train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
+            train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache, horse_birth_years)
             
             if train_X is None or len(train_X) < 50:
                 status_text.text(f"⚠️ {current_date} 訓練數據不足 ({len(train_X) if train_X is not None else 0} 條)，跳過")
