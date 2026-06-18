@@ -8351,7 +8351,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 venue = race['venue']
                 race_no = race['race_no']
                 distance = race.get('distance', 1200)
-                #----------
+                
                 # 获取该场赛事的出赛马匹
                 runners_data = [p for p in all_performances 
                                if p['race_date'] == race_date 
@@ -8361,64 +8361,16 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 if not runners_data:
                     continue
                 
-                # ⭐ 使用评分排序（而不是 position 或 odds）
+                # ⭐ 修复：对所有出赛马匹进行预测（而不是用评分系统筛选）
                 from scoring_engine import get_ml_config
                 ml_config = get_ml_config()
                 top_n_horses = ml_config.get("top_n_horses", 4)
                 recent_games = ml_config.get("recent_games", 30)
                 
-                # ⭐ 关键：使用评分系统计算综合评分，然后按评分排序
-                # 这样既避免了数据泄露（不使用 position），又能选出最有实力的马
-                from scoring_engine import (
-                    calculate_basic_score,
-                    calculate_race_score,
-                    calculate_odds_score,
-                    calculate_status_score,
-                    calculate_overall_score,
-                    get_horse_weight_comfort_range_from_cache
-                )
-                
-                # 获取所有马匹的评分
-                scored_runners = []
-                for r in runners_data:
-                    horse_id = r.get('horse_id')
-                    if not horse_id:
-                        continue
-                    
-                    all_past = horse_cache.get(horse_id, [])
-                    past_before = [p for p in all_past if p.get('race_date', '') < race_date]
-                    past_before = past_before[:10]
-                    
-                    weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_before)
-                    
-                    basic_score = calculate_basic_score(past_before, distance)
-                    race_score = calculate_race_score(
-                        horse_id, venue, distance, r.get('draw'), r.get('actual_weight'),
-                        r.get('jockey'), r.get('trainer'), weight_comfort_range, past_before
-                    )
-                    odds_score = calculate_odds_score(r.get('odds', 10.0))
-                    status_score = calculate_status_score(
-                        None, r.get('body_weight'),
-                        [p.get('body_weight') for p in past_before if p.get('body_weight')],
-                        r.get('incident', ''), r.get('running_position', ''), None
-                    )
-                    
-                    combined_score = calculate_overall_score(basic_score, race_score, odds_score, status_score)
-                    
-                    scored_runners.append({
-                        'runner': r,
-                        'score': combined_score,
-                        'horse_id': horse_id
-                    })
-                
-                # ⭐ 按评分排序（从高到低）
-                scored_runners.sort(key=lambda x: x['score'], reverse=True)
-                target_runners = [s['runner'] for s in scored_runners[:top_n_horses]]
-                
-                # 构建特征并预测
+                # 构建特征并预测 - 对**所有**马匹进行预测
                 runners = []
                 
-                for r in target_runners:
+                for r in runners_data:
                     horse_id = r.get('horse_id')
                     if not horse_id:
                         continue
@@ -8493,7 +8445,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 if not runners:
                     continue
                 
-                # 步骤3：按预测概率排序
+                # ⭐ 按预测概率排序（ML模型的判断）
                 runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
                 
                 # 获取预测前三名
