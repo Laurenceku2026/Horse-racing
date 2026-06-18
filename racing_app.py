@@ -5566,10 +5566,17 @@ def render_smart_betting(show_title: bool = True):
         
         overall_score = runner.get('overall_score', 0)
         overall_score_display = f"{overall_score:.0f}" if overall_score else "0"
-        
+        #-----
         # 计算 EV (期望值)
         win_prob_val = runner.get('win_probability', 0)
-        odds_win_val = runner.get('odds_win', 0)
+        
+        # ⭐ 修复：安全获取赔率并转换为浮点数
+        odds_raw = runner.get('odds_win')
+        try:
+            odds_win_val = float(odds_raw) if odds_raw and odds_raw != '' else 0
+        except (ValueError, TypeError):
+            odds_win_val = 0
+        
         if win_prob_val > 0 and odds_win_val > 0:
             ev = win_prob_val * odds_win_val - 1
             ev_display = f"{ev:+.2f}"
