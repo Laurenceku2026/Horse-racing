@@ -7817,12 +7817,13 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
     """
     from scoring_engine import get_ml_config
     
+    # ⭐ 如果 horse_birth_years 为 None，设为空字典
+    if horse_birth_years is None:
+        horse_birth_years = {}
+    
     ml_config = get_ml_config()
     recent_games = ml_config.get("recent_games", 30)
     top_n_horses = ml_config.get("top_n_horses", 4)
-    
-    if horse_birth_years is None:
-        horse_birth_years = {}
     
     X_list = []
     y_list = []
