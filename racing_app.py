@@ -933,11 +933,6 @@ def consume_free_trial(user_id: str) -> bool:
     """消耗一次免费次数"""
     print(f"consume_free_trial 收到的 user_id: {user_id}")
     
-    # ⭐ 新增：管理员无限免费（后台静默跳过）
-    if user_id == "admin":
-        print("✅ 管理员特权：不消耗免费次数")
-        return True
-    
     profile = get_user_profile(user_id)
     print(f"获取到的 profile: {profile}")
     
@@ -1574,641 +1569,7 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
         print(f"增量同步失败: {e}")
         return result
 #-------------
-# ==================== SHAP值计算辅助函数 ====================
 
-def compute_shap_values(model, feature_names: List[str], model_type: str, sample_limit: int = 50) -> Optional[Dict]:
-    """
-    计算SHAP值（修复版 - 不触发页面刷新）
-    参数：
-        model: 训练好的模型
-        feature_names: 特征名称列表
-        model_type: 'LightGBM' | 'XGBoost' | '集成模型'
-        sample_limit: 使用的样本数量（默认50场）
-    返回：
-        {'summary_df': DataFrame} 或 None
-    """
-    try:
-        import shap
-        import pandas as pd
-        import numpy as np
-        
-        # ⭐ 检查特征名称是否有效
-        if not feature_names or len(feature_names) == 0:
-            print("⚠️ 特征名称为空")
-            return None
-        
-        # ⭐ 检查模型是否有效
-        if model is None:
-            print("⚠️ 模型为空")
-            return None
-        
-        # 获取训练数据（从缓存或数据库）
-        # 注意：这里需要真实的训练数据，而不是随机数据
-        # 由于回测函数没有保存训练数据，这里使用随机数据作为演示
-        # 实际部署时，需要从回测过程中保存真实的特征数据
-        
-        np.random.seed(42)
-        X_sample = pd.DataFrame(
-            np.random.randn(sample_limit, len(feature_names)),
-            columns=feature_names
-        )
-        
-        # 根据模型类型计算SHAP值
-        shap_values = None
-        
-        if model_type == "LightGBM":
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_sample)
-        elif model_type == "XGBoost":
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_sample)
-        elif model_type == "集成模型":
-            # 集成模型：分别计算两个模型的SHAP值，然后平均
-            shap_values_list = []
-            for sub_model in [model.get('lightgbm'), model.get('xgboost')]:
-                if sub_model is not None:
-                    try:
-                        explainer = shap.TreeExplainer(sub_model)
-                        shap_values_list.append(explainer.shap_values(X_sample))
-                    except Exception as e:
-                        print(f"子模型SHAP计算失败: {e}")
-                        continue
-            if shap_values_list:
-                shap_values = np.mean(shap_values_list, axis=0)
-            else:
-                return None
-        else:
-            return None
-        
-        if shap_values is None:
-            return None
-        
-        # 计算平均SHAP值（绝对值）
-        mean_shap = np.abs(shap_values).mean(axis=0)
-        
-        # 判断影响方向
-        direction = []
-        explanation = []
-        for i, name in enumerate(feature_names):
-            avg_shap = shap_values[:, i].mean()
-            if avg_shap > 0.005:
-                direction.append("正向 ↑")
-                explanation.append("数值越大，胜率越高")
-            elif avg_shap < -0.005:
-                direction.append("负向 ↓")
-                explanation.append("数值越大，胜率越低")
-            else:
-                direction.append("中性 →")
-                explanation.append("影响较小或中性")
-        
-        # 创建汇总DataFrame
-        summary_df = pd.DataFrame({
-            '特征': feature_names,
-            '平均SHAP值': mean_shap,
-            '影响方向': direction,
-            '说明': explanation
-        }).sort_values('平均SHAP值', ascending=False)
-        
-        # ⭐ 过滤掉重要性为0的因子（简化显示）
-        summary_df = summary_df[summary_df['平均SHAP值'] > 0.001]
-        
-        return {'summary_df': summary_df}
-        
-    except ImportError:
-        print("shap 库未安装，请运行: pip install shap")
-        return None
-    except Exception as e:
-        print(f"SHAP计算失败: {e}")
-        return None
-
-
-def compute_correlation_heatmap(start_date: str, end_date: str) -> Optional[go.Figure]:
-    """
-    计算因子相关性热力图
-    从数据库获取真实数据计算
-    """
-    try:
-        import pandas as pd
-        import numpy as np
-        import plotly.graph_objects as go
-        
-        # 获取最近赛事的数据
-        headers = get_supabase_headers(use_secret=True)
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?race_date=gte.{start_date}&race_date=lte.{end_date}&limit=5000"
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code != 200:
-            return None
-        
-        data = response.json()
-        if not data:
-            return None
-        
-        # 提取特征（简化版本）
-        # 实际应使用与ML相同的特征计算逻辑
-        df = pd.DataFrame(data)
-        
-        # 计算相关系数矩阵
-        # 选择数值列
-        numeric_cols = ['position', 'actual_weight', 'body_weight', 'draw', 'odds']
-        available_cols = [c for c in numeric_cols if c in df.columns]
-        
-        if len(available_cols) < 2:
-            return None
-        
-        corr_matrix = df[available_cols].corr()
-        
-        # 绘制热力图
-        fig = go.Figure(data=go.Heatmap(
-            z=corr_matrix.values,
-            x=corr_matrix.columns,
-            y=corr_matrix.columns,
-            colorscale='RdBu_r',
-            zmid=0,
-            text=corr_matrix.values.round(2),
-            texttemplate='%{text}',
-            textfont={"size": 10},
-            hoverongaps=False
-        ))
-        
-        fig.update_layout(
-            title="因子相关性热力图",
-            height=500,
-            xaxis_title="因子",
-            yaxis_title="因子"
-        )
-        
-        return fig
-        
-    except Exception as e:
-        print(f"计算相关性热力图失败: {e}")
-        return None
-# ==================== 管理员专用回测（带特征重要性）====================
-# ==================== 独立的特征重要性提取函数 ====================
-
-def extract_feature_importance_from_result(result: Dict) -> Optional[pd.DataFrame]:
-    """
-    从回测结果中独立提取特征重要性（不影响回测逻辑）
-    
-    参数：
-        result: run_ml_backtest 返回的结果字典
-    
-    返回：
-        特征重要性 DataFrame 或 None
-    """
-    model = result.get("model")
-    feature_names = result.get("feature_names")
-    
-    if model is None:
-        print("⚠️ 模型为 None，无法提取特征重要性")
-        return None
-    
-    if not feature_names:
-        print("⚠️ 特征名称为空，无法提取特征重要性")
-        return None
-    
-    print(f"🔍 提取特征重要性: {len(feature_names)} 个特征")
-    print(f"📌 模型类型: {type(model)}")
-    
-    try:
-        # 检查是否是集成模型（字典）
-        if isinstance(model, dict):
-            print("📌 检测到集成模型")
-            # 集成模型：尝试提取子模型的重要性
-            importance_list = []
-            for sub_name, sub_model in model.items():
-                if sub_model is not None and hasattr(sub_model, 'feature_importances_'):
-                    imp = sub_model.feature_importances_
-                    importance_list.append(imp)
-                    print(f"   - {sub_name}: {len(imp)} 个重要性值")
-            
-            if not importance_list:
-                print("⚠️ 集成模型无法提取特征重要性")
-                return None
-            
-            # 平均所有子模型的重要性
-            importance = np.mean(importance_list, axis=0)
-            print(f"✅ 集成模型特征重要性已平均")
-            
-        elif hasattr(model, 'feature_importances_'):
-            # 单模型
-            importance = model.feature_importances_
-            print(f"✅ 单模型特征重要性提取成功: {len(importance)} 个值")
-        else:
-            print(f"⚠️ 模型没有 feature_importances_ 属性: {type(model)}")
-            return None
-        
-        # 创建 DataFrame
-        import pandas as pd
-        imp_df = pd.DataFrame({
-            '特征': feature_names,
-            '重要性': importance
-        }).sort_values('重要性', ascending=False)
-        
-        print(f"✅ 特征重要性DataFrame创建成功: {len(imp_df)} 行")
-        print(f"   Top 5: {imp_df.head(5)['特征'].tolist()}")
-        
-        return imp_df
-        
-    except Exception as e:
-        print(f"❌ 提取特征重要性失败: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
-#----------------
-def render_admin_backtest():
-    """管理员专用回测页面（包含特征重要性分析）"""
-    import pandas as pd  # ⭐ 添加这一行
-    lang = st.session_state.get("lang", "zh")
-    
-    st.markdown(f"## {t()['model_comparison']}")
-    st.caption(t()["backtest_period"])
-    
-    # 初始化 session_state 中的日期
-    if "admin_backtest_start" not in st.session_state:
-        st.session_state.admin_backtest_start = (datetime.now() - timedelta(days=180)).date()
-    if "admin_backtest_end" not in st.session_state:
-        st.session_state.admin_backtest_end = datetime.now().date()
-    if "admin_backtest_force_refresh" not in st.session_state:
-        st.session_state.admin_backtest_force_refresh = False
-    
-    # 日期选择
-    col1, col2, col3 = st.columns([1, 1, 2])
-    with col1:
-        backtest_start = st.date_input(
-            t()["start_date"], 
-            value=st.session_state.admin_backtest_start,
-            key="admin_backtest_start_input"
-        )
-    with col2:
-        backtest_end = st.date_input(
-            t()["end_date"], 
-            value=st.session_state.admin_backtest_end,
-            key="admin_backtest_end_input"
-        )
-    with col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        col3_1, col3_2 = st.columns(2)
-        with col3_1:
-            run_backtest_btn = st.button(t()["run_backtest"], type="primary", use_container_width=True)
-        with col3_2:
-            force_refresh_btn = st.button("🔄 强制刷新", use_container_width=True, help="忽略缓存，重新训练模型")
-            if force_refresh_btn:
-                st.session_state.admin_backtest_force_refresh = True
-                st.rerun()
-    
-    # 更新 session_state
-    st.session_state.admin_backtest_start = backtest_start
-    st.session_state.admin_backtest_end = backtest_end
-    
-    # 模型选择复选框
-    st.markdown(t()["select_models"])
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    
-    with col_m1:
-        enable_rule = st.checkbox(t()["rating_system"], value=False, key="admin_backtest_rule")
-    with col_m2:
-        enable_lgb = st.checkbox("LightGBM", value=True, key="admin_backtest_lgb",
-                                 disabled=not LGB_AVAILABLE)
-    with col_m3:
-        enable_xgb = st.checkbox("XGBoost", value=True, key="admin_backtest_xgb",
-                                 disabled=not XGB_AVAILABLE)
-    with col_m4:
-        enable_ensemble = st.checkbox("集成模型", value=False, key="admin_backtest_ensemble",
-                                      disabled=(not LGB_AVAILABLE and not XGB_AVAILABLE))
-    
-    st.markdown("---")
-    
-    # ==================== 运行回测 ====================
-    if run_backtest_btn or st.session_state.admin_backtest_force_refresh:
-        # ⭐ 管理员无限免费（后台静默）
-        force_refresh = st.session_state.admin_backtest_force_refresh
-        st.session_state.admin_backtest_force_refresh = False
-        
-        if backtest_start > backtest_end:
-            st.error("開始日期不能晚於結束日期")
-        else:
-            days_diff = (backtest_end - backtest_start).days
-            st.info(f"📊 回測期間: {backtest_start} 至 {backtest_end} (共 {days_diff} 天)")
-            
-            if force_refresh:
-                st.info("🔄 强制刷新模式：将忽略缓存，重新训练所有模型")
-            
-            results = []
-            
-            # 运行回测（管理员模式：force_refresh=True）
-            with st.spinner("正在運行回測..."):
-                if enable_lgb and LGB_AVAILABLE:
-                    result = run_ml_backtest(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="lightgbm",
-                        force_refresh=force_refresh
-                    )
-                    results.append(result)
-                
-                if enable_xgb and XGB_AVAILABLE:
-                    result = run_ml_backtest(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="xgboost",
-                        force_refresh=force_refresh
-                    )
-                    results.append(result)
-                
-                if enable_ensemble and (LGB_AVAILABLE or XGB_AVAILABLE):
-                    result = run_ml_backtest(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="ensemble",
-                        force_refresh=force_refresh
-                    )
-                    results.append(result)
-                
-                if enable_rule:
-                    result = run_backtest_for_model(
-                        start_date=backtest_start.strftime("%Y-%m-%d"),
-                        end_date=backtest_end.strftime("%Y-%m-%d"),
-                        model_type="rule"
-                    )
-                    results.append(result)
-            
-            if results:
-                st.markdown("#### 📈 模型對比結果")
-                
-                # 显示对比表格
-                completed_results = [r for r in results if not r.get("cancelled", False)]
-                
-                if completed_results:
-                    compare_df = pd.DataFrame(completed_results)
-                    display_columns = ["模型", "测试场次", "独赢正确率", 
-                                      "前三名命中匹数率", "前三名命中场次率",
-                                      "前三名全中率", "前三名顺序正确率",
-                                      "总投入", "总回报", "ROI"]
-                    available_cols = [c for c in display_columns if c in compare_df.columns]
-                    compare_df = compare_df[available_cols]
-                    #-----
-                    st.dataframe(
-                        compare_df.style.format({
-                            '独赢正确率': '{:.1f}%',
-                            '前三名命中匹数率': '{:.1f}%',
-                            '前三名命中场次率': '{:.1f}%',
-                            '前三名全中率': '{:.1f}%',
-                            '前三名顺序正确率': '{:.1f}%',
-                            'ROI': '{:+.1f}%',
-                            '总回报': '${:.0f}',
-                            '总投入': '${:.0f}'
-                        }),
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "模型": st.column_config.TextColumn("模型", width="small"),
-                            "测试场次": st.column_config.NumberColumn("场次", width="small"),
-                            "独赢正确率": st.column_config.NumberColumn("独赢", width="small", format="%.1f%%"),
-                            "前三名命中匹数率": st.column_config.NumberColumn("匹数率", width="small", format="%.1f%%"),
-                            "前三名命中场次率": st.column_config.NumberColumn("场次率", width="small", format="%.1f%%"),
-                            "前三名全中率": st.column_config.NumberColumn("全中率", width="small", format="%.1f%%"),
-                            "前三名顺序正确率": st.column_config.NumberColumn("顺序率", width="small", format="%.1f%%"),
-                            "总投入": st.column_config.NumberColumn("投入", width="small", format="$%.0f"),
-                            "总回报": st.column_config.NumberColumn("回报", width="small", format="$%.0f"),
-                            "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
-                        }
-                    )
-                    #-----------
-                    # ==================== ⭐ 特征重要性展示（使用独立函数） ====================
-                    st.markdown("---")
-                    st.markdown("#### 📊 特征重要性分析 (Feature Importance)")
-                    st.caption("显示每个因子对ML模型预测的贡献度")
-                    
-                    # 为每个ML模型显示特征重要性
-                    for result in completed_results:
-                        model_name = result.get("模型", "")
-                        # 只对ML模型显示（排除评分系统）
-                        if model_name in ["LightGBM", "XGBoost", "集成模型"]:
-                            
-                            # ⭐ 使用独立的特征重要性提取函数
-                            feature_importance = extract_feature_importance_from_result(result)
-                            
-                            if feature_importance is not None and not feature_importance.empty:
-                                with st.expander(f"📈 {model_name} - 特征重要性", expanded=True):
-                                    
-                                    # 创建带中文名称的DataFrame
-                                    import pandas as pd
-                                    
-                                    # 因子名称映射（英文 → 中文）
-                                    feature_name_map = {
-                                        'draw': '档位',
-                                        'odds': '赔率',
-                                        'distance': '路程',
-                                        'actual_weight': '负磅',
-                                        'win_rate_5': '近5场胜率',
-                                        'show_rate': '入T率',
-                                        'place_rate': '入Q率',
-                                        'win_rate': '胜率',
-                                        'win_rate_3': '近3场胜率',
-                                        'avg_weight': '平均负磅',
-                                        'jockey_win_rate': '骑师胜率',
-                                        'data_used_count': '数据量',
-                                        'win_rate_10': '近10场胜率',
-                                        'place_rate_10': '近10场入Q率',
-                                        'show_rate_10': '近10场入T率',
-                                        'distance_rating': '路程评分',
-                                        'trend': '名次趋势',
-                                        'same_course': '同场地',
-                                        'same_distance': '同路程',
-                                        'weight': '负磅变化',
-                                        'jockey': '骑师',
-                                        'trainer': '练马师',
-                                        'age': '马龄',
-                                        'weight_change': '体重变化',
-                                        'incident': '事件报告',
-                                        'burst': '冲刺能力',
-                                        'odds_trend': '赔率趋势',
-                                        'ev': '期望值',
-                                        'same_venue': '同场地',
-                                    }
-                                    
-                                    # 创建带中文列名的DataFrame
-                                    display_df = feature_importance.copy()
-                                    display_df['中文名'] = display_df['特征'].map(lambda x: feature_name_map.get(x, x))
-                                    
-                                    # 只保留重要性 > 0 的因子
-                                    display_df = display_df[display_df['重要性'] > 0]
-                                    display_df = display_df[['中文名', '特征', '重要性']]
-                                    
-                                    # 显示表格
-                                    st.dataframe(
-                                        display_df,
-                                        use_container_width=True,
-                                        hide_index=True,
-                                        column_config={
-                                            "中文名": st.column_config.TextColumn("因子", width="small"),
-                                            "特征": st.column_config.TextColumn("英文", width="small"),
-                                            "重要性": st.column_config.NumberColumn("贡献度", width="small", format="%.4f"),
-                                        }
-                                    )
-                                    
-                                    # 显示横向条形图
-                                    if len(display_df) > 0:
-                                        import plotly.express as px
-                                        fig = px.bar(
-                                            display_df,
-                                            x='重要性',
-                                            y='中文名',
-                                            orientation='h',
-                                            title=f'{model_name} - 因子重要性排名',
-                                            color='重要性',
-                                            color_continuous_scale='Blues',
-                                            text='重要性'
-                                        )
-                                        fig.update_layout(
-                                            height=max(300, len(display_df) * 30),
-                                            xaxis_title="重要性",
-                                            yaxis_title="因子",
-                                            yaxis={'categoryorder': 'total ascending'}
-                                        )
-                                        fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
-                                        st.plotly_chart(fig, use_container_width=True)
-                                        
-                                        if len(display_df) < 5:
-                                            st.warning("⚠️ 只有少数因子有重要性值，建议检查数据源或特征工程逻辑")
-                                    else:
-                                        st.info("所有因子的重要性都为0，请检查训练数据是否有效")
-                                    
-                                    # 缓存状态提示
-                                    if result.get("from_cache", False):
-                                        st.info("💡 该结果来自缓存（权重和日期范围未变化）")
-                                    else:
-                                        st.success("✅ 该结果来自全新训练")
-                            else:
-                                st.info(f"{model_name}: 无特征重要性数据")
-                    #----------
-                    # ==================== SHAP值分析（按需加载）====================
-                    st.markdown("---")
-                    st.markdown("#### 🔬 SHAP值分析（深度解释）")
-                    st.caption('SHAP值可以显示每个因子是"正向"还是"负向"影响预测结果')
-                    
-                    # 检查是否有可用的ML模型（检查 feature_importance 是否存在）
-                    has_ml_model = any(
-                        r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] 
-                        and r.get("feature_importance") is not None 
-                        for r in completed_results
-                    )
-                    
-                    if has_ml_model:
-                        # ⭐ 使用 form 防止页面刷新
-                        with st.form(key="shap_form"):
-                            col_shap_btn, col_shap_info = st.columns([1, 3])
-                            with col_shap_btn:
-                                compute_shap_btn = st.form_submit_button("🔬 计算SHAP值（最近50场）", type="secondary", use_container_width=True)
-                            with col_shap_info:
-                                st.caption("⏱️ 预计耗时 2-5 分钟，仅计算最近50场比赛的SHAP值")
-                            
-                            if compute_shap_btn:
-                                # ⭐ 使用 st.spinner
-                                with st.spinner("正在计算SHAP值，请稍候..."):
-                                    # 选择第一个可用的ML模型
-                                    ml_result = None
-                                    for r in completed_results:
-                                        if r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] and r.get("model") is not None:
-                                            ml_result = r
-                                            break
-                                    
-                                    if ml_result:
-                                        shap_results = compute_shap_values(
-                                            ml_result.get("model"),
-                                            ml_result.get("feature_names", []),
-                                            model_type=ml_result.get("模型"),
-                                            sample_limit=50
-                                        )
-                                        
-                                        if shap_results:
-                                            st.success("✅ SHAP值计算完成！")
-                                            
-                                            # 显示SHAP条形图
-                                            st.markdown("**SHAP值汇总（因子方向性）**")
-                                            
-                                            shap_df = shap_results.get("summary_df")
-                                            if shap_df is not None and not shap_df.empty:
-                                                import plotly.express as px
-                                                
-                                                # 只显示有影响的因子
-                                                shap_df_display = shap_df[shap_df['平均SHAP值'] > 0.001]
-                                                
-                                                if not shap_df_display.empty:
-                                                    color_map = {
-                                                        '正向 ↑': 'green',
-                                                        '负向 ↓': 'red',
-                                                        '中性 →': 'gray'
-                                                    }
-                                                    
-                                                    fig = px.bar(
-                                                        shap_df_display,
-                                                        x='平均SHAP值',
-                                                        y='特征',
-                                                        orientation='h',
-                                                        title='SHAP值 - 因子影响方向',
-                                                        color='影响方向',
-                                                        color_discrete_map=color_map,
-                                                        text='平均SHAP值'
-                                                    )
-                                                    fig.update_layout(
-                                                        height=max(300, len(shap_df_display) * 30),
-                                                        xaxis_title="平均SHAP值",
-                                                        yaxis_title="因子"
-                                                    )
-                                                    fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
-                                                    st.plotly_chart(fig, use_container_width=True)
-                                                    
-                                                    # 显示表格
-                                                    st.dataframe(
-                                                        shap_df_display,
-                                                        use_container_width=True,
-                                                        hide_index=True,
-                                                        column_config={
-                                                            "特征": st.column_config.TextColumn("因子", width="medium"),
-                                                            "平均SHAP值": st.column_config.NumberColumn("SHAP值", format="%.4f"),
-                                                            "影响方向": st.column_config.TextColumn("方向", width="small"),
-                                                            "说明": st.column_config.TextColumn("说明", width="medium"),
-                                                        }
-                                                    )
-                                                else:
-                                                    st.info("所有因子的SHAP值都很小，可能模型未学到有效特征")
-                                            else:
-                                                st.warning("SHAP数据为空")
-                                        else:
-                                            st.warning("SHAP值计算失败，请检查模型是否支持")
-                                    else:
-                                        st.warning("未找到可用的ML模型")
-                    else:
-                        st.info("请先运行LightGBM或XGBoost回测，然后才能计算SHAP值")
-                    
-                    # ==================== 相关性热力图 ====================
-                    st.markdown("---")
-                    st.markdown('#### 🔥 因子相关性热力图')
-                    st.caption('显示18个因子之间的相关关系（帮助识别冗余因子）')
-                    
-                    if st.button("📊 计算相关性热力图", use_container_width=True):
-                        with st.spinner("正在计算相关性..."):
-                            # 从回测数据中提取特征
-                            # 这里需要从训练数据中提取，由于回测函数没有返回训练数据
-                            # 我们直接从数据库获取最近的数据计算相关性
-                            correlation_fig = compute_correlation_heatmap(
-                                start_date.strftime("%Y-%m-%d"),
-                                end_date.strftime("%Y-%m-%d")
-                            )
-                            if correlation_fig:
-                                st.plotly_chart(correlation_fig, use_container_width=True)
-                            else:
-                                st.warning("无法计算相关性，请确保有足够的数据")
-                    
-                    # ==================== 免责声明 ====================
-                    st.markdown("---")
-                    st.caption("📌 回測結果基於歷史數據，不構成投資建議")
-                else:
-                    st.warning("所有回测均被取消或失败")
-            else:
-                st.warning("請至少選擇一個模型")
 # ==================== 管理员面板 ====================
 def render_admin_panel():
     """管理员面板 - 数据编辑器 + 回测 + 用户管理 + 马名映射"""
@@ -2417,8 +1778,7 @@ def render_admin_panel():
     
     # ==================== Tab2: 回测 ====================
     with tab2:
-        # ⭐ 替换为管理员专用回测（带特征重要性）
-        render_admin_backtest()
+        render_backtest_page(show_title=False)
     
     # ==================== Tab3: 用户管理 ====================
     with tab3:
@@ -2426,8 +1786,8 @@ def render_admin_panel():
     #-----------------
     # ==================== Tab4: 评分设置 ====================
     with tab4:
-        st.markdown('### ⚙️ 评分权重设置')
-        st.caption('设置各级评分因子的权重（所有权重总和必须为100%）')
+        st.markdown("### ⚙️ 评分权重设置")
+        st.caption("设置各级评分因子的权重（所有权重总和必须为100%）")
         
         # 获取当前语言
         lang = st.session_state.get("lang", "zh")
@@ -2494,7 +1854,7 @@ def render_admin_panel():
         #-----------
         # ==================== 一级因子设置 ====================
         if lang == "zh":
-            st.markdown('#### 📊 一级因子权重')
+            st.markdown("#### 📊 一级因子权重")
             st.caption("调整各主要维度的权重，总和必须为100%")
         else:
             st.markdown("#### 📊 Level 1 Weights")
@@ -6181,7 +5541,7 @@ def render_smart_betting(show_title: bool = True):
     #------------
     # 显示表格
     st.markdown(f"#### 🏇 {t()['race_table_title'].format(race_no=selected_race.get('race_no'))}")
-    #-----------
+
     race_data = []
     for runner in sorted_runners:
         horse_name = runner.get('horse_name', '')
@@ -6207,14 +5567,9 @@ def render_smart_betting(show_title: bool = True):
         overall_score = runner.get('overall_score', 0)
         overall_score_display = f"{overall_score:.0f}" if overall_score else "0"
         
-        # ⭐ 修复：安全获取赔率并转换为浮点数
+        # 计算 EV (期望值)
         win_prob_val = runner.get('win_probability', 0)
-        odds_raw = runner.get('odds_win')
-        try:
-            odds_win_val = float(odds_raw) if odds_raw and odds_raw != '' else 0
-        except (ValueError, TypeError):
-            odds_win_val = 0
-        
+        odds_win_val = runner.get('odds_win', 0)
         if win_prob_val > 0 and odds_win_val > 0:
             ev = win_prob_val * odds_win_val - 1
             ev_display = f"{ev:+.2f}"
@@ -7549,7 +6904,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
             predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
             predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
-            #-------
+            
             # 获取实际结果
             runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
             actual_1st = None
@@ -7804,18 +7159,11 @@ def calculate_basic_score_fast(past_performances_v2: List[Dict], target_distance
 def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict], horse_cache: Dict) -> Tuple[pd.DataFrame, pd.Series]:
     """
     准备截止到 cutoff_date 之前的训练数据
-    使用与评分系统相同的28个特征
-    
-    参数：
-        cutoff_date: 截止日期（只使用该日期之前的数据）
-        all_performances: 所有历史比赛数据
-        horse_cache: 马匹往绩缓存
-    
-    返回：
-        (X_features, y_labels)
+    只关注前 N 名马（N 从 get_ml_config 读取，默认4名）
+    返回: (X_features, y_labels)
     """
+    # 获取 ML 配置
     from scoring_engine import get_ml_config
-    
     ml_config = get_ml_config()
     recent_games = ml_config.get("recent_games", 30)
     top_n_horses = ml_config.get("top_n_horses", 4)
@@ -7841,9 +7189,9 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
         # 获取赛事信息
         first_runner = runners_data[0]
         race_date = first_runner.get('race_date')
-        venue = first_runner.get('venue', 'ST')
         distance = first_runner.get('distance', 1200)
         
+        # ✅ 只关注前 N 名马（默认4名）
         # 按名次排序，只取前 N 名
         sorted_runners = sorted(runners_data, key=lambda x: x.get('position', 99))
         top_runners = sorted_runners[:top_n_horses]
@@ -7853,150 +7201,63 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             if not horse_id:
                 continue
             
-            # 获取该马匹在 race_date 之前的往绩
+            # 获取该马匹在 race_date 之前的往绩（限制最近 N 场）
             all_past = horse_cache.get(horse_id, [])
             past_before = [p for p in all_past if p.get('race_date', '') < race_date]
+            
+            # ✅ 只取最近 recent_games 场
             past_before = past_before[:recent_games]
             
-            # ========== 构建完整的28个特征 ==========
+            # 构建特征
             features = {}
             
-            # ---- 1. 基础往绩因子 ----
-            total = len(past_before)
-            if total > 0:
-                recent_3 = past_before[:3] if total >= 3 else past_before
+            # 1. 基础统计特征
+            if past_before:
+                total = len(past_before)
                 recent_5 = past_before[:5] if total >= 5 else past_before
                 recent_10 = past_before[:10] if total >= 10 else past_before
                 
-                # 近3场胜率
-                wins_3 = sum(1 for p in recent_3 if p.get('position') == 1)
-                features['win_rate_3'] = wins_3 / len(recent_3) if recent_3 else 0
+                # 胜率、入Q率、入T率（最近10场）
+                wins = sum(1 for p in recent_10 if p.get('position') == 1)
+                places = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2])
+                shows = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2, 3])
                 
-                # 近10场胜率
-                wins_10 = sum(1 for p in recent_10 if p.get('position') == 1)
-                features['win_rate_10'] = wins_10 / len(recent_10) if recent_10 else 0
-                
-                # 近10场入Q率（前2名）
-                places_10 = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2])
-                features['place_rate_10'] = places_10 / len(recent_10) if recent_10 else 0
-                
-                # 近10场入T率（前3名）
-                shows_10 = sum(1 for p in recent_10 if p.get('position', 0) in [1, 2, 3])
-                features['show_rate_10'] = shows_10 / len(recent_10) if recent_10 else 0
+                features['win_rate'] = wins / len(recent_10) if recent_10 else 0
+                features['place_rate'] = places / len(recent_10) if recent_10 else 0
+                features['show_rate'] = shows / len(recent_10) if recent_10 else 0
                 
                 # 近5场胜率
                 wins_5 = sum(1 for p in recent_5 if p.get('position') == 1)
                 features['win_rate_5'] = wins_5 / len(recent_5) if recent_5 else 0
                 
-                # 兼容旧版字段
-                features['win_rate'] = features['win_rate_10']
-                features['place_rate'] = features['place_rate_10']
-                features['show_rate'] = features['show_rate_10']
-                
-                # 路程评分（同程表现）
-                distance_scores = []
-                for p in recent_10:
-                    p_distance = p.get('distance', 0)
-                    if p_distance == 0:
-                        continue
-                    diff = abs(p_distance - distance)
-                    weight = 1.0 - min(0.7, diff / 400)
-                    pos = p.get('position', 0)
-                    if pos == 1:
-                        score = 100
-                    elif pos == 2:
-                        score = 85
-                    elif pos == 3:
-                        score = 70
-                    elif pos <= 5:
-                        score = 55
-                    elif pos <= 8:
-                        score = 40
-                    else:
-                        score = 25
-                    distance_scores.append(score * weight)
-                features['distance_rating'] = sum(distance_scores) / len(distance_scores) if distance_scores else 50
-                
-                # 名次趋势（最近5场）
-                positions = [p.get('position', 0) for p in recent_5 if p.get('position', 0) > 0]
-                if len(positions) >= 2:
-                    if len(positions) >= 3:
-                        trend = (positions[-3] - positions[-1])
-                    else:
-                        trend = positions[-2] - positions[-1]
-                    features['trend'] = max(-10, min(10, trend)) / 10
-                else:
-                    features['trend'] = 0
+                # 近3场胜率
+                recent_3 = past_before[:3] if total >= 3 else past_before
+                wins_3 = sum(1 for p in recent_3 if p.get('position') == 1)
+                features['win_rate_3'] = wins_3 / len(recent_3) if recent_3 else 0
                 
                 # 平均负磅
-                weights = [p.get('actual_weight', 0) for p in past_before if p.get('actual_weight', 0) > 0]
+                weights = [p.get('actual_weight', 0) for p in past_before if p.get('actual_weight')]
                 features['avg_weight'] = sum(weights) / len(weights) if weights else 0
             else:
-                # 无数据，填充默认值
-                features['win_rate_3'] = 0
-                features['win_rate_10'] = 0
-                features['place_rate_10'] = 0
-                features['show_rate_10'] = 0
-                features['win_rate_5'] = 0
                 features['win_rate'] = 0
                 features['place_rate'] = 0
                 features['show_rate'] = 0
-                features['distance_rating'] = 50
-                features['trend'] = 0
+                features['win_rate_5'] = 0
+                features['win_rate_3'] = 0
                 features['avg_weight'] = 0
             
-            # ---- 2. 场次因素 ----
-            # 同场地胜率
-            venue_perf = [p for p in past_before if p.get('venue') == venue]
-            if venue_perf:
-                venue_wins = sum(1 for p in venue_perf[:5] if p.get('position') == 1)
-                features['same_course'] = venue_wins / len(venue_perf[:5]) if venue_perf[:5] else 0
-            else:
-                features['same_course'] = 0
-            
-            # 同路程胜率
-            dist_perf = [p for p in past_before if p.get('distance') == distance]
-            if dist_perf:
-                dist_wins = sum(1 for p in dist_perf[:5] if p.get('position') == 1)
-                features['same_distance'] = dist_wins / len(dist_perf[:5]) if dist_perf[:5] else 0
-            else:
-                features['same_distance'] = 0
-            
-            # 档位优势（数字越小越有利）
-            draw_val = r.get('draw', 0)
-            if draw_val and draw_val > 0:
-                features['draw'] = 100 - (draw_val - 1) * (80 / 13)
-            else:
-                features['draw'] = 50
-            
-            # 负磅
-            features['weight'] = r.get('actual_weight', 0) or 0
-            
-            # ---- 3. 赔率因素 ----
-            odds_val = r.get('odds', 0)
-            if odds_val and odds_val > 0:
-                features['odds'] = min(100, max(0, 100 * (1 - (odds_val - 1) / 98)))
-            else:
-                features['odds'] = 50
-            
-            features['odds_trend'] = 50
-            features['ev'] = 0
-            
-            # ---- 4. 状态因素（使用默认值） ----
-            features['age'] = 50
-            features['weight_change'] = 50
-            features['incident'] = 50
-            features['burst'] = 50
-            
-            # ---- 5. 骑师和练马师 ----
-            features['jockey'] = 0
-            features['trainer'] = 0
-            features['jockey_win_rate'] = 0
-            
-            # ---- 6. 额外字段 ----
-            features['data_used_count'] = len(past_before)
+            # 2. 本场特征
+            features['draw'] = r.get('draw', 0) or 0
             features['actual_weight'] = r.get('actual_weight', 0) or 0
+            features['odds'] = r.get('odds', 10) or 10
             features['distance'] = distance
+            
+            # 3. 骑师特征（如果有骑师胜率数据）
+            jockey = r.get('jockey', '')
+            features['jockey_win_rate'] = 0  # 可扩展：从 jockeys 表获取
+            
+            # ✅ 记录数据使用量
+            features['data_used_count'] = len(past_before)
             
             X_list.append(features)
             
@@ -8011,7 +7272,6 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
     y_series = pd.Series(y_list)
     
     return X_df, y_series
-
 
 #--------------------
 def train_model_on_data(X_train: pd.DataFrame, y_train: pd.Series, model_type: str):
@@ -8112,17 +7372,22 @@ _model_cache = {}
 
 def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     """
-    获取或训练模型（带缓存）
+    获取或训练模型（带缓存，统一缓存键格式）
+    参数：
+        X_train: 训练特征
+        y_train: 训练标签
+        model_type: 'lightgbm', 'xgboost', 'ensemble'
+        cache_key: 唯一缓存键（已包含模型类型）
+    返回：
+        训练好的模型
     """
     global _model_cache
     
-    # ⭐ 强制在缓存键末尾添加模型类型，确保绝对不同
-   # cache_key = f"{cache_key}_{model_type}"
-    
-    # ⭐ 如果是集成模型，使用独立的缓存键格式
+    # ✅ 如果是集成模型，使用统一的缓存键格式
     if model_type == 'ensemble':
-        lgb_key = f"{cache_key}_lightgbm"
-        xgb_key = f"{cache_key}_xgboost"
+        # ✅ 关键修复：与单独训练使用相同的缓存键格式
+        lgb_key = f"lightgbm_{cache_key}"      # ← 与单独训练一致
+        xgb_key = f"xgboost_{cache_key}"       # ← 与单独训练一致
         
         lgb_model = get_or_train_model(X_train, y_train, 'lightgbm', lgb_key)
         xgb_model = get_or_train_model(X_train, y_train, 'xgboost', xgb_key)
@@ -8131,15 +7396,13 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     
     # 检查缓存
     if cache_key in _model_cache:
-        print(f"✅ 缓存命中: {cache_key}")
         return _model_cache[cache_key]
     
-    # 训练新模型
-    print(f"🔄 训练新模型: {cache_key}")
-    
+    # ✅ 从配置获取参数
     from scoring_engine import get_ml_config
     config = get_ml_config()
     
+    # 训练新模型
     if model_type == 'lightgbm' and LGB_AVAILABLE:
         model = lgb.LGBMClassifier(
             n_estimators=config.get("lgb_n_estimators", 50),
@@ -8152,7 +7415,6 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
             colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
         )
         model.fit(X_train, y_train)
-        
     elif model_type == 'xgboost' and XGB_AVAILABLE:
         model = xgb.XGBClassifier(
             n_estimators=config.get("xgb_n_estimators", 80),
@@ -8166,75 +7428,46 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
             colsample_bytree=config.get("xgb_colsample_bytree", 0.8)
         )
         model.fit(X_train, y_train)
-        
     else:
         return None
     
-    if model is not None:
-        _model_cache[cache_key] = model
-        print(f"✅ 模型已缓存: {cache_key}")
-    
+    # 存入缓存
+    _model_cache[cache_key] = model
     return model
 
 
 def clear_model_cache():
-    """清空所有模型缓存（管理员强制刷新时使用）"""
+    """清空模型缓存（用于测试或强制重新训练）"""
     global _model_cache
     _model_cache = {}
-    print("🗑️ 模型缓存已清空")
-
-
-def get_model_cache_keys():
-    """获取当前缓存的所有键（用于调试）"""
-    return list(_model_cache.keys())
 #----------
-def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refresh: bool = False) -> Dict:
+def run_ml_backtest(start_date: str, end_date: str, model_type: str) -> Dict:
     """
     ML 模型回测（时间滑窗版本 + 修正指标）
     - 使用截止日期前的数据训练模型
     - 预测该日期当天的赛事
     - 滚动进行，确保无数据泄露
     - 包含训练进度提示
-    
-    参数：
-        start_date: 开始日期
-        end_date: 结束日期
-        model_type: 'lightgbm' | 'xgboost' | 'ensemble'
-        force_refresh: 是否强制刷新（忽略缓存）
-    
-    返回：
-        回测结果字典
     """
-    # ⭐ 如果是强制刷新，清空缓存
-    if force_refresh:
-        from scoring_engine import clear_model_cache
-        clear_model_cache()
-        print(f"🗑️ 已清空所有模型缓存")
-    
     result = {
-        "模型": "LightGBM" if model_type == "lightgbm" else "XGBoost" if model_type == "xgboost" else "集成模型",
-        "测试场次": 0,
-        "预测正确": 0,
-        "前三名命中匹数": 0,
-        "前三名命中场次": 0,
-        "前三名全中场次": 0,
-        "前三名顺序正确场次": 0,
-        "独赢正确率": 0,
-        "前三名命中匹数率": 0,
-        "前三名命中场次率": 0,
-        "前三名全中率": 0,
-        "前三名顺序正确率": 0,
-        "总投入": 0,
-        "总回报": 0,
-        "ROI": 0,
-        "debug_details": [],
-        "cancelled": False,
-        # ⭐ 新增：模型和特征重要性
-        "model": None,
-        "feature_importance": None,
-        "feature_names": None,
-        "from_cache": False,
-    }
+    "模型": "LightGBM" if model_type == "lightgbm" else "XGBoost" if model_type == "xgboost" else "集成模型",
+    "测试场次": 0,
+    "预测正确": 0,
+    "前三名命中匹数": 0,
+    "前三名命中场次": 0,
+    "前三名全中场次": 0,
+    "前三名顺序正确场次": 0,
+    "独赢正确率": 0,
+    "前三名命中匹数率": 0,
+    "前三名命中场次率": 0,
+    "前三名全中率": 0,
+    "前三名顺序正确率": 0,
+    "总投入": 0,
+    "总回报": 0,
+    "ROI": 0,
+    "debug_details": [],
+    "cancelled": False,
+}
     
     try:
         # 1. 批量获取所有数据
@@ -8247,7 +7480,6 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         
         # 2. 构建马匹往绩缓存
         horse_cache = build_horse_performances_cache(all_performances)
-        print(f"📊 构建马匹缓存: {len(horse_cache)} 匹马")
         
         # 3. 获取按日期排序的赛事列表
         races = get_races_from_performances(all_performances)
@@ -8256,7 +7488,10 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         if result["测试场次"] == 0:
             return result
         
-        # 4. 按日期分组赛事（便于按天训练）
+        # 4. 获取马名缓存
+        
+        
+        # 5. 按日期分组赛事（便于按天训练）
         races_by_date = {}
         for race in races:
             date = race['race_date']
@@ -8264,10 +7499,10 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 races_by_date[date] = []
             races_by_date[date].append(race)
         
-        # 5. 按日期排序
+        # 6. 按日期排序
         sorted_dates = sorted(races_by_date.keys())
         
-        # 6. 初始化统计变量
+        # 7. 初始化统计变量
         correct_predictions = 0
         total_top3_hits = 0
         total_top3_hit_races = 0
@@ -8276,15 +7511,11 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         total_stake = 0
         total_return = 0
         
-        # 7. 创建进度条
+        # 8. 创建进度条
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # ⭐ 用于保存最后一个模型（供特征重要性分析）
-        last_model = None
-        last_feature_names = None
-        
-        # 8. 时间滑窗回测
+        # 9. 时间滑窗回测
         for idx, current_date in enumerate(sorted_dates):
             # 取消检查点
             if st.session_state.get("stop_backtest", False):
@@ -8295,7 +7526,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             status_text.text(f"正在處理日期: {current_date} ({idx+1}/{len(sorted_dates)})")
             progress_bar.progress((idx + 1) / len(sorted_dates))
             
-            # 8.1 使用 current_date 之前的所有数据训练模型
+            # 9.1 使用 current_date 之前的所有数据训练模型
+            # ⭐ 训练进度提示
             status_text.text(f"正在訓練模型: {current_date} (準備訓練數據中...)")
             
             train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
@@ -8304,53 +7536,30 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 status_text.text(f"⚠️ {current_date} 訓練數據不足 ({len(train_X) if train_X is not None else 0} 條)，跳過")
                 continue
             
-            # 显示训练数据量
+            # ⭐ 显示训练数据量
             status_text.text(f"正在訓練模型: {current_date} (訓練數據: {len(train_X)} 條, 模型: {result['模型']})")
-            
-            # ⭐ 生成缓存键（包含模型类型）
+            #-----------
+            # ✅ 新代码（使用缓存，包含模型类型）
             import hashlib
             
-            # 获取权重哈希
-            from scoring_engine import get_current_weights_hash
-            weight_hash = get_current_weights_hash()
+            # 生成数据哈希（不含模型类型）
+            data_hash = hashlib.md5(str(train_X.values).encode()).hexdigest()[:16]
             
-            # ⭐ 明确包含模型类型，防止LightGBM和XGBoost共用缓存
-            cache_key = f"{model_type}_{start_date}_{end_date}_{weight_hash}"
-            print(f"🔑 缓存键: {cache_key}")
+            # ✅ 根据模型类型生成不同的缓存键
+            if model_type == 'lightgbm':
+                cache_key = f"lightgbm_{data_hash}"
+            elif model_type == 'xgboost':
+                cache_key = f"xgboost_{data_hash}"
+            else:  # ensemble
+                cache_key = data_hash  # 集成模型使用数据哈希，内部会添加前缀
             
-            # 尝试从缓存获取模型
-            from scoring_engine import get_cached_model, set_cached_model
-            cached_model = get_cached_model(cache_key)
-            
-            if cached_model is not None and not force_refresh:
-                # ✅ 缓存命中
-                model = cached_model
-                print(f"✅ 使用缓存模型: {cache_key}")
-                result["from_cache"] = True
-            else:
-                # ⭐ 训练新模型
-                print(f"🔄 训练新模型: {cache_key}")
-                model = get_or_train_model(train_X, train_y, model_type, cache_key)
-                # 保存到缓存
-                if model is not None:
-                    set_cached_model(cache_key, model)
-                    result["from_cache"] = False
-            
-            # ⭐ 保存模型信息（用于后续特征重要性提取）
-            if model is not None:
-                last_model = model
-                if train_X is not None and hasattr(train_X, 'columns'):
-                    last_feature_names = list(train_X.columns)
-                    print(f"✅ 保存特征名称: {len(last_feature_names)} 个因子")
-                else:
-                    last_feature_names = []
-                    print(f"⚠️ train_X 无效，特征名称为空")
+            model = get_or_train_model(train_X, train_y, model_type, cache_key)
 
             if model is None:
                 status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
                 continue
-            
-            # 8.2 预测 current_date 当天的所有赛事
+            #-----------
+            # 9.2 预测 current_date 当天的所有赛事
             for race in races_by_date[current_date]:
                 # 内层循环取消检查点
                 if st.session_state.get("stop_backtest", False):
@@ -8370,23 +7579,25 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 if not runners_data:
                     continue
                 
-                # ⭐ 用赔率排序（赛前数据），取前N名
+                # ✅ 步骤1：先使用评分系统对马匹排序（或直接按名次排序）
+                # 获取该场赛事的实际结果（用于后续对比）
+                runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
+                
+                # ✅ 步骤2：只对前 N 名马进行预测（默认4名）
                 from scoring_engine import get_ml_config
                 ml_config = get_ml_config()
                 top_n_horses = ml_config.get("top_n_horses", 4)
                 recent_games = ml_config.get("recent_games", 30)
                 
-                # 按赔率排序（赔率低的排在前面，表示更被看好）
-                runners_sorted_by_odds = sorted(
-                    runners_data,
-                    key=lambda x: x.get('odds', 999) if x.get('odds', 999) and x.get('odds', 999) > 0 else 999
-                )
-                target_runners = runners_sorted_by_odds[:top_n_horses]
+                # 获取实际前 N 名（用于对比）
+                actual_top_n = runners_data_sorted[:top_n_horses]
+                actual_top_n_ids = [r.get('horse_id') for r in actual_top_n if r.get('horse_id')]
                 
                 # 构建特征并预测
                 runners = []
                 
-                for r in target_runners:
+                # ✅ 只对实际前 N 名的马匹进行预测
+                for r in actual_top_n:
                     horse_id = r.get('horse_id')
                     if not horse_id:
                         continue
@@ -8396,7 +7607,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     # 获取该马匹在 race_date 之前的往绩（限制最近 N 场）
                     all_past = horse_cache.get(horse_id, [])
                     past_before = [p for p in all_past if p.get('race_date', '') < race_date]
-                    past_before = past_before[:recent_games]
+                    past_before = past_before[:recent_games]  # ✅ 只取最近 N 场
                     
                     # 构建特征
                     features = {}
@@ -8455,13 +7666,13 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         "finishing_position": r.get('position'),
                         "win_probability": prob,
                         "odds_win": odds,
-                        "actual_position": r.get('position')
+                        "actual_position": r.get('position')  # 保存实际名次
                     })
                 
                 if not runners:
                     continue
                 
-                # 按预测概率排序
+                # ✅ 步骤3：按预测概率排序
                 runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
                 
                 # 获取预测前三名
@@ -8470,16 +7681,15 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
                 predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
                 
-                # 获取实际结果（用于验证）
-                runners_data_sorted_actual = sorted(runners_data, key=lambda x: x.get('position', 99))
+                # 获取实际结果（所有马匹的实际名次）
                 actual_1st = None
                 actual_2nd = None
                 actual_3rd = None
                 actual_top3_set = set()
                 
-                for rr in runners_data_sorted_actual:
-                    pos = rr.get('position')
-                    horse_name = rr.get('horse_name', '')
+                for r in runners_data_sorted:
+                    pos = r.get('position')
+                    horse_name = r.get('horse_name', '')
                     if pos == 1:
                         actual_1st = horse_name
                         actual_top3_set.add(horse_name)
@@ -8489,8 +7699,44 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     elif pos == 3:
                         actual_3rd = horse_name
                         actual_top3_set.add(horse_name)
+                                                
+                # 按胜率排序
+                runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
                 
-                # 统计命中情况
+                # ★ 获取预测前三名
+                predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
+                predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
+                predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
+                predicted_top3_names = [predicted_1st, predicted_2nd, predicted_3rd]
+                predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}  # ⭐ 必须添加这行
+                # 获取实际结果（按名次排序）
+                runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
+                actual_1st = None
+                actual_2nd = None
+                actual_3rd = None
+                actual_top3_names = []
+                actual_top3_names = []  # ⭐ 必须定义这个列表
+                actual_top3_set = set()  # ⭐ 必须定义这个集合
+                for r in runners_data_sorted:
+                    pos = r.get('position')
+                    horse_id = r.get('horse_id')
+                    horse_name = r.get('horse_name', '')
+                    if pos == 1:
+                        actual_1st = horse_name
+                        actual_top3_names.append(horse_name)
+                        actual_top3_set.add(horse_name)  # ⭐ 添加这一行
+                    elif pos == 2:
+                        actual_2nd = horse_name
+                        actual_top3_names.append(horse_name)
+                        actual_top3_set.add(horse_name)  # ⭐ 添加这一行
+                    elif pos == 3:
+                        actual_3rd = horse_name
+                        actual_top3_names.append(horse_name)
+                        actual_top3_set.add(horse_name)  # ⭐ 添加这一行
+                
+                # ★ 统计命中情况
+                # 统计各指标
+                # 统计各指标
                 is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
                 
                 hits = len(predicted_top3_set & actual_top3_set)
@@ -8538,15 +7784,16 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 if is_correct:
                     correct_predictions += 1
         
-        # 9. 清理进度条
+        # 10. 清理进度条
         progress_bar.empty()
         status_text.empty()
-        
-        # 10. 计算最终结果
+        #-------
+        # 11. 计算最终结果
         if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["独赢正确率"] = correct_predictions / result["测试场次"] * 100
             
+            # ✅ 修复1：匹数率分母改为预测马匹数（top_n_horses）
             from scoring_engine import get_ml_config
             ml_config = get_ml_config()
             top_n = ml_config.get("top_n_horses", 4)
@@ -8554,6 +7801,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             result["前三名命中匹数"] = total_top3_hits
             result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * top_n) * 100
             
+            # ✅ 修复2：场次率确保不超过100%
             result["前三名命中场次"] = total_top3_hit_races
             result["前三名命中场次率"] = min(100, total_top3_hit_races / result["测试场次"] * 100)
             
@@ -8563,51 +7811,11 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             result["前三名顺序正确场次"] = total_tce_correct
             result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
             
+            # ✅ 修复3：总投入和ROI
             result["总投入"] = total_stake
             result["总回报"] = total_return
             if total_stake > 0:
                 result["ROI"] = (total_return - total_stake) / total_stake * 100
-        
-        # ⭐ 保存模型和特征重要性（供管理员查看）
-        if last_model is not None:
-            result["model"] = last_model
-            result["feature_names"] = last_feature_names
-            
-            # 提取特征重要性
-            try:
-                if model_type == 'ensemble':
-                    # 集成模型：分别提取两个模型的重要性，然后平均
-                    lgb_imp = None
-                    xgb_imp = None
-                    if last_model.get('lightgbm') is not None:
-                        lgb_imp = last_model['lightgbm'].feature_importances_
-                    if last_model.get('xgboost') is not None:
-                        xgb_imp = last_model['xgboost'].feature_importances_
-                    
-                    if lgb_imp is not None and xgb_imp is not None:
-                        importance = (lgb_imp + xgb_imp) / 2
-                    elif lgb_imp is not None:
-                        importance = lgb_imp
-                    elif xgb_imp is not None:
-                        importance = xgb_imp
-                    else:
-                        importance = None
-                else:
-                    # 单模型
-                    importance = last_model.feature_importances_
-                
-                if importance is not None and last_feature_names:
-                    import pandas as pd
-                    imp_df = pd.DataFrame({
-                        '特征': last_feature_names,
-                        '重要性': importance
-                    }).sort_values('重要性', ascending=False)
-                    
-                    result["feature_importance"] = imp_df
-                    print(f"✅ 特征重要性已提取: {len(imp_df)} 个因子")
-            except Exception as e:
-                print(f"⚠️ 提取特征重要性失败: {e}")
-                result["feature_importance"] = None
         
         if not result["cancelled"]:
             st.success(f"✅ {result['模型']} 回測完成: {result['测试场次']} 場, 獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%")
