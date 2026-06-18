@@ -8757,8 +8757,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     for name, weight in sorted(weights.items(), key=lambda x: x[1], reverse=True):
                         if weight > 0.1:  # 只显示有贡献的因子
                             # 中文映射
-                        name_cn = feature_name_map.get(name, name)
-                        print(f"   {name_cn:<18} {weight:>8.2f}%")
+                            name_cn = feature_name_map.get(name, name)
+                            print(f"   {name_cn:<18} {weight:>8.2f}%")
                     
                     print("="*70)
                     print(f"✅ 总权重: {sum(weights.values()):.2f}%")
