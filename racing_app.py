@@ -7953,7 +7953,7 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 venue_wins = sum(1 for p in venue_perf[:5] if p.get('position') == 1)
                 features['same_course'] = venue_wins / len(venue_perf[:5]) if venue_perf[:5] else 0
             else:
-                features['same_course'] = 0
+                features['same_course'] = 50
             
             # 同路程胜率
             dist_perf = [p for p in past_before if p.get('distance') == distance]
@@ -7961,7 +7961,7 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 dist_wins = sum(1 for p in dist_perf[:5] if p.get('position') == 1)
                 features['same_distance'] = dist_wins / len(dist_perf[:5]) if dist_perf[:5] else 0
             else:
-                features['same_distance'] = 0
+                features['same_distance'] = 50
             
             # 档位优势（数字越小越有利）
             draw_val = r.get('draw', 0)
@@ -7981,7 +7981,7 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 features['odds'] = 50
             
             features['odds_trend'] = 50
-            features['ev'] = 0
+            features['ev'] = 50
             
             # ---- 4. 状态因素（使用默认值） ----
             features['age'] = 50
@@ -7990,9 +7990,9 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             features['burst'] = 50
             
             # ---- 5. 骑师和练马师 ----
-            features['jockey'] = 0
-            features['trainer'] = 0
-            features['jockey_win_rate'] = 0
+            features['jockey'] = 50
+            features['trainer'] = 50
+            features['jockey_win_rate'] = 50
             #------------
             # ---- 6. 额外字段 ----
             features['data_used_count'] = len(past_before)
@@ -8567,7 +8567,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         venue_wins = sum(1 for p in venue_perf[:5] if p.get('position') == 1)
                         features['same_course'] = venue_wins / len(venue_perf[:5]) if venue_perf[:5] else 0
                     else:
-                        features['same_course'] = 0
+                        features['same_course'] = 50
                     
                     # 同路程胜率
                     dist_perf = [p for p in past_before if p.get('distance') == distance]
@@ -8575,7 +8575,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         dist_wins = sum(1 for p in dist_perf[:5] if p.get('position') == 1)
                         features['same_distance'] = dist_wins / len(dist_perf[:5]) if dist_perf[:5] else 0
                     else:
-                        features['same_distance'] = 0
+                        features['same_distance'] = 50
                     
                     # 档位优势（数字越小越有利）
                     draw_val = r.get('draw', 0)
@@ -8595,7 +8595,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         features['odds'] = 50
                     
                     features['odds_trend'] = 50
-                    features['ev'] = 0
+                    features['ev'] = 50
                     
                     # ---- 4. 状态因素（使用默认值，避免依赖外部数据） ----
                     features['age'] = 50
@@ -8604,9 +8604,9 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     features['burst'] = 50
                     
                     # ---- 5. 骑师和练马师 ----
-                    features['jockey'] = 0
-                    features['trainer'] = 0
-                    features['jockey_win_rate'] = 0
+                    features['jockey'] = 50
+                    features['trainer'] = 50
+                    features['jockey_win_rate'] = 50
                     #--------
                     # ---- 6. 额外字段 ----
                     features['data_used_count'] = len(past_before)
