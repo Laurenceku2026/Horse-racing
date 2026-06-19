@@ -8670,13 +8670,21 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         sorted_dates = sorted(races_by_date.keys())
         
         # 6. 初始化统计变量
-        correct_predictions = 0
-        total_top3_hits = 0
-        total_top3_hit_races = 0
-        total_tri_correct = 0
-        total_tce_correct = 0
-        total_stake = 0
-        total_return = 0
+        correct_predictions = 0           # 独赢正确场次
+        total_top3_hits = 0               # 前三名累计命中匹数
+        total_top3_hit_races = 0          # 前三名至少命中1匹的场次
+        total_tri_correct = 0             # 前三名全中场次（不限顺序）
+        total_tce_correct = 0             # 前三名顺序正确场次
+        total_stake = 0                   # 独赢总投入（保留兼容）
+        total_return = 0                  # 独赢总回报（保留兼容）
+        
+        # 独赢投注统计（新增）
+        total_win_stake = 0
+        total_win_return = 0
+        
+        # 位置投注统计（新增）
+        total_position_stake = 0
+        total_position_return = 0
         
         # 7. 创建进度条
         progress_bar = st.progress(0)
