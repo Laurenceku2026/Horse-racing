@@ -8476,7 +8476,8 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     
     from scoring_engine import get_ml_config
     config = get_ml_config()
-    #---------
+    
+    # ==================== LightGBM 训练 ====================
     if model_type == 'lightgbm' and LGB_AVAILABLE:
         # 检查标签是否是三分类
         unique_labels = sorted(y_train.unique())
@@ -8493,8 +8494,8 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
                 verbose=-1,
                 subsample=config.get("lgb_subsample", 0.7),
                 colsample_bytree=config.get("lgb_colsample_bytree", 0.7),
-                objective='multiclass',  # ⭐ 三分类
-                num_class=3               # ⭐ 3个类别
+                objective='multiclass',
+                num_class=3
             )
         else:
             # 二分类
@@ -8508,8 +8509,10 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
                 subsample=config.get("lgb_subsample", 0.7),
                 colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
             )
-    model.fit(X_train, y_train)
-    #--------    
+        
+        model.fit(X_train, y_train)
+    
+    # ==================== XGBoost 训练 ====================
     elif model_type == 'xgboost' and XGB_AVAILABLE:
         # 检查标签是否是三分类
         unique_labels = sorted(y_train.unique())
@@ -8523,12 +8526,12 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
                 learning_rate=config.get("xgb_learning_rate", 0.06),
                 random_state=42,
                 use_label_encoder=False,
-                eval_metric='mlogloss',  # ⭐ 多分类损失函数
+                eval_metric='mlogloss',
                 verbosity=0,
                 subsample=config.get("xgb_subsample", 0.7),
                 colsample_bytree=config.get("xgb_colsample_bytree", 0.7),
-                objective='multi:softprob',  # ⭐ 多分类
-                num_class=3                   # ⭐ 3个类别
+                objective='multi:softprob',
+                num_class=3
             )
         else:
             # 二分类
@@ -8543,11 +8546,14 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
                 subsample=config.get("xgb_subsample", 0.7),
                 colsample_bytree=config.get("xgb_colsample_bytree", 0.7)
             )
-    model.fit(X_train, y_train)
         
+        model.fit(X_train, y_train)
+    
+    # ==================== 其他情况 ====================
     else:
         return None
     
+    # 保存到缓存
     if model is not None:
         _model_cache[cache_key] = model
         print(f"✅ 模型已缓存: {cache_key}")
