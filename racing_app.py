@@ -8932,7 +8932,18 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     features['actual_weight'] = r.get('actual_weight', 0) or 0
                     features['distance'] = distance
                     #-------
-                    # 预测 - 获取所有类别概率
+                    # ---- 获取赔率（确保 odds 始终有值） ----
+                    odds_raw = r.get('odds')
+                    try:
+                        odds = float(odds_raw) if odds_raw and odds_raw != '' else 0
+                    except (ValueError, TypeError):
+                        odds = 0
+                    
+                    # 如果赔率为0或无效，使用默认值10.0
+                    if odds <= 0:
+                        odds = 10.0
+                    
+                    # ---- 预测 - 获取所有类别概率 ----
                     try:
                         all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
                         
@@ -8958,14 +8969,15 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         prob_medium = 0.33
                         all_probs = [0.33, 0.33, 0.34]
                     
+                    # ---- 添加到 runners 列表 ----
                     runners.append({
                         "horse_id": horse_id,
                         "horse_name": horse_name,
                         "horse_no": r.get('horse_no'),
                         "finishing_position": r.get('position'),
-                        "good_group_prob": good_group_prob,      # 好马组概率（用于排序）
-                        "prob_bad": all_probs[0] if len(all_probs) >= 3 else 0,
-                        "prob_medium": all_probs[1] if len(all_probs) >= 3 else 0,
+                        "good_group_prob": good_group_prob,
+                        "prob_bad": prob_bad,
+                        "prob_medium": prob_medium,
                         "prob_good": good_group_prob,
                         "odds_win": odds,
                         "actual_position": r.get('position')
