@@ -6791,9 +6791,42 @@ def render_smart_betting(show_title: bool = True):
                             if i < len(scores):
                                 runner['overall_score'] = scores[i].get('overall_score', 0)
                                 runner['win_probability'] = scores[i].get('win_probability', 0) / 100
+                    #-------------
                     else:
+                        # ==================== ML 模型预测（三分类版本） ====================
                         model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
-                        ml_probs = get_model_predictions(race.get('race_id'), runners_data, model_type)
+                        
+                        # 获取或训练模型（使用缓存）
+                        from scoring_engine import get_cached_model, set_cached_model
+                        cache_key = f"{model_type}_smart_betting"
+                        model = get_cached_model(cache_key)
+                        
+                        if model is None:
+                            # 训练模型（使用历史数据）
+                            draws = get_historical_draws_for_training(limit=300)
+                            if model_type == 'lightgbm':
+                                model = train_lightgbm_model(draws)
+                            elif model_type == 'xgboost':
+                                model = train_xgboost_model(draws)
+                            elif model_type == 'ensemble':
+                                lgb_model = train_lightgbm_model(draws)
+                                xgb_model = train_xgboost_model(draws)
+                                model = {'lightgbm': lgb_model, 'xgboost': xgb_model}
+                            if model is not None:
+                                set_cached_model(cache_key, model)
+                        
+                        if model is not None:
+                            ml_probs = get_model_predictions(
+                                race.get('race_date'),
+                                race.get('venue'),
+                                race.get('race_no'),
+                                runners_data,
+                                model_type,
+                                model
+                            )
+                        else:
+                            ml_probs = [0.34] * len(runners_data)
+                        
                         for i, runner in enumerate(runners_data):
                             if i < len(ml_probs):
                                 runner['win_probability'] = ml_probs[i]
@@ -6929,9 +6962,42 @@ def render_smart_betting(show_title: bool = True):
                     for i, r in enumerate(race_runners):
                         if i < len(scores):
                             r['win_probability'] = scores[i].get('win_probability', 0) / 100
+                #---------------
                 else:
+                    # ==================== ML 模型预测（三分类版本） ====================
                     model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
-                    ml_probs = get_model_predictions(race.get('race_id'), race_runners, model_type)
+                    
+                    # 获取或训练模型（使用缓存）
+                    from scoring_engine import get_cached_model, set_cached_model
+                    cache_key = f"{model_type}_smart_betting"
+                    model = get_cached_model(cache_key)
+                    
+                    if model is None:
+                        # 训练模型（使用历史数据）
+                        draws = get_historical_draws_for_training(limit=300)
+                        if model_type == 'lightgbm':
+                            model = train_lightgbm_model(draws)
+                        elif model_type == 'xgboost':
+                            model = train_xgboost_model(draws)
+                        elif model_type == 'ensemble':
+                            lgb_model = train_lightgbm_model(draws)
+                            xgb_model = train_xgboost_model(draws)
+                            model = {'lightgbm': lgb_model, 'xgboost': xgb_model}
+                        if model is not None:
+                            set_cached_model(cache_key, model)
+                    
+                    if model is not None:
+                        ml_probs = get_model_predictions(
+                            race.get('race_date'),
+                            race.get('venue'),
+                            race.get('race_no'),
+                            race_runners,
+                            model_type,
+                            model
+                        )
+                    else:
+                        ml_probs = [0.34] * len(race_runners)
+                    
                     for i, r in enumerate(race_runners):
                         if i < len(ml_probs):
                             r['win_probability'] = ml_probs[i]
@@ -7007,9 +7073,42 @@ def render_smart_betting(show_title: bool = True):
                     for i, r in enumerate(race_runners):
                         if i < len(scores):
                             r['win_probability'] = scores[i].get('win_probability', 0) / 100
+                #------------
                 else:
+                    # ==================== ML 模型预测（三分类版本） ====================
                     model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
-                    ml_probs = get_model_predictions(race.get('race_id'), race_runners, model_type)
+                    
+                    # 获取或训练模型（使用缓存）
+                    from scoring_engine import get_cached_model, set_cached_model
+                    cache_key = f"{model_type}_smart_betting"
+                    model = get_cached_model(cache_key)
+                    
+                    if model is None:
+                        # 训练模型（使用历史数据）
+                        draws = get_historical_draws_for_training(limit=300)
+                        if model_type == 'lightgbm':
+                            model = train_lightgbm_model(draws)
+                        elif model_type == 'xgboost':
+                            model = train_xgboost_model(draws)
+                        elif model_type == 'ensemble':
+                            lgb_model = train_lightgbm_model(draws)
+                            xgb_model = train_xgboost_model(draws)
+                            model = {'lightgbm': lgb_model, 'xgboost': xgb_model}
+                        if model is not None:
+                            set_cached_model(cache_key, model)
+                    
+                    if model is not None:
+                        ml_probs = get_model_predictions(
+                            race.get('race_date'),
+                            race.get('venue'),
+                            race.get('race_no'),
+                            race_runners,
+                            model_type,
+                            model
+                        )
+                    else:
+                        ml_probs = [0.34] * len(race_runners)
+                    
                     for i, r in enumerate(race_runners):
                         if i < len(ml_probs):
                             r['win_probability'] = ml_probs[i]
