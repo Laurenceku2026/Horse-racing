@@ -8478,71 +8478,71 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     config = get_ml_config()
     #---------
     if model_type == 'lightgbm' and LGB_AVAILABLE:
-    # 检查标签是否是三分类
-    unique_labels = sorted(y_train.unique())
-    num_classes = len(unique_labels)
-    
-    if num_classes >= 3:
-        # 三分类
-        model = lgb.LGBMClassifier(
-            n_estimators=config.get("lgb_n_estimators", 50),
-            max_depth=config.get("lgb_max_depth", 4),
-            learning_rate=config.get("lgb_learning_rate", 0.1),
-            num_leaves=config.get("lgb_num_leaves", 16),
-            random_state=42,
-            verbose=-1,
-            subsample=config.get("lgb_subsample", 0.7),
-            colsample_bytree=config.get("lgb_colsample_bytree", 0.7),
-            objective='multiclass',  # ⭐ 三分类
-            num_class=3               # ⭐ 3个类别
-        )
-    else:
-        # 二分类
-        model = lgb.LGBMClassifier(
-            n_estimators=config.get("lgb_n_estimators", 50),
-            max_depth=config.get("lgb_max_depth", 4),
-            learning_rate=config.get("lgb_learning_rate", 0.1),
-            num_leaves=config.get("lgb_num_leaves", 16),
-            random_state=42,
-            verbose=-1,
-            subsample=config.get("lgb_subsample", 0.7),
-            colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
-        )
+        # 检查标签是否是三分类
+        unique_labels = sorted(y_train.unique())
+        num_classes = len(unique_labels)
+        
+        if num_classes >= 3:
+            # 三分类
+            model = lgb.LGBMClassifier(
+                n_estimators=config.get("lgb_n_estimators", 50),
+                max_depth=config.get("lgb_max_depth", 4),
+                learning_rate=config.get("lgb_learning_rate", 0.1),
+                num_leaves=config.get("lgb_num_leaves", 16),
+                random_state=42,
+                verbose=-1,
+                subsample=config.get("lgb_subsample", 0.7),
+                colsample_bytree=config.get("lgb_colsample_bytree", 0.7),
+                objective='multiclass',  # ⭐ 三分类
+                num_class=3               # ⭐ 3个类别
+            )
+        else:
+            # 二分类
+            model = lgb.LGBMClassifier(
+                n_estimators=config.get("lgb_n_estimators", 50),
+                max_depth=config.get("lgb_max_depth", 4),
+                learning_rate=config.get("lgb_learning_rate", 0.1),
+                num_leaves=config.get("lgb_num_leaves", 16),
+                random_state=42,
+                verbose=-1,
+                subsample=config.get("lgb_subsample", 0.7),
+                colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
+            )
     model.fit(X_train, y_train)
     #--------    
     elif model_type == 'xgboost' and XGB_AVAILABLE:
-    # 检查标签是否是三分类
-    unique_labels = sorted(y_train.unique())
-    num_classes = len(unique_labels)
-    
-    if num_classes >= 3:
-        # 三分类
-        model = xgb.XGBClassifier(
-            n_estimators=config.get("xgb_n_estimators", 120),
-            max_depth=config.get("xgb_max_depth", 4),
-            learning_rate=config.get("xgb_learning_rate", 0.06),
-            random_state=42,
-            use_label_encoder=False,
-            eval_metric='mlogloss',  # ⭐ 多分类损失函数
-            verbosity=0,
-            subsample=config.get("xgb_subsample", 0.7),
-            colsample_bytree=config.get("xgb_colsample_bytree", 0.7),
-            objective='multi:softprob',  # ⭐ 多分类
-            num_class=3                   # ⭐ 3个类别
-        )
-    else:
-        # 二分类
-        model = xgb.XGBClassifier(
-            n_estimators=config.get("xgb_n_estimators", 120),
-            max_depth=config.get("xgb_max_depth", 4),
-            learning_rate=config.get("xgb_learning_rate", 0.06),
-            random_state=42,
-            use_label_encoder=False,
-            eval_metric='logloss',
-            verbosity=0,
-            subsample=config.get("xgb_subsample", 0.7),
-            colsample_bytree=config.get("xgb_colsample_bytree", 0.7)
-        )
+        # 检查标签是否是三分类
+        unique_labels = sorted(y_train.unique())
+        num_classes = len(unique_labels)
+        
+        if num_classes >= 3:
+            # 三分类
+            model = xgb.XGBClassifier(
+                n_estimators=config.get("xgb_n_estimators", 120),
+                max_depth=config.get("xgb_max_depth", 4),
+                learning_rate=config.get("xgb_learning_rate", 0.06),
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric='mlogloss',  # ⭐ 多分类损失函数
+                verbosity=0,
+                subsample=config.get("xgb_subsample", 0.7),
+                colsample_bytree=config.get("xgb_colsample_bytree", 0.7),
+                objective='multi:softprob',  # ⭐ 多分类
+                num_class=3                   # ⭐ 3个类别
+            )
+        else:
+            # 二分类
+            model = xgb.XGBClassifier(
+                n_estimators=config.get("xgb_n_estimators", 120),
+                max_depth=config.get("xgb_max_depth", 4),
+                learning_rate=config.get("xgb_learning_rate", 0.06),
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric='logloss',
+                verbosity=0,
+                subsample=config.get("xgb_subsample", 0.7),
+                colsample_bytree=config.get("xgb_colsample_bytree", 0.7)
+            )
     model.fit(X_train, y_train)
         
     else:
