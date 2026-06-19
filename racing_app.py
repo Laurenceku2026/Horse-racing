@@ -6253,23 +6253,6 @@ def render_smart_betting(show_title: bool = True):
         except Exception as e:
             st.error(f"获取历史赛事失败: {e}")
             return
-    
-    st.markdown(f"**📋 共 {len(races)} 場賽事**")
-    st.markdown("---")
-    
-    if not dates:
-        st.info(t()["no_races"])
-        return
-    
-    date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
-    
-    selected_date_str = st.selectbox("選擇賽日", date_options, key="selected_race_date")
-    selected_date = selected_date_str.split(" ")[0]
-    
-    # ✅ 修改：使用 valid_races 而不是原始 races
-    races = [r for r in valid_races if r.get('race_date') == selected_date]
-    st.markdown(f"**📋 共 {len(races)} 場賽事**")
-    st.markdown("---")
     #-------------
     # ==================== 单场分析 ====================
     st.markdown(f"### {t()['single_race_analysis']}")
