@@ -8933,10 +8933,30 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     features['distance'] = distance
                     #-------
                     # 预测 - 获取所有类别概率
-                    all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
-                    
-                    # 提取好马组概率（用于排序和显示）
-                    good_group_prob = all_probs[2] if len(all_probs) >= 3 else all_probs[1] if len(all_probs) >= 2 else 0.5
+                    try:
+                        all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
+                        
+                        # 安全检查：确保 all_probs 是列表且有足够长度
+                        if not isinstance(all_probs, list):
+                            all_probs = [0.33, 0.33, 0.34]
+                        if len(all_probs) < 3:
+                            # 如果是二分类，补充为三分类格式
+                            if len(all_probs) == 2:
+                                all_probs = [all_probs[0], all_probs[1], all_probs[1]]
+                            else:
+                                all_probs = [0.33, 0.33, 0.34]
+                        
+                        # 提取好马组概率（类别2）
+                        good_group_prob = all_probs[2] if len(all_probs) >= 3 else 0.34
+                        prob_bad = all_probs[0] if len(all_probs) >= 3 else 0.33
+                        prob_medium = all_probs[1] if len(all_probs) >= 3 else 0.33
+                        
+                    except Exception as e:
+                        print(f"预测异常: {e}")
+                        good_group_prob = 0.34
+                        prob_bad = 0.33
+                        prob_medium = 0.33
+                        all_probs = [0.33, 0.33, 0.34]
                     
                     runners.append({
                         "horse_id": horse_id,
