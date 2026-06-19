@@ -7426,16 +7426,18 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             get_horse_weight_comfort_range_from_cache
         )
         #-----------
-        # 6. 初始化统计变量
-        correct_predictions = 0           # 独赢正确场次
-        total_top3_hits = 0               # 前三名累计命中匹数
-        total_top3_hit_races = 0          # 前三名至少命中1匹的场次
-        total_tri_correct = 0             # 前三名全中场次（不限顺序）
-        total_tce_correct = 0             # 前三名顺序正确场次
+        # ==================== 6. 初始化统计变量 ====================
+        correct_predictions = 0
+        total_top3_hits = 0
+        total_top3_hit_races = 0
+        total_tri_correct = 0
+        total_tce_correct = 0
         
         # 独赢投注统计
         total_stake = 0
         total_return = 0
+        total_win_stake = 0
+        total_win_return = 0
         
         # 位置投注统计
         total_position_stake = 0
@@ -7713,9 +7715,9 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             if total_position_stake > 0:
                 result["位置ROI"] = (total_position_return - total_position_stake) / total_position_stake * 100
             
-            # 综合ROI
-            result["综合总投入"] = total_win_stake + total_position_stake
-            result["综合总回报"] = total_win_return + total_position_return
+            # 综合ROI（独赢 + 位置）
+            result["综合总投入"] = total_stake + total_position_stake
+            result["综合总回报"] = total_return + total_position_return
             if result["综合总投入"] > 0:
                 result["综合ROI"] = (result["综合总回报"] - result["综合总投入"]) / result["综合总投入"] * 100
         
