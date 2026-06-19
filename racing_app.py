@@ -7423,16 +7423,19 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             calculate_overall_score,
             get_horse_weight_comfort_range_from_cache
         )
+        #-----------
+        # 6. 初始化统计变量
+        correct_predictions = 0           # 独赢正确场次
+        total_top3_hits = 0               # 前三名累计命中匹数
+        total_top3_hit_races = 0          # 前三名至少命中1匹的场次
+        total_tri_correct = 0             # 前三名全中场次（不限顺序）
+        total_tce_correct = 0             # 前三名顺序正确场次
         
-        # ==================== 6. 初始化统计变量 ====================
-        correct_predictions = 0
-        total_top3_hits = 0
-        total_top3_hit_races = 0
-        total_tri_correct = 0
-        total_tce_correct = 0
-        total_stake = 0
-        total_return = 0
-        # ⭐ 新增：位置投注统计
+        # 独赢投注统计
+        total_win_stake = 0
+        total_win_return = 0
+        
+        # 位置投注统计
         total_position_stake = 0
         total_position_return = 0
         
@@ -7676,12 +7679,14 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         # ==================== 9. 清理进度条 ====================
         progress_bar.empty()
         status_text.empty()
-        
-        # ==================== 10. 计算最终结果 ====================
+        #--------------
+        # 10. 计算最终结果
         if result["测试场次"] > 0 and not result["cancelled"]:
+            # 独赢指标
             result["预测正确"] = correct_predictions
             result["独赢正确率"] = correct_predictions / result["测试场次"] * 100
             
+            # 前三名指标
             result["前三名命中匹数"] = total_top3_hits
             result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * 3) * 100
             
@@ -7695,26 +7700,22 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
             
             # 独赢ROI
-            result["总投入"] = total_stake
-            result["总回报"] = total_return
-            if total_stake > 0:
-                result["ROI"] = (total_return - total_stake) / total_stake * 100
+            result["总投入"] = total_win_stake
+            result["总回报"] = total_win_return
+            if total_win_stake > 0:
+                result["ROI"] = (total_win_return - total_win_stake) / total_win_stake * 100
             
-            # ⭐ 新增：位置投注ROI
+            # 位置ROI
             result["位置总投入"] = total_position_stake
             result["位置总回报"] = total_position_return
             if total_position_stake > 0:
                 result["位置ROI"] = (total_position_return - total_position_stake) / total_position_stake * 100
-            else:
-                result["位置ROI"] = 0
             
-            # ⭐ 新增：综合ROI（独赢 + 位置）
-            result["综合总投入"] = total_stake + total_position_stake
-            result["综合总回报"] = total_return + total_position_return
+            # 综合ROI
+            result["综合总投入"] = total_win_stake + total_position_stake
+            result["综合总回报"] = total_win_return + total_position_return
             if result["综合总投入"] > 0:
                 result["综合ROI"] = (result["综合总回报"] - result["综合总投入"]) / result["综合总投入"] * 100
-            else:
-                result["综合ROI"] = 0
         
         if not result["cancelled"]:
             success_msg = f"✅ 回測完成: {result['测试场次']} 場, 獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%" if lang == "zh" else f"✅ Backtest complete: {result['测试场次']} races, Win Rate {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%"
@@ -8382,56 +8383,73 @@ def train_model_on_data(X_train: pd.DataFrame, y_train: pd.Series, model_type: s
     return None
 
 #-----------
-def predict_with_model(model, features: Dict, model_type: str) -> float:
+def predict_with_model(model, features: Dict, model_type: str, return_all_probs: bool = False):
     """
     使用训练好的模型预测
-    支持二分类和三分类
+    
+    参数：
+        model: 训练好的模型
+        features: 特征字典
+        model_type: 'lightgbm', 'xgboost', 'ensemble'
+        return_all_probs: 是否返回所有类别概率（三分类时使用）
+    
+    返回：
+        如果 return_all_probs=False: 返回获胜概率 (0-1)
+        如果 return_all_probs=True: 返回 [差马组概率, 中马组概率, 好马组概率]
     """
     if model is None:
+        if return_all_probs:
+            return [0.33, 0.33, 0.34]
         return 0.5
     
     try:
         X_pred = pd.DataFrame([features]).fillna(0)
         
         if model_type == 'ensemble':
-            probs = []
+            # 集成模型：分别预测，然后平均
+            all_probs = []
             for sub_model in [model.get('lightgbm'), model.get('xgboost')]:
                 if sub_model is not None:
                     try:
-                        # 检查模型是二分类还是三分类
-                        n_classes = sub_model.n_classes_ if hasattr(sub_model, 'n_classes_') else 2
-                        if n_classes >= 3:
-                            # 三分类：取类别2（好马组）的概率
-                            prob = sub_model.predict_proba(X_pred)[0][2]
-                        else:
-                            # 二分类：取正类概率
-                            prob = sub_model.predict_proba(X_pred)[0][1]
-                        probs.append(prob)
+                        prob = sub_model.predict_proba(X_pred)[0]
+                        all_probs.append(prob)
                     except Exception as e:
-                        print(f"子模型预测失败: {e}")
                         continue
             
-            if probs:
-                # 如果两个模型都可用，取平均
-                if len(probs) == 2:
-                    return (probs[0] + probs[1]) / 2
-                return probs[0]
-            return 0.5
+            if not all_probs:
+                if return_all_probs:
+                    return [0.33, 0.33, 0.34]
+                return 0.5
+            
+            # 平均所有子模型的概率
+            avg_probs = np.mean(all_probs, axis=0)
+            
+            if return_all_probs:
+                return avg_probs.tolist()
+            else:
+                # 如果是三分类，返回好马组概率
+                if len(avg_probs) >= 3:
+                    return avg_probs[2]  # 好马组
+                else:
+                    return avg_probs[1]  # 正类概率
         
         else:
             # 单模型
-            # 检查模型是二分类还是三分类
-            n_classes = model.n_classes_ if hasattr(model, 'n_classes_') else 2
+            probs = model.predict_proba(X_pred)[0]
             
-            if n_classes >= 3:
-                # 三分类：取类别2（好马组）的概率
-                return model.predict_proba(X_pred)[0][2]
+            if return_all_probs:
+                return probs.tolist()
             else:
-                # 二分类：取正类概率
-                return model.predict_proba(X_pred)[0][1]
+                # 如果是三分类，返回好马组概率
+                if len(probs) >= 3:
+                    return probs[2]  # 好马组（类别2）
+                else:
+                    return probs[1]  # 正类概率
                 
     except Exception as e:
         print(f"预测失败: {e}")
+        if return_all_probs:
+            return [0.33, 0.33, 0.34]
         return 0.5
 #-----------
 # ==================== ML 模型缓存 ====================
@@ -8913,38 +8931,44 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     features['data_used_count'] = len(past_before)
                     features['actual_weight'] = r.get('actual_weight', 0) or 0
                     features['distance'] = distance
+                    #-------
+                    # 预测 - 获取所有类别概率
+                    all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
                     
-                    # 预测
-                    prob = predict_with_model(model, features, model_type)
-                    
-                    odds_raw = r.get('odds')
-                    try:
-                        odds = float(odds_raw) if odds_raw else 10
-                    except (ValueError, TypeError):
-                        odds = 10
+                    # 提取好马组概率（用于排序和显示）
+                    good_group_prob = all_probs[2] if len(all_probs) >= 3 else all_probs[1] if len(all_probs) >= 2 else 0.5
                     
                     runners.append({
                         "horse_id": horse_id,
                         "horse_name": horse_name,
                         "horse_no": r.get('horse_no'),
                         "finishing_position": r.get('position'),
-                        "win_probability": prob,
+                        "good_group_prob": good_group_prob,      # 好马组概率（用于排序）
+                        "prob_bad": all_probs[0] if len(all_probs) >= 3 else 0,
+                        "prob_medium": all_probs[1] if len(all_probs) >= 3 else 0,
+                        "prob_good": good_group_prob,
                         "odds_win": odds,
                         "actual_position": r.get('position')
                     })
                 
                 if not runners:
                     continue
+                #-----------
+                # 按好马组概率排序（降序）
+                runners.sort(key=lambda x: x.get('good_group_prob', 0), reverse=True)
                 
-                # 按预测概率排序
-                runners.sort(key=lambda x: x.get('win_probability', 0), reverse=True)
-                
-                # 获取预测前三名
+                # 获取预测前三名（好马组概率最高的3匹）
                 predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
                 predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
                 predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
                 predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
                 
+                # 保存预测前三名的赔率（用于ROI计算）
+                predicted_top3_odds = []
+                for r in runners[:3]:
+                    odds = r.get('odds_win', 0)
+                    predicted_top3_odds.append(odds if odds > 0 else 3.0)
+                #-----------
                 # 获取实际结果（用于验证）
                 runners_data_sorted_actual = sorted(runners_data, key=lambda x: x.get('position', 99))
                 actual_1st = None
@@ -8964,34 +8988,67 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     elif pos == 3:
                         actual_3rd = horse_name
                         actual_top3_set.add(horse_name)
+                #------------
+                # ==================== 统计命中情况 ====================
+
+                # 1. 独赢正确率：预测第1名 = 实际第1名
+                is_correct_win = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
                 
-                # 统计命中情况
-                is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
-                
+                # 2. 前三名命中匹数：预测前3名 ∩ 实际前3名
                 hits = len(predicted_top3_set & actual_top3_set)
                 total_top3_hits += hits
                 if hits >= 1:
                     total_top3_hit_races += 1
                 
+                # 3. 前三名全中（不限顺序）：预测前3名集合 = 实际前3名集合
                 tri_correct = (predicted_top3_set == actual_top3_set) if len(predicted_top3_set) == 3 and len(actual_top3_set) == 3 else False
                 if tri_correct:
                     total_tri_correct += 1
                 
+                # 4. 前三名顺序正确：预测第1/2/3名 = 实际第1/2/3名
                 tce_correct = (predicted_1st == actual_1st and 
                                predicted_2nd == actual_2nd and 
                                predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
                 if tce_correct:
                     total_tce_correct += 1
+                #-------------
+                # ==================== ROI 计算 ====================
+
+                # 1. 独赢投注：每场投注100元在"预测冠军"上
+                total_win_stake += 100
                 
-                # ROI：每场都投注 100 元
-                total_stake += 100
-                if is_correct:
-                    odds = runners[0].get('odds_win', 3.0)
-                    try:
-                        odds = float(odds) if odds else 3.0
-                    except:
-                        odds = 3.0
-                    total_return += 100 * odds
+                # 获取实际冠军的赔率
+                actual_winner_odds = 0
+                for rr in runners_data:
+                    if rr.get('position') == 1:
+                        odds_raw = rr.get('odds')
+                        try:
+                            actual_winner_odds = float(odds_raw) if odds_raw and odds_raw != '' else 0
+                        except (ValueError, TypeError):
+                            actual_winner_odds = 0
+                        break
+                
+                # 如果预测正确，使用实际冠军赔率计算回报
+                if is_correct_win and actual_winner_odds > 0:
+                    total_win_return += 100 * actual_winner_odds
+                elif is_correct_win:
+                    # 没有赔率数据，使用默认值3.0
+                    total_win_return += 100 * 3.0
+                
+                # 2. 位置投注：每场对预测前3名各投注30元
+                position_stake_per_horse = 30
+                total_position_stake += position_stake_per_horse * 3  # 3匹马，每匹30元
+                
+                # 位置赔率：保守估计为独赢赔率的30%
+                for i, horse_name in enumerate([predicted_1st, predicted_2nd, predicted_3rd]):
+                    if horse_name and horse_name in actual_top3_set:
+                        # 该马跑入前3名，位置投注中奖
+                        odds = predicted_top3_odds[i] if i < len(predicted_top3_odds) else 3.0
+                        # 位置赔率约为独赢的30-40%，保守取35%
+                        place_odds = odds * 0.35
+                        if place_odds < 1.3:
+                            place_odds = 1.3  # 最低位置赔率
+                        total_position_return += position_stake_per_horse * place_odds
                 
                 # 记录调试详情
                 result["debug_details"].append({
@@ -9269,7 +9326,8 @@ def render_backtest_page(show_title: bool = True):
                             display_columns = ["模型", "测试场次", "独赢正确率", 
                                               "前三名命中匹数率", "前三名命中场次率",
                                               "前三名全中率", "前三名顺序正确率",
-                                              "总投入", "总回报", "ROI"]
+                                              "总投入", "总回报", "ROI",
+                                              "位置ROI", "综合ROI"]  # ⭐ 新增]
                             available_cols = [c for c in display_columns if c in compare_df.columns]
                             compare_df = compare_df[available_cols]
                             
