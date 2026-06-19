@@ -1945,7 +1945,7 @@ def render_admin_backtest():
                                       "前三名命中匹数率", "前三名命中场次率",
                                       "前三名全中率", "前三名顺序正确率",
                                       "总投入", "总回报", "ROI",
-                                      "位置ROI"]  # 新增
+                                      "位置ROI", "综合ROI"]
                     available_cols = [c for c in display_columns if c in compare_df.columns]
                     compare_df = compare_df[available_cols]
                     #-----
@@ -1973,7 +1973,8 @@ def render_admin_backtest():
                             "总投入": st.column_config.NumberColumn("投入", width="small", format="$%.0f"),
                             "总回报": st.column_config.NumberColumn("回报", width="small", format="$%.0f"),
                             "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
-                            "位置ROI": st.column_config.NumberColumn("位置ROI", width="small", format="%+.1f%%"),  # 新增
+                            "位置ROI": st.column_config.NumberColumn("位置ROI", width="small", format="%+.1f%%"),
+                            "综合ROI": st.column_config.NumberColumn("综合ROI", width="small", format="%+.1f%%"),
                         }
                     )
                     #-----------
@@ -7676,7 +7677,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                     "Trifecta": "✅" if tce_correct else "❌",
                     "Odds": f"{actual_winner_odds:.1f}" if actual_winner_odds > 0 else "-"  # ⭐ 新增
                 })
-            
+            #-----------
             if is_correct:
                 correct_predictions += 1
         
@@ -8741,18 +8742,6 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             #----------
             train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
             
-            # ⭐ 调试：显示训练特征数量和非零值统计
-            if train_X is not None:
-                st.write(f"🔍 训练特征数量: {len(train_X.columns)}")
-                st.write("🔍 各特征非零值统计:")
-                for col in train_X.columns:
-                    non_zero = (train_X[col] != 0).sum()
-                    pct = non_zero / len(train_X) * 100
-                    if pct > 0:
-                        st.write(f"   ✅ {col}: {non_zero}/{len(train_X)} ({pct:.1f}%)")
-                    else:
-                        st.write(f"   ❌ {col}: 全部为 0")
-            
             if train_X is None or len(train_X) < 50:
                 status_text.text(f"⚠️ {current_date} 訓練數據不足 ({len(train_X) if train_X is not None else 0} 條)，跳過")
                 continue
@@ -9558,7 +9547,7 @@ def render_backtest_page(show_title: bool = True):
                                               "位置ROI", "综合ROI"]  # ⭐ 新增]
                             available_cols = [c for c in display_columns if c in compare_df.columns]
                             compare_df = compare_df[available_cols]
-                            
+                            #------
                             st.dataframe(
                                 compare_df.style.format({
                                     '独赢正确率': '{:.1f}%',
