@@ -18,9 +18,9 @@ import streamlit as st  # ← 新增
 # 全局 ML 配置缓存
 _ml_config_cache = {
     # 数据配置
-    "recent_games": 30,
+    "recent_games": 60,           # 30 → 60（增加训练数据量）
     "top_n_horses": 4,
-    "min_races_for_train": 100,
+    "min_races_for_train": 80,    # 100 → 80（放宽阈值）
     # LightGBM 参数
     "lgb_n_estimators": 50,
     "lgb_max_depth": 4,
@@ -29,11 +29,11 @@ _ml_config_cache = {
     "lgb_subsample": 0.7,
     "lgb_colsample_bytree": 0.7,
     # XGBoost 参数
-    "xgb_n_estimators": 80,
-    "xgb_max_depth": 6,
-    "xgb_learning_rate": 0.08,
-    "xgb_subsample": 0.8,
-    "xgb_colsample_bytree": 0.8,
+    "xgb_n_estimators": 120,      # 80 → 120
+    "xgb_max_depth": 4,           # 6 → 4
+    "xgb_learning_rate": 0.06,    # 0.08 → 0.06
+    "xgb_subsample": 0.7,         # 0.8 → 0.7
+    "xgb_colsample_bytree": 0.7,  # 0.8 → 0.7
 }
 
 def get_ml_config() -> Dict:
@@ -69,25 +69,25 @@ def update_ml_config(new_config: Dict) -> None:
     """
     global _ml_config_cache
     _ml_config_cache.update(new_config)
-
+#---------------
 def reset_ml_config() -> None:
     """重置 ML 配置为默认值"""
     global _ml_config_cache
     _ml_config_cache = {
-        "recent_games": 30,
+        "recent_games": 60,
         "top_n_horses": 4,
-        "min_races_for_train": 100,
+        "min_races_for_train": 80,
         "lgb_n_estimators": 50,
         "lgb_max_depth": 4,
         "lgb_learning_rate": 0.1,
         "lgb_num_leaves": 16,
         "lgb_subsample": 0.7,
         "lgb_colsample_bytree": 0.7,
-        "xgb_n_estimators": 80,
-        "xgb_max_depth": 6,
-        "xgb_learning_rate": 0.08,
-        "xgb_subsample": 0.8,
-        "xgb_colsample_bytree": 0.8,
+        "xgb_n_estimators": 120,
+        "xgb_max_depth": 4,
+        "xgb_learning_rate": 0.06,
+        "xgb_subsample": 0.7,
+        "xgb_colsample_bytree": 0.7,
     }
 
 
