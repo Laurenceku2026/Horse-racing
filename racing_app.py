@@ -9109,7 +9109,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     "实际第1名": actual_1st or "-",
                     "实际第2名": actual_2nd or "-",
                     "实际第3名": actual_3rd or "-",
-                    "独赢正确": "✅" if is_correct else "❌",
+                    "独赢正确": "✅" if is_correct_win else "❌",
                     "前3名命中匹数": hits,
                     "前3名全中": "✅" if tri_correct else "❌",
                     "前3名顺序正确": "✅" if tce_correct else "❌"
