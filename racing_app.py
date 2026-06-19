@@ -6147,44 +6147,115 @@ def render_smart_betting(show_title: bool = True):
     t1 = time.time()
     perf_log["选择赛日"] = t1 - t0
     
+    # ⭐ 新增：日期模式选择
+    date_mode = st.radio(
+        "选择日期模式",
+        options=["未来赛事", "历史赛事（测试用）"],
+        index=0,
+        horizontal=True,
+        key="date_mode_select"
+    )
+    
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         refresh_schedule_btn = st.button(t()["refresh_schedule"], use_container_width=True)
     
-    # ✅ 修改：刷新赛程时调用新的 API 获取函数
     if refresh_schedule_btn:
         if not consume_free_trial(st.session_state.user_id):
             st.warning(t()["free_trial_used"])
         else:
             with st.spinner(t()["syncing_schedule"]):
-                # 直接从 API 获取最新赛程
                 api_races = get_upcoming_races_from_api()
                 if api_races:
-                    # 同步到数据库
                     sync_races_to_db(api_races)
                     st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
-                    # 清除缓存，强制刷新
                     st.cache_data.clear()
                     st.rerun()
                 else:
                     st.warning(t()["no_races"])
-    #-----------------
-    upcoming_races = get_cached_upcoming_races()
     
-    if not upcoming_races:
-        st.info(t()["no_races"])
-        return
+    # ==================== 根据模式获取赛事列表 ====================
+    if date_mode == "未来赛事":
+        # 原有逻辑：获取未来14天赛事
+        upcoming_races = get_cached_upcoming_races()
+        if not upcoming_races:
+            st.info(t()["no_races"])
+            return
+        
+        valid_races = [r for r in upcoming_races if r.get('race_no', 0) > 0]
+        if not valid_races:
+            st.warning("暂无详细赛事数据（排位表尚未公布）。请点击「刷新赛程」同步最新数据。")
+            valid_races = upcoming_races
+        
+        dates = sorted(set([r.get('race_date') for r in valid_races if r.get('race_date')]))
+        
+        if not dates:
+            st.info("暂无赛事")
+            return
+        
+        date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
+        
+        selected_date_str = st.selectbox("選擇賽日", date_options, key="selected_race_date")
+        selected_date = selected_date_str.split(" ")[0]
+        
+        races = [r for r in valid_races if r.get('race_date') == selected_date]
     
-    # ✅ 修改：过滤掉 race_no = 0 的占位记录（只显示有详细场次的赛事）
-    # 但保留有详细场次的赛事（race_no > 0）
-    valid_races = [r for r in upcoming_races if r.get('race_no', 0) > 0]
+    else:
+        # ⭐ 新增：历史赛事模式
+        st.info("📅 选择历史日期进行测试（数据来自 past_performances_v2 表）")
+        
+        # 从 past_performances_v2 获取所有历史赛日
+        try:
+            headers = get_supabase_headers(use_secret=True)
+            url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date,venue,race_no,distance&limit=50000"
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                perf_data = response.json()
+                # 提取唯一赛事
+                unique_races = {}
+                for p in perf_data:
+                    key = f"{p['race_date']}_{p['venue']}_{p['race_no']}"
+                    if key not in unique_races:
+                        unique_races[key] = {
+                            'race_date': p.get('race_date'),
+                            'venue': p.get('venue', 'ST'),
+                            'race_no': p.get('race_no', 0),
+                            'distance': p.get('distance', 1200)
+                        }
+                
+                # 按日期降序排列（最近的在前）
+                historical_races = list(unique_races.values())
+                historical_races.sort(key=lambda x: x.get('race_date', ''), reverse=True)
+                
+                # 只取最近60天（避免列表太长）
+                historical_races = historical_races[:60]
+                
+                if not historical_races:
+                    st.warning("暂无历史赛事数据")
+                    return
+                
+                # 按日期分组显示
+                dates = sorted(set([r.get('race_date') for r in historical_races if r.get('race_date')]), reverse=True)
+                date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
+                
+                selected_date_str = st.selectbox("選擇歷史賽日", date_options, key="selected_history_date")
+                selected_date = selected_date_str.split(" ")[0]
+                
+                races = [r for r in historical_races if r.get('race_date') == selected_date]
+                # 按场次排序
+                races.sort(key=lambda x: x.get('race_no', 0))
+                
+            else:
+                st.error("获取历史赛事失败")
+                return
+                
+        except Exception as e:
+            st.error(f"获取历史赛事失败: {e}")
+            return
     
-    if not valid_races:
-        st.warning("暂无详细赛事数据（排位表尚未公布）。请点击「刷新赛程」同步最新数据。")
-        # 仍然显示原始数据让用户看到有哪些赛日
-        valid_races = upcoming_races
-    
-    dates = sorted(set([r.get('race_date') for r in valid_races if r.get('race_date')]))
+    st.markdown(f"**📋 共 {len(races)} 場賽事**")
+    st.markdown("---")
     
     if not dates:
         st.info(t()["no_races"])
