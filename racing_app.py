@@ -8945,6 +8945,22 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     features['actual_weight'] = r.get('actual_weight', 0) or 0
                     features['distance'] = distance
                     #-------
+                    # ---- 7. 新马标记（与训练保持一致） ----
+                    # 判断是否为新马
+                    total_races = len(past_before)
+                    if total_races < 3:
+                        # 新马
+                        features['is_new_horse'] = 1
+                        # 根据 horse_id 判断类型
+                        if horse_id and 'PPG' in str(horse_id):
+                            features['new_horse_type'] = 2  # PPG
+                        elif horse_id and 'INT' in str(horse_id):
+                            features['new_horse_type'] = 3  # INT
+                        else:
+                            features['new_horse_type'] = 1  # PP
+                    else:
+                        features['is_new_horse'] = 0
+                        features['new_horse_type'] = 0
                     # ---- 获取赔率（确保 odds 始终有值） ----
                     odds_raw = r.get('odds')
                     try:
