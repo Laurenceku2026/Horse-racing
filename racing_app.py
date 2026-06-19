@@ -7434,8 +7434,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         total_tce_correct = 0             # 前三名顺序正确场次
         
         # 独赢投注统计
-        total_win_stake = 0
-        total_win_return = 0
+        total_stake = 0
+        total_return = 0
         
         # 位置投注统计
         total_position_stake = 0
@@ -8405,7 +8405,24 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
         return 0.5
     
     try:
+        # 构建 DataFrame
         X_pred = pd.DataFrame([features]).fillna(0)
+        
+        # ⭐ 关键修复：确保特征顺序与模型训练时一致
+        # LightGBM 和 XGBoost 都有 feature_names_in_ 属性
+        if hasattr(model, 'feature_names_in_'):
+            expected_features = list(model.feature_names_in_)
+            # 确保所有特征都存在
+            for col in expected_features:
+                if col not in X_pred.columns:
+                    X_pred[col] = 0
+            # 按正确顺序排列
+            X_pred = X_pred[expected_features]
+        else:
+            # 如果模型没有 feature_names_in_（集成模型或旧模型）
+            # 尝试从 features 字典的键构建
+            # 此时需要确保所有特征都存在
+            pass
         
         if model_type == 'ensemble':
             # 集成模型：分别预测，然后平均
@@ -8413,9 +8430,15 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
             for sub_model in [model.get('lightgbm'), model.get('xgboost')]:
                 if sub_model is not None:
                     try:
-                        prob = sub_model.predict_proba(X_pred)[0]
+                        # 对子模型也应用特征对齐
+                        if hasattr(sub_model, 'feature_names_in_'):
+                            sub_X = X_pred[list(sub_model.feature_names_in_)]
+                        else:
+                            sub_X = X_pred
+                        prob = sub_model.predict_proba(sub_X)[0]
                         all_probs.append(prob)
                     except Exception as e:
+                        print(f"子模型预测失败: {e}")
                         continue
             
             if not all_probs:
@@ -8429,7 +8452,6 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
             if return_all_probs:
                 return avg_probs.tolist()
             else:
-                # 如果是三分类，返回好马组概率
                 if len(avg_probs) >= 3:
                     return avg_probs[2]  # 好马组
                 else:
@@ -8442,7 +8464,6 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
             if return_all_probs:
                 return probs.tolist()
             else:
-                # 如果是三分类，返回好马组概率
                 if len(probs) >= 3:
                     return probs[2]  # 好马组（类别2）
                 else:
@@ -8450,6 +8471,9 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
                 
     except Exception as e:
         print(f"预测失败: {e}")
+        # 打印特征数量便于调试
+        print(f"  特征数量: {len(features)}")
+        print(f"  特征列表: {list(features.keys())}")
         if return_all_probs:
             return [0.33, 0.33, 0.34]
         return 0.5
@@ -8776,7 +8800,36 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             if model is None:
                 status_text.text(f"⚠️ {current_date} 模型訓練失敗，跳過")
                 continue
+            #-------------
+            # ============================================================
+            # 获取预测所需的辅助数据（骑师胜率、练马师评分、马匹出生年份）
+            # ============================================================
             
+            # 获取骑师胜率
+            jockey_win_rates = get_jockey_win_rates_from_db()
+            
+            # 练马师基础评分
+            trainer_base_scores = {
+                "蔡約翰": 100, "大衛希斯": 95, "姚本輝": 90,
+                "告東尼": 90, "羅富全": 85, "呂健威": 85,
+                "沈集成": 80, "方嘉柏": 80, "伍鵬志": 80,
+                "韋達": 75, "蘇偉賢": 70, "文家良": 70,
+                "賀賢": 65, "鄭俊偉": 65, "葉楚航": 60,
+                "徐雨石": 60, "黎昭昇": 60, "巫偉傑": 55,
+                "廖康銘": 55, "游達榮": 55, "丁冠豪": 50,
+            }
+            
+            # 获取马匹出生年份
+            horse_birth_years = {}
+            try:
+                headers = get_supabase_headers(use_secret=True)
+                horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=horse_id,birth_year"
+                response = requests.get(horses_url, headers=headers)
+                if response.status_code == 200:
+                    for h in response.json():
+                        horse_birth_years[h.get('horse_id')] = h.get('birth_year')
+            except Exception as e:
+                print(f"获取马匹出生年份失败: {e}")
             # ============================================================
             # 8.2 预测 current_date 当天的所有赛事
             # ============================================================
@@ -8928,17 +8981,116 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     
                     features['odds_trend'] = 0
                     features['ev'] = 0
+                    #----------
+                    # ---- 4. 状态因素（填充真实值） ----
+                    # ✅ 年龄因子
+                    birth_year = horse_birth_years.get(horse_id)
+                    if birth_year and birth_year > 0:
+                        try:
+                            race_year = int(race_date[:4])
+                            age = race_year - birth_year
+                            if 4 <= age <= 5:
+                                features['age'] = 100
+                            elif age == 3 or age == 6:
+                                features['age'] = 70
+                            elif age == 2 or age == 7:
+                                features['age'] = 50
+                            elif age >= 8:
+                                features['age'] = 30
+                            else:
+                                features['age'] = 40
+                        except:
+                            features['age'] = 0
+                    else:
+                        features['age'] = 0
                     
-                    # ---- 4. 状态因素 ----
-                    features['age'] = 0
-                    features['weight_change'] = 0
-                    features['incident'] = 0
-                    features['burst'] = 0
+                    # ✅ 体重变化
+                    current_weight = r.get('body_weight')
+                    if current_weight and current_weight > 0:
+                        last_weight = None
+                        for p in past_before:
+                            w = p.get('body_weight')
+                            if w and w > 0:
+                                last_weight = w
+                                break
+                        if last_weight and last_weight > 0:
+                            change = abs(current_weight - last_weight)
+                            if change <= 5:
+                                features['weight_change'] = 100
+                            elif change <= 10:
+                                features['weight_change'] = 70
+                            elif change <= 15:
+                                features['weight_change'] = 40
+                            else:
+                                features['weight_change'] = 20
+                        else:
+                            features['weight_change'] = 50
+                    else:
+                        features['weight_change'] = 50
                     
-                    # ---- 5. 骑师和练马师 ----
-                    features['jockey'] = 0
-                    features['trainer'] = 0
-                    features['jockey_win_rate'] = 0
+                    # ✅ 事件报告
+                    incident_text = r.get('incident', '')
+                    incident_score = 0
+                    if incident_text and incident_text not in ['无特别报告。', '無特別報告。', '']:
+                        negative_keywords = [
+                            ('流鼻血', -20), ('不良於行', -18), ('喘鳴症', -15),
+                            ('心律不正', -15), ('勒避', -8), ('受阻', -8),
+                            ('收慢', -6), ('外疊', -6), ('搶口', -5),
+                            ('出閘笨拙', -5), ('內閃', -4), ('外閃', -4)
+                        ]
+                        positive_keywords = [('順利', 5), ('望空', 4), ('節省腳程', 3)]
+                        
+                        for keyword, impact in negative_keywords:
+                            if keyword in incident_text:
+                                incident_score = impact
+                                break
+                        if incident_score == 0:
+                            for keyword, impact in positive_keywords:
+                                if keyword in incident_text:
+                                    incident_score = impact
+                                    break
+                    features['incident'] = max(-20, min(20, incident_score))
+                    
+                    # ✅ 冲刺能力
+                    running_pos = r.get('running_position', '')
+                    if running_pos and running_pos != '0' and running_pos != '---':
+                        positions = [int(c) for c in str(running_pos) if c.isdigit()]
+                        if len(positions) >= 2:
+                            first_pos = positions[0]
+                            last_pos = positions[-1]
+                            improvement = first_pos - last_pos
+                            if improvement >= 5:
+                                features['burst'] = 95
+                            elif improvement >= 3:
+                                features['burst'] = 85
+                            elif improvement >= 1:
+                                features['burst'] = 70
+                            elif improvement == 0:
+                                features['burst'] = 60
+                            else:
+                                features['burst'] = 40
+                        else:
+                            features['burst'] = 50
+                    else:
+                        features['burst'] = 50
+                    
+                    # ---- 5. 骑师和练马师（填充真实值） ----
+                    # ✅ 骑师
+                    jockey = r.get('jockey')
+                    if jockey:
+                        jockey_win_rate = jockey_win_rates.get(jockey, 0.12)
+                        features['jockey'] = jockey_win_rate * 100
+                        features['jockey_win_rate'] = jockey_win_rate * 100
+                    else:
+                        features['jockey'] = 0
+                        features['jockey_win_rate'] = 0
+                    
+                    # ✅ 练马师
+                    trainer = r.get('trainer')
+                    if trainer:
+                        features['trainer'] = trainer_base_scores.get(trainer, 50)
+                    else:
+                        features['trainer'] = 0
                     
                     # ---- 6. 额外字段 ----
                     features['data_used_count'] = len(past_before)
