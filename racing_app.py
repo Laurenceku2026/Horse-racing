@@ -9074,15 +9074,13 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                         except (ValueError, TypeError):
                             actual_winner_odds = 0
                         break
-                
+                #-------
                 # ---- 1. 独赢投注 ----
-                # 每场投注100元在"预测冠军"上
                 total_win_stake += 100
                 
-                if is_correct_win and actual_winner_odds > 0:
+                if is_correct_win and actual_winner_odds > 0:      # ← 改为 is_correct_win
                     total_win_return += 100 * actual_winner_odds
-                elif is_correct_win:
-                    # 没有赔率数据，使用默认值3.0
+                elif is_correct_win:                               # ← 改为 is_correct_win
                     total_win_return += 100 * 3.0
                 
                 # ---- 2. 位置投注 ----
