@@ -7432,6 +7432,9 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         total_tce_correct = 0
         total_stake = 0
         total_return = 0
+        # ⭐ 新增：位置投注统计
+        total_position_stake = 0
+        total_position_return = 0
         
         # ==================== 7. 创建进度条 ====================
         progress_bar = st.progress(0)
@@ -7594,16 +7597,44 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                            predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
             if tce_correct:
                 total_tce_correct += 1
-            
-            # ROI：每场都投注 100 元
+            #----------------
+            # ==================== ROI计算（修复版） ====================
+            # 投注策略：每场独赢投注100元
             total_stake += 100
-            if is_correct:
-                odds = runners[0].get('odds_win', 3.0)
-                try:
-                    odds = float(odds) if odds else 3.0
-                except:
-                    odds = 3.0
-                total_return += 100 * odds
+            
+            # ✅ 获取实际获胜马的赔率
+            actual_winner_odds = 0
+            actual_winner_name = None
+            for r in runners_data:
+                if r.get('position') == 1:
+                    actual_winner_name = r.get('horse_name', '')
+                    odds_raw = r.get('odds')
+                    try:
+                        actual_winner_odds = float(odds_raw) if odds_raw and odds_raw != '' else 0
+                    except (ValueError, TypeError):
+                        actual_winner_odds = 0
+                    break
+            
+            # ✅ 检查预测是否正确（预测第一名 = 实际第一名）
+            is_correct = (predicted_1st == actual_winner_name) if predicted_1st and actual_winner_name else False
+            
+            # ✅ 使用实际获胜马的赔率计算回报
+            if is_correct and actual_winner_odds > 0:
+                total_return += 100 * actual_winner_odds
+            elif is_correct:
+                # 如果没有赔率数据，使用默认值3.0
+                total_return += 100 * 3.0
+            
+            # ==================== 位置投注ROI（额外统计） ====================
+            # 每匹预测前三名的马，位置投注30元
+            # 注意：需要先在函数开头初始化 total_position_stake 和 total_position_return
+            for predicted_horse in predicted_top3_set:
+                if predicted_horse and predicted_horse in actual_top3_set:
+                    total_position_stake += 30
+                    # 位置赔率保守估计1.5倍
+                    total_position_return += 30 * 1.5
+                elif predicted_horse:
+                    total_position_stake += 30
             
             # 记录调试详情（双语）
             if lang == "zh":
@@ -7619,7 +7650,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                     "独赢正确": "✅" if is_correct else "❌",
                     "前3名命中匹数": hits,
                     "前3名全中": "✅" if tri_correct else "❌",
-                    "前3名顺序正确": "✅" if tce_correct else "❌"
+                    "前3名顺序正确": "✅" if tce_correct else "❌",
+                    "赔率": f"{actual_winner_odds:.1f}" if actual_winner_odds > 0 else "-"  # ⭐ 新增
                 })
             else:
                 result["debug_details"].append({
@@ -7634,7 +7666,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                     "Win": "✅" if is_correct else "❌",
                     "Top3 Hits": hits,
                     "Trio": "✅" if tri_correct else "❌",
-                    "Trifecta": "✅" if tce_correct else "❌"
+                    "Trifecta": "✅" if tce_correct else "❌",
+                    "Odds": f"{actual_winner_odds:.1f}" if actual_winner_odds > 0 else "-"  # ⭐ 新增
                 })
             
             if is_correct:
@@ -7661,10 +7694,27 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             result["前三名顺序正确场次"] = total_tce_correct
             result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
             
+            # 独赢ROI
             result["总投入"] = total_stake
             result["总回报"] = total_return
             if total_stake > 0:
                 result["ROI"] = (total_return - total_stake) / total_stake * 100
+            
+            # ⭐ 新增：位置投注ROI
+            result["位置总投入"] = total_position_stake
+            result["位置总回报"] = total_position_return
+            if total_position_stake > 0:
+                result["位置ROI"] = (total_position_return - total_position_stake) / total_position_stake * 100
+            else:
+                result["位置ROI"] = 0
+            
+            # ⭐ 新增：综合ROI（独赢 + 位置）
+            result["综合总投入"] = total_stake + total_position_stake
+            result["综合总回报"] = total_return + total_position_return
+            if result["综合总投入"] > 0:
+                result["综合ROI"] = (result["综合总回报"] - result["综合总投入"]) / result["综合总投入"] * 100
+            else:
+                result["综合ROI"] = 0
         
         if not result["cancelled"]:
             success_msg = f"✅ 回測完成: {result['测试场次']} 場, 獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%" if lang == "zh" else f"✅ Backtest complete: {result['测试场次']} races, Win Rate {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%"
