@@ -9033,9 +9033,16 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     total_tce_correct += 1
                 #-------------
                 # ==================== ROI 计算 ====================
-
-                # 1. 独赢投注：每场投注100元在"预测冠军"上
-                total_win_stake += 100
+                
+                # 获取预测前三名的赔率
+                predicted_top3_odds = []
+                for r in runners[:3]:
+                    odds_val = r.get('odds_win', 0)
+                    try:
+                        odds_val = float(odds_val) if odds_val and odds_val != '' else 0
+                    except (ValueError, TypeError):
+                        odds_val = 0
+                    predicted_top3_odds.append(odds_val if odds_val > 0 else 3.0)
                 
                 # 获取实际冠军的赔率
                 actual_winner_odds = 0
@@ -9048,24 +9055,28 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                             actual_winner_odds = 0
                         break
                 
-                # 如果预测正确，使用实际冠军赔率计算回报
+                # ---- 1. 独赢投注 ----
+                # 每场投注100元在"预测冠军"上
+                total_win_stake += 100
+                
                 if is_correct_win and actual_winner_odds > 0:
                     total_win_return += 100 * actual_winner_odds
                 elif is_correct_win:
                     # 没有赔率数据，使用默认值3.0
                     total_win_return += 100 * 3.0
                 
-                # 2. 位置投注：每场对预测前3名各投注30元
+                # ---- 2. 位置投注 ----
+                # 每场对预测前3名各投注30元
                 position_stake_per_horse = 30
                 total_position_stake += position_stake_per_horse * 3  # 3匹马，每匹30元
                 
-                # 位置赔率：保守估计为独赢赔率的30%
+                # 位置赔率：保守估计为独赢赔率的35%
                 for i, horse_name in enumerate([predicted_1st, predicted_2nd, predicted_3rd]):
                     if horse_name and horse_name in actual_top3_set:
                         # 该马跑入前3名，位置投注中奖
-                        odds = predicted_top3_odds[i] if i < len(predicted_top3_odds) else 3.0
+                        odds_val = predicted_top3_odds[i] if i < len(predicted_top3_odds) else 3.0
                         # 位置赔率约为独赢的30-40%，保守取35%
-                        place_odds = odds * 0.35
+                        place_odds = odds_val * 0.35
                         if place_odds < 1.3:
                             place_odds = 1.3  # 最低位置赔率
                         total_position_return += position_stake_per_horse * place_odds
