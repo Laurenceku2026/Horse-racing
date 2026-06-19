@@ -9133,7 +9133,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             top_n = ml_config.get("top_n_horses", 4)
             
             result["前三名命中匹数"] = total_top3_hits
-            result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * top_n) * 100
+            result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * 3) * 100
             
             result["前三名命中场次"] = total_top3_hit_races
             result["前三名命中场次率"] = min(100, total_top3_hit_races / result["测试场次"] * 100)
@@ -9143,11 +9143,18 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             
             result["前三名顺序正确场次"] = total_tce_correct
             result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
+            #------
+            # 独赢ROI
+            result["总投入"] = total_win_stake
+            result["总回报"] = total_win_return
+            if total_win_stake > 0:
+                result["ROI"] = (total_win_return - total_win_stake) / total_win_stake * 100
             
-            result["总投入"] = total_stake
-            result["总回报"] = total_return
-            if total_stake > 0:
-                result["ROI"] = (total_return - total_stake) / total_stake * 100
+            # 位置ROI（新增）
+            result["位置总投入"] = total_position_stake
+            result["位置总回报"] = total_position_return
+            if total_position_stake > 0:
+                result["位置ROI"] = (total_position_return - total_position_stake) / total_position_stake * 100
         
         # ⭐ 保存模型和特征重要性（供管理员查看）
         if last_model is not None:
