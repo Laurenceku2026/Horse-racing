@@ -9116,7 +9116,7 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 })
                 
                 # 更新统计
-                if is_correct:
+                if is_correct_win:
                     correct_predictions += 1
         
         # 9. 清理进度条
