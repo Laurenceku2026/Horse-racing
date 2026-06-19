@@ -8038,16 +8038,16 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
                 continue
             
             position = r.get('position', 0)
-            
-            # 确定分组标签
+            #----------
+            # 确定分组标签（修正：标签必须为0,1,2连续整数）
             if position <= 3:
-                group_label = 2      # 好马组
-                group_weight = 1.5   # 权重高
+                group_label = 2      # 好马组（正例）
+                group_weight = 1.5
             elif position <= 8:
-                group_label = 0      # 中马组
+                group_label = 1      # 中马组（负例）
                 group_weight = 1.0
             else:
-                group_label = -1     # 差马组
+                group_label = 0      # 差马组（负例）
                 group_weight = 0.8
             
             # 获取该马匹在 race_date 之前的往绩
@@ -8381,9 +8381,12 @@ def train_model_on_data(X_train: pd.DataFrame, y_train: pd.Series, model_type: s
     
     return None
 
-
+#-----------
 def predict_with_model(model, features: Dict, model_type: str) -> float:
-    """使用训练好的模型预测"""
+    """
+    使用训练好的模型预测
+    支持二分类和三分类
+    """
     if model is None:
         return 0.5
     
@@ -8392,13 +8395,41 @@ def predict_with_model(model, features: Dict, model_type: str) -> float:
         
         if model_type == 'ensemble':
             probs = []
-            if model.get('lightgbm'):
-                probs.append(model['lightgbm'].predict_proba(X_pred)[0][1])
-            if model.get('xgboost'):
-                probs.append(model['xgboost'].predict_proba(X_pred)[0][1])
-            return sum(probs) / len(probs) if probs else 0.5
+            for sub_model in [model.get('lightgbm'), model.get('xgboost')]:
+                if sub_model is not None:
+                    try:
+                        # 检查模型是二分类还是三分类
+                        n_classes = sub_model.n_classes_ if hasattr(sub_model, 'n_classes_') else 2
+                        if n_classes >= 3:
+                            # 三分类：取类别2（好马组）的概率
+                            prob = sub_model.predict_proba(X_pred)[0][2]
+                        else:
+                            # 二分类：取正类概率
+                            prob = sub_model.predict_proba(X_pred)[0][1]
+                        probs.append(prob)
+                    except Exception as e:
+                        print(f"子模型预测失败: {e}")
+                        continue
+            
+            if probs:
+                # 如果两个模型都可用，取平均
+                if len(probs) == 2:
+                    return (probs[0] + probs[1]) / 2
+                return probs[0]
+            return 0.5
+        
         else:
-            return model.predict_proba(X_pred)[0][1]
+            # 单模型
+            # 检查模型是二分类还是三分类
+            n_classes = model.n_classes_ if hasattr(model, 'n_classes_') else 2
+            
+            if n_classes >= 3:
+                # 三分类：取类别2（好马组）的概率
+                return model.predict_proba(X_pred)[0][2]
+            else:
+                # 二分类：取正类概率
+                return model.predict_proba(X_pred)[0][1]
+                
     except Exception as e:
         print(f"预测失败: {e}")
         return 0.5
@@ -8445,8 +8476,28 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
     
     from scoring_engine import get_ml_config
     config = get_ml_config()
-    
+    #---------
     if model_type == 'lightgbm' and LGB_AVAILABLE:
+    # 检查标签是否是三分类
+    unique_labels = sorted(y_train.unique())
+    num_classes = len(unique_labels)
+    
+    if num_classes >= 3:
+        # 三分类
+        model = lgb.LGBMClassifier(
+            n_estimators=config.get("lgb_n_estimators", 50),
+            max_depth=config.get("lgb_max_depth", 4),
+            learning_rate=config.get("lgb_learning_rate", 0.1),
+            num_leaves=config.get("lgb_num_leaves", 16),
+            random_state=42,
+            verbose=-1,
+            subsample=config.get("lgb_subsample", 0.7),
+            colsample_bytree=config.get("lgb_colsample_bytree", 0.7),
+            objective='multiclass',  # ⭐ 三分类
+            num_class=3               # ⭐ 3个类别
+        )
+    else:
+        # 二分类
         model = lgb.LGBMClassifier(
             n_estimators=config.get("lgb_n_estimators", 50),
             max_depth=config.get("lgb_max_depth", 4),
@@ -8457,21 +8508,42 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
             subsample=config.get("lgb_subsample", 0.7),
             colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
         )
-        model.fit(X_train, y_train)
-        
+    model.fit(X_train, y_train)
+    #--------    
     elif model_type == 'xgboost' and XGB_AVAILABLE:
+    # 检查标签是否是三分类
+    unique_labels = sorted(y_train.unique())
+    num_classes = len(unique_labels)
+    
+    if num_classes >= 3:
+        # 三分类
         model = xgb.XGBClassifier(
-            n_estimators=config.get("xgb_n_estimators", 80),
-            max_depth=config.get("xgb_max_depth", 6),
-            learning_rate=config.get("xgb_learning_rate", 0.08),
+            n_estimators=config.get("xgb_n_estimators", 120),
+            max_depth=config.get("xgb_max_depth", 4),
+            learning_rate=config.get("xgb_learning_rate", 0.06),
+            random_state=42,
+            use_label_encoder=False,
+            eval_metric='mlogloss',  # ⭐ 多分类损失函数
+            verbosity=0,
+            subsample=config.get("xgb_subsample", 0.7),
+            colsample_bytree=config.get("xgb_colsample_bytree", 0.7),
+            objective='multi:softprob',  # ⭐ 多分类
+            num_class=3                   # ⭐ 3个类别
+        )
+    else:
+        # 二分类
+        model = xgb.XGBClassifier(
+            n_estimators=config.get("xgb_n_estimators", 120),
+            max_depth=config.get("xgb_max_depth", 4),
+            learning_rate=config.get("xgb_learning_rate", 0.06),
             random_state=42,
             use_label_encoder=False,
             eval_metric='logloss',
             verbosity=0,
-            subsample=config.get("xgb_subsample", 0.8),
-            colsample_bytree=config.get("xgb_colsample_bytree", 0.8)
+            subsample=config.get("xgb_subsample", 0.7),
+            colsample_bytree=config.get("xgb_colsample_bytree", 0.7)
         )
-        model.fit(X_train, y_train)
+    model.fit(X_train, y_train)
         
     else:
         return None
