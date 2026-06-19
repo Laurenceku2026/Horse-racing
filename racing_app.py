@@ -1944,7 +1944,8 @@ def render_admin_backtest():
                     display_columns = ["模型", "测试场次", "独赢正确率", 
                                       "前三名命中匹数率", "前三名命中场次率",
                                       "前三名全中率", "前三名顺序正确率",
-                                      "总投入", "总回报", "ROI"]
+                                      "总投入", "总回报", "ROI",
+                                      "位置ROI"]  # 新增
                     available_cols = [c for c in display_columns if c in compare_df.columns]
                     compare_df = compare_df[available_cols]
                     #-----
@@ -1972,6 +1973,7 @@ def render_admin_backtest():
                             "总投入": st.column_config.NumberColumn("投入", width="small", format="$%.0f"),
                             "总回报": st.column_config.NumberColumn("回报", width="small", format="$%.0f"),
                             "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
+                            "位置ROI": st.column_config.NumberColumn("位置ROI", width="small", format="%+.1f%%"),  # 新增
                         }
                     )
                     #-----------
@@ -7700,10 +7702,10 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
             
             # 独赢ROI
-            result["总投入"] = total_win_stake
-            result["总回报"] = total_win_return
-            if total_win_stake > 0:
-                result["ROI"] = (total_win_return - total_win_stake) / total_win_stake * 100
+            result["总投入"] = total_stake
+            result["总回报"] = total_return
+            if total_stake > 0:
+                result["ROI"] = (total_return - total_stake) / total_stake * 100
             
             # 位置ROI
             result["位置总投入"] = total_position_stake
@@ -8612,31 +8614,34 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         from scoring_engine import clear_model_cache
         clear_model_cache()
         print(f"🗑️ 已清空所有模型缓存")
-    
+    #-----------
     result = {
-        "模型": "LightGBM" if model_type == "lightgbm" else "XGBoost" if model_type == "xgboost" else "集成模型",
-        "测试场次": 0,
-        "预测正确": 0,
-        "前三名命中匹数": 0,
-        "前三名命中场次": 0,
-        "前三名全中场次": 0,
-        "前三名顺序正确场次": 0,
-        "独赢正确率": 0,
-        "前三名命中匹数率": 0,
-        "前三名命中场次率": 0,
-        "前三名全中率": 0,
-        "前三名顺序正确率": 0,
-        "总投入": 0,
-        "总回报": 0,
-        "ROI": 0,
-        "debug_details": [],
-        "cancelled": False,
-        # ⭐ 新增：模型和特征重要性
-        "model": None,
-        "feature_importance": None,
-        "feature_names": None,
-        "from_cache": False,
-    }
+    "模型": "LightGBM" if model_type == "lightgbm" else "XGBoost" if model_type == "xgboost" else "集成模型",
+    "测试场次": 0,
+    "预测正确": 0,
+    "前三名命中匹数": 0,
+    "前三名命中场次": 0,
+    "前三名全中场次": 0,
+    "前三名顺序正确场次": 0,
+    "独赢正确率": 0,
+    "前三名命中匹数率": 0,
+    "前三名命中场次率": 0,
+    "前三名全中率": 0,
+    "前三名顺序正确率": 0,
+    "总投入": 0,
+    "总回报": 0,
+    "ROI": 0,
+    # 新增：位置投注统计
+    "位置总投入": 0,
+    "位置总回报": 0,
+    "位置ROI": 0,
+    "debug_details": [],
+    "cancelled": False,
+    "model": None,
+    "feature_importance": None,
+    "feature_names": None,
+    "from_cache": False,
+}
     
     try:
         # 1. 批量获取所有数据
@@ -9127,11 +9132,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         if result["测试场次"] > 0 and not result["cancelled"]:
             result["预测正确"] = correct_predictions
             result["独赢正确率"] = correct_predictions / result["测试场次"] * 100
-            
-            from scoring_engine import get_ml_config
-            ml_config = get_ml_config()
-            top_n = ml_config.get("top_n_horses", 4)
-            
+            #---------------
+            # 前三名命中匹数率：分母为 测试场次 × 3（预测前3名）
             result["前三名命中匹数"] = total_top3_hits
             result["前三名命中匹数率"] = total_top3_hits / (result["测试场次"] * 3) * 100
             
@@ -9144,13 +9146,13 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             result["前三名顺序正确场次"] = total_tce_correct
             result["前三名顺序正确率"] = total_tce_correct / result["测试场次"] * 100
             #------
-            # 独赢ROI
+            # 独赢ROI（使用 correct_predictions 和实际赔率累加）
             result["总投入"] = total_win_stake
             result["总回报"] = total_win_return
             if total_win_stake > 0:
                 result["ROI"] = (total_win_return - total_win_stake) / total_win_stake * 100
             
-            # 位置ROI（新增）
+            # 位置ROI（新增显示）
             result["位置总投入"] = total_position_stake
             result["位置总回报"] = total_position_return
             if total_position_stake > 0:
