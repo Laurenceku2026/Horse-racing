@@ -1866,7 +1866,7 @@ def render_admin_backtest():
     col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     
     with col_m1:
-        enable_rule = st.checkbox(t()["rating_system"], value=False, key="admin_backtest_rule")
+        enable_rule = st.checkbox(t()["rating_system"], value=True, key="admin_backtest_rule")
     with col_m2:
         enable_lgb = st.checkbox("LightGBM", value=True, key="admin_backtest_lgb",
                                  disabled=not LGB_AVAILABLE)
@@ -1874,7 +1874,7 @@ def render_admin_backtest():
         enable_xgb = st.checkbox("XGBoost", value=True, key="admin_backtest_xgb",
                                  disabled=not XGB_AVAILABLE)
     with col_m4:
-        enable_ensemble = st.checkbox("集成模型", value=False, key="admin_backtest_ensemble",
+        enable_ensemble = st.checkbox("集成模型", value=True, key="admin_backtest_ensemble",
                                       disabled=(not LGB_AVAILABLE and not XGB_AVAILABLE))
     
     st.markdown("---")
