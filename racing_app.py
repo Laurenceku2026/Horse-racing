@@ -1578,107 +1578,147 @@ def incremental_sync_table(table_name: str, new_data: List[Dict]) -> Dict:
 
 def compute_shap_values(model, feature_names: List[str], model_type: str, sample_limit: int = 50) -> Optional[Dict]:
     """
-    计算SHAP值（修复版 - 不触发页面刷新）
-    参数：
-        model: 训练好的模型
-        feature_names: 特征名称列表
-        model_type: 'LightGBM' | 'XGBoost' | '集成模型'
-        sample_limit: 使用的样本数量（默认50场）
-    返回：
-        {'summary_df': DataFrame} 或 None
+    计算SHAP值（使用真实的训练数据）
     """
     try:
         import shap
         import pandas as pd
         import numpy as np
         
-        # ⭐ 检查特征名称是否有效
-        if not feature_names or len(feature_names) == 0:
-            print("⚠️ 特征名称为空")
+        # ⭐ 首先检查 shap 库是否安装
+        try:
+            import shap
+        except ImportError:
+            print("⚠️ shap 库未安装，请运行: pip install shap")
             return None
         
-        # ⭐ 检查模型是否有效
-        if model is None:
-            print("⚠️ 模型为空")
-            return None
+        # ⭐ 检查是否有保存的训练数据
+        X_sample = None
+        if "admin_shap_train_data" in st.session_state:
+            train_data = st.session_state.admin_shap_train_data
+            X_sample = train_data.get('X_sample')
+            if X_sample is not None and len(X_sample) > 0:
+                # 确保列顺序正确
+                if isinstance(X_sample, pd.DataFrame):
+                    X_sample = X_sample[feature_names] if all(f in X_sample.columns for f in feature_names) else X_sample
+                print(f"✅ 使用训练数据，样本数: {len(X_sample)}")
         
-        # 获取训练数据（从缓存或数据库）
-        # 注意：这里需要真实的训练数据，而不是随机数据
-        # 由于回测函数没有保存训练数据，这里使用随机数据作为演示
-        # 实际部署时，需要从回测过程中保存真实的特征数据
+        # ⭐ 如果没有训练数据，使用随机数据（降级方案）
+        if X_sample is None:
+            print("⚠️ 未找到训练数据，使用随机数据（SHAP值可能不准确）")
+            np.random.seed(42)
+            X_sample = pd.DataFrame(
+                np.random.randn(min(sample_limit, 100), len(feature_names)),
+                columns=feature_names
+            )
+        else:
+            # 限制样本数量
+            if len(X_sample) > sample_limit:
+                X_sample = X_sample.sample(n=sample_limit, random_state=42)
         
-        np.random.seed(42)
-        X_sample = pd.DataFrame(
-            np.random.randn(sample_limit, len(feature_names)),
-            columns=feature_names
-        )
-        
-        # 根据模型类型计算SHAP值
+        # ==================== 根据模型类型计算 SHAP ====================
         shap_values = None
         
-        if model_type == "LightGBM":
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_sample)
-        elif model_type == "XGBoost":
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_sample)
-        elif model_type == "集成模型":
-            # 集成模型：分别计算两个模型的SHAP值，然后平均
+        # 集成模型处理
+        if model_type == "集成模型":
             shap_values_list = []
-            for sub_model in [model.get('lightgbm'), model.get('xgboost')]:
+            for sub_name, sub_model in [('lightgbm', model.get('lightgbm')), ('xgboost', model.get('xgboost'))]:
                 if sub_model is not None:
                     try:
+                        # 检查模型类别数
+                        n_classes = sub_model.n_classes_ if hasattr(sub_model, 'n_classes_') else 2
                         explainer = shap.TreeExplainer(sub_model)
-                        shap_values_list.append(explainer.shap_values(X_sample))
+                        shap_vals = explainer.shap_values(X_sample)
+                        
+                        # 处理三分类情况：取类别2（好马组）
+                        if isinstance(shap_vals, list) and len(shap_vals) >= 3:
+                            shap_vals = shap_vals[2]
+                        elif isinstance(shap_vals, list):
+                            shap_vals = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
+                        
+                        shap_values_list.append(np.abs(shap_vals).mean(axis=0))
                     except Exception as e:
-                        print(f"子模型SHAP计算失败: {e}")
+                        print(f"子模型 SHAP 计算失败 ({sub_name}): {e}")
                         continue
+            
             if shap_values_list:
                 shap_values = np.mean(shap_values_list, axis=0)
             else:
                 return None
+        
+        # LightGBM 单模型
+        elif model_type == "LightGBM":
+            n_classes = model.n_classes_ if hasattr(model, 'n_classes_') else 2
+            explainer = shap.TreeExplainer(model)
+            shap_vals = explainer.shap_values(X_sample)
+            
+            if isinstance(shap_vals, list) and len(shap_vals) >= 3:
+                shap_vals = shap_vals[2]  # 取好马组
+            elif isinstance(shap_vals, list):
+                shap_vals = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
+            
+            shap_values = np.abs(shap_vals).mean(axis=0)
+        
+        # XGBoost 单模型
+        elif model_type == "XGBoost":
+            n_classes = model.n_classes_ if hasattr(model, 'n_classes_') else 2
+            explainer = shap.TreeExplainer(model)
+            shap_vals = explainer.shap_values(X_sample)
+            
+            if isinstance(shap_vals, list) and len(shap_vals) >= 3:
+                shap_vals = shap_vals[2]  # 取好马组
+            elif isinstance(shap_vals, list):
+                shap_vals = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
+            
+            shap_values = np.abs(shap_vals).mean(axis=0)
+        
         else:
             return None
         
         if shap_values is None:
             return None
         
-        # 计算平均SHAP值（绝对值）
-        mean_shap = np.abs(shap_values).mean(axis=0)
+        # 创建汇总 DataFrame
+        summary_df = pd.DataFrame({
+            '特征': feature_names,
+            '平均SHAP值': shap_values
+        }).sort_values('平均SHAP值', ascending=False)
         
-        # 判断影响方向
+        # 过滤掉重要性为0的因子
+        summary_df = summary_df[summary_df['平均SHAP值'] > 0.001]
+        
+        # 添加影响方向
         direction = []
         explanation = []
         for i, name in enumerate(feature_names):
-            avg_shap = shap_values[:, i].mean()
-            if avg_shap > 0.005:
-                direction.append("正向 ↑")
-                explanation.append("数值越大，胜率越高")
-            elif avg_shap < -0.005:
-                direction.append("负向 ↓")
-                explanation.append("数值越大，胜率越低")
+            if i < len(shap_values):
+                avg_shap = shap_values[i]
+                if avg_shap > 0.005:
+                    direction.append("正向 ↑")
+                    explanation.append("数值越大，胜率越高")
+                elif avg_shap < -0.005:
+                    direction.append("负向 ↓")
+                    explanation.append("数值越大，胜率越低")
+                else:
+                    direction.append("中性 →")
+                    explanation.append("影响较小或中性")
             else:
                 direction.append("中性 →")
-                explanation.append("影响较小或中性")
+                explanation.append("无数据")
         
-        # 创建汇总DataFrame
-        summary_df = pd.DataFrame({
-            '特征': feature_names,
-            '平均SHAP值': mean_shap,
-            '影响方向': direction,
-            '说明': explanation
-        }).sort_values('平均SHAP值', ascending=False)
-        
-        # ⭐ 过滤掉重要性为0的因子（简化显示）
-        summary_df = summary_df[summary_df['平均SHAP值'] > 0.001]
+        summary_df['影响方向'] = direction[:len(summary_df)]
+        summary_df['说明'] = explanation[:len(summary_df)]
         
         return {'summary_df': summary_df}
         
-    except ImportError:
-        print("shap 库未安装，请运行: pip install shap")
+    except ImportError as e:
+        print(f"SHAP 库导入失败: {e}")
+        st.error("请安装 SHAP 库: pip install shap")
         return None
     except Exception as e:
-        print(f"SHAP计算失败: {e}")
+        print(f"SHAP 计算失败: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -9470,6 +9510,13 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 if train_X is not None and hasattr(train_X, 'columns'):
                     last_feature_names = list(train_X.columns)
                     print(f"✅ 保存特征名称: {len(last_feature_names)} 个因子")
+                    
+                    # ⭐ 新增：保存训练数据供 SHAP 使用
+                    st.session_state.admin_shap_train_data = {
+                        'X_sample': train_X,
+                        'feature_names': last_feature_names
+                    }
+                    print(f"✅ 保存训练数据供 SHAP 使用: {len(train_X)} 行")
                 else:
                     last_feature_names = []
                     print(f"⚠️ train_X 无效，特征名称为空")
