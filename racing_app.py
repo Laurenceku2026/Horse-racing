@@ -5958,6 +5958,20 @@ def render_smart_betting(show_title: bool = True):
         st.session_state.expand_parlay = False
     if "expand_scoring_weights" not in st.session_state:
         st.session_state.expand_scoring_weights = False
+    #-----------
+    # 付费标记（每个场次独立，切换场次时重置）
+    if "paid_win" not in st.session_state:
+        st.session_state.paid_win = False
+    if "paid_qin" not in st.session_state:
+        st.session_state.paid_qin = False
+    if "paid_tri" not in st.session_state:
+        st.session_state.paid_tri = False
+    if "paid_qin_recommend" not in st.session_state:
+        st.session_state.paid_qin_recommend = False
+    if "paid_parlay" not in st.session_state:
+        st.session_state.paid_parlay = False
+    if "paid_scoring_weights" not in st.session_state:
+        st.session_state.paid_scoring_weights = False
     #------------------
     if show_title:
         st.markdown(f"## {t()['smart_betting']}")
@@ -6015,308 +6029,52 @@ def render_smart_betting(show_title: bool = True):
     # ⭐ 初始化折叠状态
     if "expand_scoring_weights" not in st.session_state:
         st.session_state.expand_scoring_weights = False
-    
+    #-------------
+    # ==================== 评分权重设置（用户临时调整） ====================
     with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=st.session_state.expand_scoring_weights):
-        # ⭐ 扣费逻辑：首次展开时扣费
-        if not st.session_state.expand_scoring_weights:
-            if not consume_free_trial(st.session_state.user_id):
-                st.warning("免費次數已用完，請升級到專業版")
-                st.session_state.expand_scoring_weights = False
-            else:
-                st.session_state.expand_scoring_weights = True
-                st.rerun()
-        else:
-            # ==================== 权重设置内容（全部放在 else 内部） ====================
-            st.caption("调整评分因子权重，仅对当前会话有效，退出后恢复默认值" if lang == "zh" else "Adjust rating weights, only valid for current session")
-            
-            # 从数据库加载默认配置
-            @st.cache_data(ttl=300, show_spinner=False)
-            def load_scoring_config_user():
-                try:
-                    headers = get_supabase_headers(use_secret=True)
-                    url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
-                    response = requests.get(url, headers=headers)
-                    if response.status_code == 200 and response.json():
-                        return response.json()[0]
-                    return None
-                except Exception:
-                    return None
-            
-            config = load_scoring_config_user()
-            
-            # 如果配置不存在，使用默认值
-            if config is None:
-                default_level1 = {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15}
-                default_basic = {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15}
-                default_race = {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10}
-                default_odds = {"win_odds": 0.60, "odds_trend": 0.40}
-                default_status = {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20}
-            else:
-                default_level1 = config.get("level1_weights", {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15})
-                default_basic = config.get("basic_weights", {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15})
-                default_race = config.get("race_weights", {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10})
-                default_odds = config.get("odds_weights", {"win_odds": 0.60, "odds_trend": 0.40})
-                default_status = config.get("status_weights", {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20})
-            
-            # 初始化 session_state 中的用户临时配置
-            if "user_scoring_config" not in st.session_state:
-                st.session_state.user_scoring_config = {
-                    "level1_weights": default_level1.copy(),
-                    "basic_weights": default_basic.copy(),
-                    "race_weights": default_race.copy(),
-                    "odds_weights": default_odds.copy(),
-                    "status_weights": default_status.copy()
-                }
-            
-            # 检查是否应用了权重
-            if "scoring_weights_applied" not in st.session_state:
-                st.session_state.scoring_weights_applied = False
-            
-            # 获取当前用户编辑的配置（从 session_state）
-            user_level1 = st.session_state.user_scoring_config["level1_weights"].copy()
-            user_basic = st.session_state.user_scoring_config["basic_weights"].copy()
-            user_race = st.session_state.user_scoring_config["race_weights"].copy()
-            user_odds = st.session_state.user_scoring_config["odds_weights"].copy()
-            user_status = st.session_state.user_scoring_config["status_weights"].copy()
-            
-            # ==================== 一级因子设置 ====================
-            if lang == "zh":
-                st.markdown("**一级因子权重**")
-            else:
-                st.markdown("**Level 1 Weights**")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                basic_val = st.number_input(
-                    "基础往绩" if lang == "zh" else "Basic",
-                    min_value=0, max_value=100, value=int(user_level1.get("basic", 0.30) * 100),
-                    step=1, key="user_basic_weight"
-                )
-                user_level1["basic"] = basic_val / 100
-            
-            with col2:
-                race_val = st.number_input(
-                    "场次因素" if lang == "zh" else "Race",
-                    min_value=0, max_value=100, value=int(user_level1.get("race", 0.35) * 100),
-                    step=1, key="user_race_weight"
-                )
-                user_level1["race"] = race_val / 100
-            
-            with col3:
-                odds_val = st.number_input(
-                    "赔率因素" if lang == "zh" else "Odds",
-                    min_value=0, max_value=100, value=int(user_level1.get("odds", 0.20) * 100),
-                    step=1, key="user_odds_weight"
-                )
-                user_level1["odds"] = odds_val / 100
-            
-            with col4:
-                status_val = st.number_input(
-                    "状态因素" if lang == "zh" else "Status",
-                    min_value=0, max_value=100, value=int(user_level1.get("status", 0.15) * 100),
-                    step=1, key="user_level1_status"
-                )
-                user_level1["status"] = status_val / 100
-            
-            # 显示一级因子总和
-            total_level1 = sum(user_level1.values()) * 100
-            if abs(total_level1 - 100) < 0.1:
-                st.success(f"✅ 总和: {total_level1:.0f}%" if lang == "zh" else f"✅ Total: {total_level1:.0f}%")
-            else:
-                st.error(f"❌ 总和: {total_level1:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1:.0f}%, must be 100%")
-            
-            # ==================== 二级因子折叠区域 ====================
-            # 基础往绩二级因子
-            with st.expander("📈 基础往绩二级因子" if lang == "zh" else "📈 Basic Performance Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    win3 = st.number_input(
-                        "近3场胜率" if lang == "zh" else "Win Rate (L3)",
-                        min_value=0, max_value=100, value=int(user_basic.get("win_rate_3", 0.20) * 100),
-                        step=1, key="user_win3"
-                    )
-                    win10 = st.number_input(
-                        "近10场胜率" if lang == "zh" else "Win Rate (L10)",
-                        min_value=0, max_value=100, value=int(user_basic.get("win_rate_10", 0.20) * 100),
-                        step=1, key="user_win10"
-                    )
-                    place10 = st.number_input(
-                        "近10场入Q率" if lang == "zh" else "Place Rate (L10)",
-                        min_value=0, max_value=100, value=int(user_basic.get("place_rate_10", 0.15) * 100),
-                        step=1, key="user_place10"
-                    )
-                with col2:
-                    show10 = st.number_input(
-                        "近10场入T率" if lang == "zh" else "Show Rate (L10)",
-                        min_value=0, max_value=100, value=int(user_basic.get("show_rate_10", 0.15) * 100),
-                        step=1, key="user_show10"
-                    )
-                    distance_rating = st.number_input(
-                        "同程表现评分" if lang == "zh" else "Distance Rating",
-                        min_value=0, max_value=100, value=int(user_basic.get("distance_rating", 0.15) * 100),
-                        step=1, key="user_distance"
-                    )
-                    trend = st.number_input(
-                        "名次趋势" if lang == "zh" else "Ranking Trend",
-                        min_value=0, max_value=100, value=int(user_basic.get("trend", 0.15) * 100),
-                        step=1, key="user_trend"
-                    )
-                
-                user_basic["win_rate_3"] = win3 / 100
-                user_basic["win_rate_10"] = win10 / 100
-                user_basic["place_rate_10"] = place10 / 100
-                user_basic["show_rate_10"] = show10 / 100
-                user_basic["distance_rating"] = distance_rating / 100
-                user_basic["trend"] = trend / 100
-                
-                total_basic = sum(user_basic.values()) * 100
-                if abs(total_basic - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_basic:.0f}%" if lang == "zh" else f"✅ Total: {total_basic:.0f}%")
+        if st.session_state.expand_scoring_weights:
+            if not st.session_state.paid_scoring_weights:
+                # 首次展开，扣费
+                if not consume_free_trial(st.session_state.user_id):
+                    st.warning("免費次數已用完，請升級到專業版")
+                    st.session_state.expand_scoring_weights = False
+                    st.rerun()
                 else:
-                    st.error(f"❌ 总和: {total_basic:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_basic:.0f}%, must be 100%")
-            
-            # 场次因素二级因子
-            with st.expander("🏟️ 场次因素二级因子" if lang == "zh" else "🏟️ Race Factors Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    same_course = st.number_input(
-                        "同场地胜率" if lang == "zh" else "Same Course",
-                        min_value=0, max_value=100, value=int(user_race.get("same_course", 0.25) * 100),
-                        step=1, key="user_same_course"
-                    )
-                    same_distance = st.number_input(
-                        "同路程胜率" if lang == "zh" else "Same Distance",
-                        min_value=0, max_value=100, value=int(user_race.get("same_distance", 0.25) * 100),
-                        step=1, key="user_same_distance"
-                    )
-                    draw = st.number_input(
-                        "档位优势" if lang == "zh" else "Draw",
-                        min_value=0, max_value=100, value=int(user_race.get("draw", 0.15) * 100),
-                        step=1, key="user_draw"
-                    )
-                with col2:
-                    weight = st.number_input(
-                        "负磅变化" if lang == "zh" else "Weight",
-                        min_value=0, max_value=100, value=int(user_race.get("weight", 0.10) * 100),
-                        step=1, key="user_weight"
-                    )
-                    jockey = st.number_input(
-                        "骑师配合" if lang == "zh" else "Jockey",
-                        min_value=0, max_value=100, value=int(user_race.get("jockey", 0.15) * 100),
-                        step=1, key="user_jockey"
-                    )
-                    trainer = st.number_input(
-                        "练马师状态" if lang == "zh" else "Trainer",
-                        min_value=0, max_value=100, value=int(user_race.get("trainer", 0.10) * 100),
-                        step=1, key="user_trainer"
-                    )
+                    st.session_state.paid_scoring_weights = True
+                    st.rerun()
+            else:
+                # 已付费，显示权重设置内容
+                st.caption("调整评分因子权重，仅对当前会话有效，退出后恢复默认值" if lang == "zh" else "Adjust rating weights, only valid for current session")
                 
-                user_race["same_course"] = same_course / 100
-                user_race["same_distance"] = same_distance / 100
-                user_race["draw"] = draw / 100
-                user_race["weight"] = weight / 100
-                user_race["jockey"] = jockey / 100
-                user_race["trainer"] = trainer / 100
+                # 从数据库加载默认配置
+                @st.cache_data(ttl=300, show_spinner=False)
+                def load_scoring_config_user():
+                    try:
+                        headers = get_supabase_headers(use_secret=True)
+                        url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
+                        response = requests.get(url, headers=headers)
+                        if response.status_code == 200 and response.json():
+                            return response.json()[0]
+                        return None
+                    except Exception:
+                        return None
                 
-                total_race = sum(user_race.values()) * 100
-                if abs(total_race - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_race:.0f}%" if lang == "zh" else f"✅ Total: {total_race:.0f}%")
+                config = load_scoring_config_user()
+                
+                if config is None:
+                    default_level1 = {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15}
+                    default_basic = {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15}
+                    default_race = {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10}
+                    default_odds = {"win_odds": 0.60, "odds_trend": 0.40}
+                    default_status = {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20}
                 else:
-                    st.error(f"❌ 总和: {total_race:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_race:.0f}%, must be 100%")
-            
-            # 赔率因素二级因子
-            with st.expander("💰 赔率因素二级因子" if lang == "zh" else "💰 Odds Factors Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    win_odds = st.number_input(
-                        "独赢赔率" if lang == "zh" else "Win Odds",
-                        min_value=0, max_value=100, value=int(user_odds.get("win_odds", 0.60) * 100),
-                        step=1, key="user_win_odds"
-                    )
-                with col2:
-                    odds_trend = st.number_input(
-                        "赔率变动趋势" if lang == "zh" else "Odds Trend",
-                        min_value=0, max_value=100, value=int(user_odds.get("odds_trend", 0.40) * 100),
-                        step=1, key="user_odds_trend"
-                    )
+                    default_level1 = config.get("level1_weights", {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15})
+                    default_basic = config.get("basic_weights", {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15})
+                    default_race = config.get("race_weights", {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10})
+                    default_odds = config.get("odds_weights", {"win_odds": 0.60, "odds_trend": 0.40})
+                    default_status = config.get("status_weights", {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20})
                 
-                user_odds["win_odds"] = win_odds / 100
-                user_odds["odds_trend"] = odds_trend / 100
-                
-                total_odds = sum(user_odds.values()) * 100
-                if abs(total_odds - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_odds:.0f}%" if lang == "zh" else f"✅ Total: {total_odds:.0f}%")
-                else:
-                    st.error(f"❌ 总和: {total_odds:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_odds:.0f}%, must be 100%")
-            
-            # 状态因素二级因子
-            with st.expander("🩺 状态因素二级因子" if lang == "zh" else "🩺 Status Factors Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    age = st.number_input(
-                        "马龄因子" if lang == "zh" else "Age",
-                        min_value=0, max_value=100, value=int(user_status.get("age", 0.30) * 100),
-                        step=1, key="user_age"
-                    )
-                    weight_change = st.number_input(
-                        "体重变化" if lang == "zh" else "Weight Change",
-                        min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25) * 100),
-                        step=1, key="user_status_weight_change"
-                    )
-                with col2:
-                    incident = st.number_input(
-                        "事件报告" if lang == "zh" else "Incident",
-                        min_value=0, max_value=100, value=int(user_status.get("incident", 0.25) * 100),
-                        step=1, key="user_incident"
-                    )
-                    burst = st.number_input(
-                        "冲刺能力" if lang == "zh" else "Burst",
-                        min_value=0, max_value=100, value=int(user_status.get("burst", 0.20) * 100),
-                        step=1, key="user_burst"
-                    )
-                
-                user_status["age"] = age / 100
-                user_status["weight_change"] = weight_change / 100
-                user_status["incident"] = incident / 100
-                user_status["burst"] = burst / 100
-                
-                total_status = sum(user_status.values()) * 100
-                if abs(total_status - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
-                else:
-                    st.error(f"❌ 总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
-            
-            # ==================== 按钮区域 ====================
-            col1, col2, col3 = st.columns([1, 1, 2])
-            
-            with col1:
-                if st.button("✅ 应用权重并刷新" if lang == "zh" else "✅ Apply & Refresh", type="primary", use_container_width=True):
-                    if abs(sum(user_level1.values()) - 1) > 0.01:
-                        st.error("一级因子总和必须为100%，请调整后重试" if lang == "zh" else "Level 1 weights must sum to 100%")
-                    elif abs(sum(user_basic.values()) - 1) > 0.01:
-                        st.error("基础往绩二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Basic weights must sum to 100%")
-                    elif abs(sum(user_race.values()) - 1) > 0.01:
-                        st.error("场次因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Race weights must sum to 100%")
-                    elif abs(sum(user_odds.values()) - 1) > 0.01:
-                        st.error("赔率因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Odds weights must sum to 100%")
-                    elif abs(sum(user_status.values()) - 1) > 0.01:
-                        st.error("状态因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Status weights must sum to 100%")
-                    else:
-                        st.session_state.user_scoring_config = {
-                            "level1_weights": user_level1,
-                            "basic_weights": user_basic,
-                            "race_weights": user_race,
-                            "odds_weights": user_odds,
-                            "status_weights": user_status
-                        }
-                        st.session_state.scoring_weights_applied = True
-                        st.success("权重已应用，正在刷新数据..." if lang == "zh" else "Weights applied, refreshing...")
-                        st.cache_data.clear()
-                        st.rerun()
-            
-            with col2:
-                if st.button("🔄 恢复默认值" if lang == "zh" else "🔄 Reset to Default", use_container_width=True):
+                if "user_scoring_config" not in st.session_state:
                     st.session_state.user_scoring_config = {
                         "level1_weights": default_level1.copy(),
                         "basic_weights": default_basic.copy(),
@@ -6324,16 +6082,266 @@ def render_smart_betting(show_title: bool = True):
                         "odds_weights": default_odds.copy(),
                         "status_weights": default_status.copy()
                     }
+                
+                if "scoring_weights_applied" not in st.session_state:
                     st.session_state.scoring_weights_applied = False
-                    st.success("已恢复到默认权重" if lang == "zh" else "Reset to default weights")
-                    st.rerun()
-            
-            if st.session_state.scoring_weights_applied:
-                st.info("✅ 当前使用自定义权重" if lang == "zh" else "✅ Currently using custom weights")
-            else:
-                st.info("📌 当前使用管理员默认权重" if lang == "zh" else "📌 Currently using admin default weights")
-            
-            st.caption("💡 修改后需点击「应用权重并刷新」才会生效" if lang == "zh" else "💡 Click 'Apply & Refresh' after modification to take effect")
+                
+                user_level1 = st.session_state.user_scoring_config["level1_weights"].copy()
+                user_basic = st.session_state.user_scoring_config["basic_weights"].copy()
+                user_race = st.session_state.user_scoring_config["race_weights"].copy()
+                user_odds = st.session_state.user_scoring_config["odds_weights"].copy()
+                user_status = st.session_state.user_scoring_config["status_weights"].copy()
+                
+                if lang == "zh":
+                    st.markdown("**一级因子权重**")
+                else:
+                    st.markdown("**Level 1 Weights**")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    basic_val = st.number_input(
+                        "基础往绩" if lang == "zh" else "Basic",
+                        min_value=0, max_value=100, value=int(user_level1.get("basic", 0.30) * 100),
+                        step=1, key="user_basic_weight"
+                    )
+                    user_level1["basic"] = basic_val / 100
+                
+                with col2:
+                    race_val = st.number_input(
+                        "场次因素" if lang == "zh" else "Race",
+                        min_value=0, max_value=100, value=int(user_level1.get("race", 0.35) * 100),
+                        step=1, key="user_race_weight"
+                    )
+                    user_level1["race"] = race_val / 100
+                
+                with col3:
+                    odds_val = st.number_input(
+                        "赔率因素" if lang == "zh" else "Odds",
+                        min_value=0, max_value=100, value=int(user_level1.get("odds", 0.20) * 100),
+                        step=1, key="user_odds_weight"
+                    )
+                    user_level1["odds"] = odds_val / 100
+                
+                with col4:
+                    status_val = st.number_input(
+                        "状态因素" if lang == "zh" else "Status",
+                        min_value=0, max_value=100, value=int(user_level1.get("status", 0.15) * 100),
+                        step=1, key="user_level1_status"
+                    )
+                    user_level1["status"] = status_val / 100
+                
+                total_level1 = sum(user_level1.values()) * 100
+                if abs(total_level1 - 100) < 0.1:
+                    st.success(f"✅ 总和: {total_level1:.0f}%" if lang == "zh" else f"✅ Total: {total_level1:.0f}%")
+                else:
+                    st.error(f"❌ 总和: {total_level1:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1:.0f}%, must be 100%")
+                
+                # 二级因子（省略详细代码，与之前相同，保持原样）
+                with st.expander("📈 基础往绩二级因子" if lang == "zh" else "📈 Basic Performance Sub-factors", expanded=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        win3 = st.number_input(
+                            "近3场胜率" if lang == "zh" else "Win Rate (L3)",
+                            min_value=0, max_value=100, value=int(user_basic.get("win_rate_3", 0.20) * 100),
+                            step=1, key="user_win3"
+                        )
+                        win10 = st.number_input(
+                            "近10场胜率" if lang == "zh" else "Win Rate (L10)",
+                            min_value=0, max_value=100, value=int(user_basic.get("win_rate_10", 0.20) * 100),
+                            step=1, key="user_win10"
+                        )
+                        place10 = st.number_input(
+                            "近10场入Q率" if lang == "zh" else "Place Rate (L10)",
+                            min_value=0, max_value=100, value=int(user_basic.get("place_rate_10", 0.15) * 100),
+                            step=1, key="user_place10"
+                        )
+                    with col2:
+                        show10 = st.number_input(
+                            "近10场入T率" if lang == "zh" else "Show Rate (L10)",
+                            min_value=0, max_value=100, value=int(user_basic.get("show_rate_10", 0.15) * 100),
+                            step=1, key="user_show10"
+                        )
+                        distance_rating = st.number_input(
+                            "同程表现评分" if lang == "zh" else "Distance Rating",
+                            min_value=0, max_value=100, value=int(user_basic.get("distance_rating", 0.15) * 100),
+                            step=1, key="user_distance"
+                        )
+                        trend = st.number_input(
+                            "名次趋势" if lang == "zh" else "Ranking Trend",
+                            min_value=0, max_value=100, value=int(user_basic.get("trend", 0.15) * 100),
+                            step=1, key="user_trend"
+                        )
+                    
+                    user_basic["win_rate_3"] = win3 / 100
+                    user_basic["win_rate_10"] = win10 / 100
+                    user_basic["place_rate_10"] = place10 / 100
+                    user_basic["show_rate_10"] = show10 / 100
+                    user_basic["distance_rating"] = distance_rating / 100
+                    user_basic["trend"] = trend / 100
+                    
+                    total_basic = sum(user_basic.values()) * 100
+                    if abs(total_basic - 100) < 0.1:
+                        st.success(f"✅ 总和: {total_basic:.0f}%" if lang == "zh" else f"✅ Total: {total_basic:.0f}%")
+                    else:
+                        st.error(f"❌ 总和: {total_basic:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_basic:.0f}%, must be 100%")
+                
+                with st.expander("🏟️ 场次因素二级因子" if lang == "zh" else "🏟️ Race Factors Sub-factors", expanded=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        same_course = st.number_input(
+                            "同场地胜率" if lang == "zh" else "Same Course",
+                            min_value=0, max_value=100, value=int(user_race.get("same_course", 0.25) * 100),
+                            step=1, key="user_same_course"
+                        )
+                        same_distance = st.number_input(
+                            "同路程胜率" if lang == "zh" else "Same Distance",
+                            min_value=0, max_value=100, value=int(user_race.get("same_distance", 0.25) * 100),
+                            step=1, key="user_same_distance"
+                        )
+                        draw = st.number_input(
+                            "档位优势" if lang == "zh" else "Draw",
+                            min_value=0, max_value=100, value=int(user_race.get("draw", 0.15) * 100),
+                            step=1, key="user_draw"
+                        )
+                    with col2:
+                        weight = st.number_input(
+                            "负磅变化" if lang == "zh" else "Weight",
+                            min_value=0, max_value=100, value=int(user_race.get("weight", 0.10) * 100),
+                            step=1, key="user_weight"
+                        )
+                        jockey = st.number_input(
+                            "骑师配合" if lang == "zh" else "Jockey",
+                            min_value=0, max_value=100, value=int(user_race.get("jockey", 0.15) * 100),
+                            step=1, key="user_jockey"
+                        )
+                        trainer = st.number_input(
+                            "练马师状态" if lang == "zh" else "Trainer",
+                            min_value=0, max_value=100, value=int(user_race.get("trainer", 0.10) * 100),
+                            step=1, key="user_trainer"
+                        )
+                    
+                    user_race["same_course"] = same_course / 100
+                    user_race["same_distance"] = same_distance / 100
+                    user_race["draw"] = draw / 100
+                    user_race["weight"] = weight / 100
+                    user_race["jockey"] = jockey / 100
+                    user_race["trainer"] = trainer / 100
+                    
+                    total_race = sum(user_race.values()) * 100
+                    if abs(total_race - 100) < 0.1:
+                        st.success(f"✅ 总和: {total_race:.0f}%" if lang == "zh" else f"✅ Total: {total_race:.0f}%")
+                    else:
+                        st.error(f"❌ 总和: {total_race:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_race:.0f}%, must be 100%")
+                
+                with st.expander("💰 赔率因素二级因子" if lang == "zh" else "💰 Odds Factors Sub-factors", expanded=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        win_odds = st.number_input(
+                            "独赢赔率" if lang == "zh" else "Win Odds",
+                            min_value=0, max_value=100, value=int(user_odds.get("win_odds", 0.60) * 100),
+                            step=1, key="user_win_odds"
+                        )
+                    with col2:
+                        odds_trend = st.number_input(
+                            "赔率变动趋势" if lang == "zh" else "Odds Trend",
+                            min_value=0, max_value=100, value=int(user_odds.get("odds_trend", 0.40) * 100),
+                            step=1, key="user_odds_trend"
+                        )
+                    
+                    user_odds["win_odds"] = win_odds / 100
+                    user_odds["odds_trend"] = odds_trend / 100
+                    
+                    total_odds = sum(user_odds.values()) * 100
+                    if abs(total_odds - 100) < 0.1:
+                        st.success(f"✅ 总和: {total_odds:.0f}%" if lang == "zh" else f"✅ Total: {total_odds:.0f}%")
+                    else:
+                        st.error(f"❌ 总和: {total_odds:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_odds:.0f}%, must be 100%")
+                
+                with st.expander("🩺 状态因素二级因子" if lang == "zh" else "🩺 Status Factors Sub-factors", expanded=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        age = st.number_input(
+                            "马龄因子" if lang == "zh" else "Age",
+                            min_value=0, max_value=100, value=int(user_status.get("age", 0.30) * 100),
+                            step=1, key="user_age"
+                        )
+                        weight_change = st.number_input(
+                            "体重变化" if lang == "zh" else "Weight Change",
+                            min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25) * 100),
+                            step=1, key="user_status_weight_change"
+                        )
+                    with col2:
+                        incident = st.number_input(
+                            "事件报告" if lang == "zh" else "Incident",
+                            min_value=0, max_value=100, value=int(user_status.get("incident", 0.25) * 100),
+                            step=1, key="user_incident"
+                        )
+                        burst = st.number_input(
+                            "冲刺能力" if lang == "zh" else "Burst",
+                            min_value=0, max_value=100, value=int(user_status.get("burst", 0.20) * 100),
+                            step=1, key="user_burst"
+                        )
+                    
+                    user_status["age"] = age / 100
+                    user_status["weight_change"] = weight_change / 100
+                    user_status["incident"] = incident / 100
+                    user_status["burst"] = burst / 100
+                    
+                    total_status = sum(user_status.values()) * 100
+                    if abs(total_status - 100) < 0.1:
+                        st.success(f"✅ 总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
+                    else:
+                        st.error(f"❌ 总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
+                
+                col1, col2, col3 = st.columns([1, 1, 2])
+                
+                with col1:
+                    if st.button("✅ 应用权重并刷新" if lang == "zh" else "✅ Apply & Refresh", type="primary", use_container_width=True):
+                        if abs(sum(user_level1.values()) - 1) > 0.01:
+                            st.error("一级因子总和必须为100%，请调整后重试" if lang == "zh" else "Level 1 weights must sum to 100%")
+                        elif abs(sum(user_basic.values()) - 1) > 0.01:
+                            st.error("基础往绩二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Basic weights must sum to 100%")
+                        elif abs(sum(user_race.values()) - 1) > 0.01:
+                            st.error("场次因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Race weights must sum to 100%")
+                        elif abs(sum(user_odds.values()) - 1) > 0.01:
+                            st.error("赔率因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Odds weights must sum to 100%")
+                        elif abs(sum(user_status.values()) - 1) > 0.01:
+                            st.error("状态因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Status weights must sum to 100%")
+                        else:
+                            st.session_state.user_scoring_config = {
+                                "level1_weights": user_level1,
+                                "basic_weights": user_basic,
+                                "race_weights": user_race,
+                                "odds_weights": user_odds,
+                                "status_weights": user_status
+                            }
+                            st.session_state.scoring_weights_applied = True
+                            st.success("权重已应用，正在刷新数据..." if lang == "zh" else "Weights applied, refreshing...")
+                            st.cache_data.clear()
+                            st.rerun()
+                
+                with col2:
+                    if st.button("🔄 恢复默认值" if lang == "zh" else "🔄 Reset to Default", use_container_width=True):
+                        st.session_state.user_scoring_config = {
+                            "level1_weights": default_level1.copy(),
+                            "basic_weights": default_basic.copy(),
+                            "race_weights": default_race.copy(),
+                            "odds_weights": default_odds.copy(),
+                            "status_weights": default_status.copy()
+                        }
+                        st.session_state.scoring_weights_applied = False
+                        st.success("已恢复到默认权重" if lang == "zh" else "Reset to default weights")
+                        st.rerun()
+                
+                if st.session_state.scoring_weights_applied:
+                    st.info("✅ 当前使用自定义权重" if lang == "zh" else "✅ Currently using custom weights")
+                else:
+                    st.info("📌 当前使用管理员默认权重" if lang == "zh" else "📌 Currently using admin default weights")
+                
+                st.caption("💡 修改后需点击「应用权重并刷新」才会生效" if lang == "zh" else "💡 Click 'Apply & Refresh' after modification to take effect")
+        else:
+            st.caption("点击展开并扣费（1次）")
     #------------------
     st.markdown("---")
     
@@ -6466,7 +6474,8 @@ def render_smart_betting(show_title: bool = True):
     
     selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     #---------
-    # ⭐ 检查场次是否变化，如果变化则重置所有折叠状态
+    #-------------
+    # ⭐ 检查场次是否变化，如果变化则重置所有折叠状态（闭合）并重置付费标记
     current_race_key = f"{selected_date}_{selected_idx}"
     if st.session_state.get("prev_selected_race") != current_race_key:
         st.session_state.expand_win = False
@@ -6475,6 +6484,13 @@ def render_smart_betting(show_title: bool = True):
         st.session_state.expand_qin_recommend = False
         st.session_state.expand_parlay = False
         st.session_state.expand_scoring_weights = False
+        # 重置付费标记（换场次后，所有折叠重新计费）
+        st.session_state.paid_win = False
+        st.session_state.paid_qin = False
+        st.session_state.paid_tri = False
+        st.session_state.paid_qin_recommend = False
+        st.session_state.paid_parlay = False
+        st.session_state.paid_scoring_weights = False
         st.session_state.prev_selected_race = current_race_key
     #----------
     selected_race = races[selected_idx]
@@ -6863,15 +6879,34 @@ def render_smart_betting(show_title: bool = True):
     
     # ==================== 折叠1：独赢/位置 ====================
     with st.expander("🎯 独赢/位置 推荐", expanded=st.session_state.expand_win):
-        # 扣费逻辑
-        if not st.session_state.expand_win:
-            if not consume_free_trial(st.session_state.user_id):
-                st.warning("免費次數已用完，請升級到專業版")
-                st.session_state.expand_win = False
+        if st.session_state.expand_win:
+            if not st.session_state.paid_win:
+                # 首次展开，扣费
+                if not consume_free_trial(st.session_state.user_id):
+                    st.warning("免費次數已用完，請升級到專業版")
+                    st.session_state.expand_win = False
+                    st.rerun()
+                else:
+                    st.session_state.paid_win = True
+                    st.rerun()
             else:
-                st.session_state.expand_win = True
-                st.rerun()
+                # 已付费，显示内容
+                if recommendations.get('win') and recommendations['win']:
+                    rec = recommendations['win'][0]
+                    st.info(f"**{rec.description}**")
+                    st.write(f"獨贏賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                elif recommendations.get('place') and recommendations['place']:
+                    rec = recommendations['place'][0]
+                    st.info(f"**{rec.description}**")
+                    st.write(f"位置賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                else:
+                    st.write("暫無建議")
         else:
+            st.caption("点击展开并扣费（1次）")
             # 显示内容
             if recommendations.get('win') and recommendations['win']:
                 rec = recommendations['win'][0]
@@ -6890,14 +6925,34 @@ def render_smart_betting(show_title: bool = True):
     
     # ==================== 折叠2：连赢 ====================
     with st.expander("🔗 连赢 推荐", expanded=st.session_state.expand_qin):
-        if not st.session_state.expand_qin:
-            if not consume_free_trial(st.session_state.user_id):
-                st.warning("免費次數已用完，請升級到專業版")
-                st.session_state.expand_qin = False
+        if st.session_state.expand_win:
+            if not st.session_state.paid_win:
+                # 首次展开，扣费
+                if not consume_free_trial(st.session_state.user_id):
+                    st.warning("免費次數已用完，請升級到專業版")
+                    st.session_state.expand_win = False
+                    st.rerun()
+                else:
+                    st.session_state.paid_win = True
+                    st.rerun()
             else:
-                st.session_state.expand_qin = True
-                st.rerun()
+                # 已付费，显示内容
+                if recommendations.get('win') and recommendations['win']:
+                    rec = recommendations['win'][0]
+                    st.info(f"**{rec.description}**")
+                    st.write(f"獨贏賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                elif recommendations.get('place') and recommendations['place']:
+                    rec = recommendations['place'][0]
+                    st.info(f"**{rec.description}**")
+                    st.write(f"位置賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                else:
+                    st.write("暫無建議")
         else:
+            st.caption("点击展开并扣费（1次）")
             # 显示内容
             if recommendations.get('qin') and recommendations['qin']:
                 for i, rec in enumerate(recommendations['qin'][:3]):
@@ -6934,14 +6989,34 @@ def render_smart_betting(show_title: bool = True):
     
     # ==================== 折叠3：单T ====================
     with st.expander("🎲 单T 推荐", expanded=st.session_state.expand_tri):
-        if not st.session_state.expand_tri:
-            if not consume_free_trial(st.session_state.user_id):
-                st.warning("免費次數已用完，請升級到專業版")
-                st.session_state.expand_tri = False
+        if st.session_state.expand_win:
+            if not st.session_state.paid_win:
+                # 首次展开，扣费
+                if not consume_free_trial(st.session_state.user_id):
+                    st.warning("免費次數已用完，請升級到專業版")
+                    st.session_state.expand_win = False
+                    st.rerun()
+                else:
+                    st.session_state.paid_win = True
+                    st.rerun()
             else:
-                st.session_state.expand_tri = True
-                st.rerun()
+                # 已付费，显示内容
+                if recommendations.get('win') and recommendations['win']:
+                    rec = recommendations['win'][0]
+                    st.info(f"**{rec.description}**")
+                    st.write(f"獨贏賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                elif recommendations.get('place') and recommendations['place']:
+                    rec = recommendations['place'][0]
+                    st.info(f"**{rec.description}**")
+                    st.write(f"位置賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                else:
+                    st.write("暫無建議")
         else:
+            st.caption("点击展开并扣费（1次）")
             # 显示内容
             if recommendations.get('tri') and recommendations['tri']:
                 for i, rec in enumerate(recommendations['tri'][:3]):
@@ -6982,111 +7057,115 @@ def render_smart_betting(show_title: bool = True):
     #------------
     # ==================== 连赢推荐（折叠版） ====================
     with st.expander("🔗 連贏推薦（點擊展開）", expanded=st.session_state.expand_qin_recommend):
-        # 扣费逻辑
-        if not st.session_state.expand_qin_recommend:
-            if not consume_free_trial(st.session_state.user_id):
-                st.warning("免費次數已用完，請升級到專業版")
-                st.session_state.expand_qin_recommend = False
-            else:
-                st.session_state.expand_qin_recommend = True
-                st.rerun()
-        else:
-            # 显示连赢推荐内容
-            if len(sorted_runners) < 2:
-                st.warning("馬匹數量不足，無法推薦連贏")
-            else:
-                # 生成多组连赢组合（取前5名马匹的组合）
-                top_n = min(5, len(sorted_runners))
-                top_runners = sorted_runners[:top_n]
-                
-                # 生成组合列表
-                combinations = []
-                for i in range(len(top_runners)):
-                    for j in range(i+1, len(top_runners)):
-                        h1 = top_runners[i]
-                        h2 = top_runners[j]
-                        odds1 = h1.get('odds_win', 0)
-                        odds2 = h2.get('odds_win', 0)
-                        
-                        # 估算连赢赔率
-                        if odds1 > 0 and odds2 > 0:
-                            estimated_odds = (odds1 * odds2) / 2
-                        else:
-                            estimated_odds = 0
-                        
-                        prob1 = h1.get('win_probability', 0)
-                        prob2 = h2.get('win_probability', 0)
-                        joint_prob = prob1 * prob2 * 2
-                        
-                        ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
-                        
-                        # 建议投注额（EV > 0.15 时建议）
-                        if ev > 0.15:
-                            suggested_stake = bankroll * 0.05 * risk_multiplier
-                        else:
-                            suggested_stake = 0
-                        
-                        combinations.append({
-                            'horse1_name': h1.get('horse_name', ''),
-                            'horse2_name': h2.get('horse_name', ''),
-                            'horse1_no': h1.get('horse_no', ''),
-                            'horse2_no': h2.get('horse_no', ''),
-                            'estimated_odds': estimated_odds,
-                            'joint_prob': joint_prob,
-                            'ev': ev,
-                            'suggested_stake': suggested_stake,
-                            'recommended': ev > 0.15,
-                            'h1': h1,
-                            'h2': h2
-                        })
-                
-                # 按EV排序，显示前5组
-                combinations.sort(key=lambda x: x['ev'], reverse=True)
-                top_combos = combinations[:5]
-                
-                if not top_combos or all(c['estimated_odds'] <= 0 for c in top_combos):
-                    st.info("無法計算連贏賠率，請確保有足夠的賠率數據")
+        if st.session_state.expand_qin_recommend:
+            if not st.session_state.paid_qin_recommend:
+                # 首次展开，扣费
+                if not consume_free_trial(st.session_state.user_id):
+                    st.warning("免費次數已用完，請升級到專業版")
+                    st.session_state.expand_qin_recommend = False
+                    st.rerun()
                 else:
-                    # 显示组合列表（带复选框）
-                    selected_qin_combos = []
+                    st.session_state.paid_qin_recommend = True
+                    st.rerun()
+            else:
+                # 已付费，显示内容
+                if len(sorted_runners) < 2:
+                    st.warning("馬匹數量不足，無法推薦連贏")
+                else:
+                    # 生成多组连赢组合（取前5名马匹的组合）
+                    top_n = min(5, len(sorted_runners))
+                    top_runners = sorted_runners[:top_n]
                     
-                    st.caption("💡 勾選您感興趣的組合，底部將顯示總投注額")
-                    st.markdown("---")
-                    
-                    for idx, combo in enumerate(top_combos):
-                        if combo['estimated_odds'] <= 0:
-                            continue
-                        
-                        col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1])
-                        
-                        with col1:
-                            st.write(f"**{combo['horse1_name']}({combo['horse1_no']}) + {combo['horse2_name']}({combo['horse2_no']})**")
-                        with col2:
-                            st.write(f"賠率: {combo['estimated_odds']:.1f}倍")
-                        with col3:
-                            ev_color = "🟢" if combo['ev'] > 0.15 else "🟡" if combo['ev'] > 0 else "🔴"
-                            st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
-                        with col4:
-                            if combo['recommended']:
-                                is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=True)
+                    # 生成组合列表
+                    combinations = []
+                    for i in range(len(top_runners)):
+                        for j in range(i+1, len(top_runners)):
+                            h1 = top_runners[i]
+                            h2 = top_runners[j]
+                            odds1 = h1.get('odds_win', 0)
+                            odds2 = h2.get('odds_win', 0)
+                            
+                            # 估算连赢赔率
+                            if odds1 > 0 and odds2 > 0:
+                                estimated_odds = (odds1 * odds2) / 2
                             else:
-                                is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=False)
-                        
-                        if is_selected:
-                            selected_qin_combos.append(combo)
-                        
-                        st.markdown("---")
+                                estimated_odds = 0
+                            
+                            prob1 = h1.get('win_probability', 0)
+                            prob2 = h2.get('win_probability', 0)
+                            joint_prob = prob1 * prob2 * 2
+                            
+                            ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
+                            
+                            # 建议投注额（EV > 0.15 时建议）
+                            if ev > 0.15:
+                                suggested_stake = bankroll * 0.05 * risk_multiplier
+                            else:
+                                suggested_stake = 0
+                            
+                            combinations.append({
+                                'horse1_name': h1.get('horse_name', ''),
+                                'horse2_name': h2.get('horse_name', ''),
+                                'horse1_no': h1.get('horse_no', ''),
+                                'horse2_no': h2.get('horse_no', ''),
+                                'estimated_odds': estimated_odds,
+                                'joint_prob': joint_prob,
+                                'ev': ev,
+                                'suggested_stake': suggested_stake,
+                                'recommended': ev > 0.15,
+                                'h1': h1,
+                                'h2': h2
+                            })
                     
-                    # 底部汇总
-                    if selected_qin_combos:
-                        total_qin_stake = sum(c['suggested_stake'] for c in selected_qin_combos if c['suggested_stake'] > 0)
-                        if total_qin_stake == 0:
-                            total_qin_stake = len(selected_qin_combos) * 20
-                        
-                        st.success(f"✅ 已選擇 {len(selected_qin_combos)} 組連贏，建議總投注額: HK${total_qin_stake:.0f}")
-                        st.caption("⚠️ 投注前請確認賠率變動，建議以馬會公佈為準")
+                    # 按EV排序，显示前5组
+                    combinations.sort(key=lambda x: x['ev'], reverse=True)
+                    top_combos = combinations[:5]
+                    
+                    if not top_combos or all(c['estimated_odds'] <= 0 for c in top_combos):
+                        st.info("無法計算連贏賠率，請確保有足夠的賠率數據")
                     else:
-                        st.info("請勾選您感興趣的連贏組合")
+                        # 显示组合列表（带复选框）
+                        selected_qin_combos = []
+                        
+                        st.caption("💡 勾選您感興趣的組合，底部將顯示總投注額")
+                        st.markdown("---")
+                        
+                        for idx, combo in enumerate(top_combos):
+                            if combo['estimated_odds'] <= 0:
+                                continue
+                            
+                            col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1])
+                            
+                            with col1:
+                                st.write(f"**{combo['horse1_name']}({combo['horse1_no']}) + {combo['horse2_name']}({combo['horse2_no']})**")
+                            with col2:
+                                st.write(f"賠率: {combo['estimated_odds']:.1f}倍")
+                            with col3:
+                                ev_color = "🟢" if combo['ev'] > 0.15 else "🟡" if combo['ev'] > 0 else "🔴"
+                                st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
+                            with col4:
+                                if combo['recommended']:
+                                    is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=True)
+                                else:
+                                    is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=False)
+                            
+                            if is_selected:
+                                selected_qin_combos.append(combo)
+                            
+                            st.markdown("---")
+                        
+                        # 底部汇总
+                        if selected_qin_combos:
+                            total_qin_stake = sum(c['suggested_stake'] for c in selected_qin_combos if c['suggested_stake'] > 0)
+                            if total_qin_stake == 0:
+                                total_qin_stake = len(selected_qin_combos) * 20
+                            
+                            st.success(f"✅ 已選擇 {len(selected_qin_combos)} 組連贏，建議總投注額: HK${total_qin_stake:.0f}")
+                            st.caption("⚠️ 投注前請確認賠率變動，建議以馬會公佈為準")
+                        else:
+                            st.info("請勾選您感興趣的連贏組合")
+        else:
+            st.caption("点击展开并扣费（1次）")
     # ==================== 新增：過関投注推薦器 ====================
     st.markdown(f"## {t()['parlay_recommendation']}")
     st.caption(t()["parlay_description"])
@@ -7200,84 +7279,88 @@ def render_smart_betting(show_title: bool = True):
             
             if len(parlay_races_data) >= 2:
                 # 运行过关推荐（折叠版）
-                with st.expander("🎲 生成过关推荐（点击展开）", expanded=st.session_state.get("expand_parlay", False)):
-                    # 扣费逻辑（首次展开时扣费）
-                    if not st.session_state.get("expand_parlay", False):
-                        if not consume_free_trial(st.session_state.user_id):
-                            st.warning("免費次數已用完，請升級到專業版")
-                            st.session_state.expand_parlay = False
+                with st.expander("🎲 生成过关推荐（点击展开）", expanded=st.session_state.expand_parlay):
+                    if st.session_state.expand_parlay:
+                        if not st.session_state.paid_parlay:
+                            # 首次展开，扣费
+                            if not consume_free_trial(st.session_state.user_id):
+                                st.warning("免費次數已用完，請升級到專業版")
+                                st.session_state.expand_parlay = False
+                                st.rerun()
+                            else:
+                                st.session_state.paid_parlay = True
+                                st.rerun()
                         else:
-                            st.session_state.expand_parlay = True
-                            st.rerun()
-                    else:
-                        # 显示推荐内容
-                        if st.button("🔄 重新生成过关推荐", key="generate_parlay_recommendations", use_container_width=True):
-                            with st.spinner("正在计算过关推荐..."):
-                                from parlay_recommender import ParlayRecommender
-                                
-                                recommender = ParlayRecommender()
-                                max_legs = min(len(parlay_races_data), 6)
-                                
-                                # 生成推荐
-                                results = recommender.get_parlay_recommendations_for_schedule(
-                                    races_data=parlay_races_data,
-                                    max_legs=max_legs,
-                                    top_parlay_types=['2x1', '2x3', '3x4', '3x7', '4x11']
-                                )
-                                
-                                if results:
-                                    st.markdown("#### 📊 过关推荐结果")
+                            # 已付费，显示内容
+                            if st.button("🔄 重新生成过关推荐", key="generate_parlay_recommendations", use_container_width=True):
+                                with st.spinner("正在计算过关推荐..."):
+                                    from parlay_recommender import ParlayRecommender
                                     
-                                    for parlay_type, recommendations in results.items():
-                                        config = recommender.parlay_configs.get(parlay_type, {})
-                                        st.markdown(f"**{config.get('description', parlay_type)}**")
+                                    recommender = ParlayRecommender()
+                                    max_legs = min(len(parlay_races_data), 6)
+                                    
+                                    # 生成推荐
+                                    results = recommender.get_parlay_recommendations_for_schedule(
+                                        races_data=parlay_races_data,
+                                        max_legs=max_legs,
+                                        top_parlay_types=['2x1', '2x3', '3x4', '3x7', '4x11']
+                                    )
+                                    
+                                    if results:
+                                        st.markdown("#### 📊 过关推荐结果")
                                         
-                                        for rec in recommendations[:3]:
+                                        for parlay_type, recommendations in results.items():
+                                            config = recommender.parlay_configs.get(parlay_type, {})
+                                            st.markdown(f"**{config.get('description', parlay_type)}**")
+                                            
+                                            for rec in recommendations[:3]:
+                                                legs_display = []
+                                                for sel in rec.selections:
+                                                    legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
+                                                
+                                                risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
+                                                
+                                                with st.container(border=True):
+                                                    col1, col2, col3 = st.columns([2, 1, 1])
+                                                    with col1:
+                                                        st.markdown(f"**{' → '.join(legs_display)}**")
+                                                    with col2:
+                                                        st.markdown(f"賠率: **{rec.total_odds:.1f}**倍")
+                                                        st.markdown(f"聯合概率: {rec.combined_prob:.1f}%")
+                                                    with col3:
+                                                        st.markdown(f"風險: {risk_color} {rec.risk_level}")
+                                                        st.markdown(f"預期ROI: {rec.roi:+.1f}%")
+                                                
+                                                st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
+                                        
+                                        # 最佳推薦汇总
+                                        st.markdown("---")
+                                        st.markdown("#### 🏆 最佳推薦")
+                                        
+                                        best_rec = None
+                                        best_roi = -100
+                                        for recs in results.values():
+                                            for rec in recs:
+                                                if rec.roi > best_roi:
+                                                    best_roi = rec.roi
+                                                    best_rec = rec
+                                        
+                                        if best_rec:
                                             legs_display = []
-                                            for sel in rec.selections:
+                                            for sel in best_rec.selections:
                                                 legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
                                             
-                                            risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
-                                            
-                                            with st.container(border=True):
-                                                col1, col2, col3 = st.columns([2, 1, 1])
-                                                with col1:
-                                                    st.markdown(f"**{' → '.join(legs_display)}**")
-                                                with col2:
-                                                    st.markdown(f"賠率: **{rec.total_odds:.1f}**倍")
-                                                    st.markdown(f"聯合概率: {rec.combined_prob:.1f}%")
-                                                with col3:
-                                                    st.markdown(f"風險: {risk_color} {rec.risk_level}")
-                                                    st.markdown(f"預期ROI: {rec.roi:+.1f}%")
-                                            
-                                            st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
-                                    
-                                    # 最佳推薦汇总
-                                    st.markdown("---")
-                                    st.markdown("#### 🏆 最佳推薦")
-                                    
-                                    best_rec = None
-                                    best_roi = -100
-                                    for recs in results.values():
-                                        for rec in recs:
-                                            if rec.roi > best_roi:
-                                                best_roi = rec.roi
-                                                best_rec = rec
-                                    
-                                    if best_rec:
-                                        legs_display = []
-                                        for sel in best_rec.selections:
-                                            legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
-                                        
-                                        st.success(f"""
-                                        **最佳过关组合**: {' → '.join(legs_display)}
-                                        - 过关方式: {best_rec.parlay_type} ({best_rec.num_bets}注)
-                                        - 总赔率: {best_rec.total_odds:.1f}倍
-                                        - 预期ROI: {best_rec.roi:+.1f}%
-                                        - 建议投注: ${best_rec.total_stake:.0f}
-                                        """)
-                                else:
-                                    st.warning("未找到合适的过关组合，请尝试选择更多场次")
+                                            st.success(f"""
+                                            **最佳过关组合**: {' → '.join(legs_display)}
+                                            - 过关方式: {best_rec.parlay_type} ({best_rec.num_bets}注)
+                                            - 总赔率: {best_rec.total_odds:.1f}倍
+                                            - 预期ROI: {best_rec.roi:+.1f}%
+                                            - 建议投注: ${best_rec.total_stake:.0f}
+                                            """)
+                                    else:
+                                        st.warning("未找到合适的过关组合，请尝试选择更多场次")
+                    else:
+                        st.caption("点击展开并扣费（1次）")
     
     st.markdown("---")
     
