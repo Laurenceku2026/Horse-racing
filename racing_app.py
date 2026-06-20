@@ -1823,6 +1823,10 @@ def render_admin_backtest():
     
     st.markdown(f"## {t()['model_comparison']}")
     st.caption(t()["backtest_period"])
+    # ⭐ 调试：显示当前状态
+    st.write(f"🔍 调试: admin_backtest_completed = {st.session_state.get('admin_backtest_completed', False)}")
+    st.write(f"🔍 调试: admin_backtest_results 存在 = {st.session_state.get('admin_backtest_results') is not None}")
+    st.write(f"🔍 调试: _backtest_just_run = {st.session_state.get('_backtest_just_run', False)}")
     
     # 初始化 session_state 中的日期
     if "admin_backtest_start" not in st.session_state:
@@ -2241,6 +2245,185 @@ def render_admin_backtest():
                     st.warning("所有回测均被取消或失败")
             else:
                 st.warning("請至少選擇一個模型")
+#-----------------
+# ==================== 显示缓存的回测结果（用于 SHAP/热力图后保留） ====================
+    if st.session_state.get("admin_backtest_completed", False):
+        # 如果是刚刚运行回测，已经显示过了，跳过缓存显示并重置标记
+        if st.session_state.get("_backtest_just_run", False):
+            st.session_state._backtest_just_run = False
+        else:
+            cached_results = st.session_state.admin_backtest_results
+            if cached_results:
+                completed_results = [r for r in cached_results if not r.get("cancelled", False)]
+                if completed_results:
+                    st.markdown("#### 📈 模型對比結果")
+                    
+                    # ---- 显示对比表格 ----
+                    compare_df = pd.DataFrame(completed_results)
+                    display_columns = ["模型", "测试场次", "独赢正确率", 
+                                      "前三名命中匹数率", "前三名命中场次率",
+                                      "前三名全中率", "前三名顺序正确率",
+                                      "总投入", "总回报", "ROI",
+                                      "位置ROI", "综合ROI"]
+                    available_cols = [c for c in display_columns if c in compare_df.columns]
+                    compare_df = compare_df[available_cols]
+                    
+                    st.dataframe(
+                        compare_df.style.format({
+                            '独赢正确率': '{:.1f}%',
+                            '前三名命中匹数率': '{:.1f}%',
+                            '前三名命中场次率': '{:.1f}%',
+                            '前三名全中率': '{:.1f}%',
+                            '前三名顺序正确率': '{:.1f}%',
+                            'ROI': '{:+.1f}%',
+                            '位置ROI': '{:+.1f}%',
+                            '综合ROI': '{:+.1f}%',
+                            '总回报': '${:.0f}',
+                            '总投入': '${:.0f}'
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "模型": st.column_config.TextColumn("模型", width="small"),
+                            "测试场次": st.column_config.NumberColumn("场次", width="small"),
+                            "独赢正确率": st.column_config.NumberColumn("独赢", width="small", format="%.1f%%"),
+                            "前三名命中匹数率": st.column_config.NumberColumn("匹数率", width="small", format="%.1f%%"),
+                            "前三名命中场次率": st.column_config.NumberColumn("场次率", width="small", format="%.1f%%"),
+                            "前三名全中率": st.column_config.NumberColumn("全中率", width="small", format="%.1f%%"),
+                            "前三名顺序正确率": st.column_config.NumberColumn("顺序率", width="small", format="%.1f%%"),
+                            "总投入": st.column_config.NumberColumn("投入", width="small", format="$%.0f"),
+                            "总回报": st.column_config.NumberColumn("回报", width="small", format="$%.0f"),
+                            "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
+                            "位置ROI": st.column_config.NumberColumn("位置ROI", width="small", format="%+.1f%%"),
+                            "综合ROI": st.column_config.NumberColumn("综合ROI", width="small", format="%+.1f%%"),
+                        }
+                    )
+                    
+                    # ---- 特征重要性展示 ----
+                    st.markdown("---")
+                    st.markdown("#### 📊 特征重要性分析 (Feature Importance)")
+                    st.caption("显示每个因子对ML模型预测的贡献度")
+                    
+                    for result in completed_results:
+                        model_name = result.get("模型", "")
+                        if model_name in ["LightGBM", "XGBoost", "集成模型"]:
+                            feature_importance = extract_feature_importance_from_result(result)
+                            if feature_importance is not None and not feature_importance.empty:
+                                with st.expander(f"📈 {model_name} - 特征重要性", expanded=True):
+                                    feature_name_map = {
+                                        'win_rate_3': '近3场胜率', 'win_rate_10': '近10场胜率',
+                                        'place_rate_10': '近10场入Q率', 'show_rate_10': '近10场入T率',
+                                        'win_rate_5': '近5场胜率', 'win_rate': '胜率',
+                                        'place_rate': '入Q率', 'show_rate': '入T率',
+                                        'distance_rating': '路程评分', 'trend': '名次趋势',
+                                        'avg_weight': '平均负磅', 'same_course': '同场地',
+                                        'same_distance': '同路程', 'draw': '档位',
+                                        'weight': '负磅变化', 'odds': '赔率',
+                                        'odds_trend': '赔率趋势', 'ev': '期望值',
+                                        'age': '马龄', 'weight_change': '体重变化',
+                                        'incident': '事件报告', 'burst': '冲刺能力',
+                                        'jockey': '骑师', 'trainer': '练马师',
+                                        'jockey_win_rate': '骑师胜率', 'data_used_count': '数据量',
+                                        'actual_weight': '负磅', 'distance': '路程',
+                                        'rating_score': '评分系统', 'same_venue': '同场地',
+                                    }
+                                    display_df = feature_importance.copy()
+                                    display_df['中文名'] = display_df['特征'].map(lambda x: feature_name_map.get(x, x))
+                                    display_df = display_df[display_df['重要性'] > 0]
+                                    display_df = display_df[['中文名', '特征', '重要性']]
+                                    st.dataframe(display_df, use_container_width=True, hide_index=True,
+                                                column_config={
+                                                    "中文名": st.column_config.TextColumn("因子", width="small"),
+                                                    "特征": st.column_config.TextColumn("英文", width="small"),
+                                                    "重要性": st.column_config.NumberColumn("贡献度", width="small", format="%.4f"),
+                                                })
+                                    if len(display_df) > 0:
+                                        import plotly.express as px
+                                        fig = px.bar(display_df, x='重要性', y='中文名', orientation='h',
+                                                     title=f'{model_name} - 因子重要性排名', color='重要性',
+                                                     color_continuous_scale='Blues', text='重要性')
+                                        fig.update_layout(height=max(300, len(display_df)*30), yaxis={'categoryorder': 'total ascending'})
+                                        fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
+                                        st.plotly_chart(fig, use_container_width=True)
+                                    if result.get("from_cache", False):
+                                        st.info("💡 该结果来自缓存（权重和日期范围未变化）")
+                                    else:
+                                        st.success("✅ 该结果来自全新训练")
+                            else:
+                                st.info(f"{model_name}: 无特征重要性数据")
+                    
+                    # ---- SHAP值分析 ----
+                    st.markdown("---")
+                    st.markdown("#### 🔬 SHAP值分析（深度解释）")
+                    st.caption('SHAP值可以显示每个因子是"正向"还是"负向"影响预测结果')
+                    
+                    has_ml_model = any(r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] and r.get("model") is not None for r in completed_results)
+                    if has_ml_model:
+                        with st.form(key="shap_form_cached"):
+                            col_shap_btn, col_shap_info = st.columns([1, 3])
+                            with col_shap_btn:
+                                compute_shap_btn = st.form_submit_button("🔬 计算SHAP值（最近50场）", type="secondary", use_container_width=True)
+                            with col_shap_info:
+                                st.caption("⏱️ 预计耗时 2-5 分钟，仅计算最近50场比赛的SHAP值")
+                            
+                            if compute_shap_btn:
+                                with st.spinner("正在计算SHAP值，请稍候..."):
+                                    ml_result = None
+                                    for r in completed_results:
+                                        if r.get("模型") in ["LightGBM", "XGBoost", "集成模型"] and r.get("model") is not None:
+                                            ml_result = r
+                                            break
+                                    if ml_result:
+                                        shap_results = compute_shap_values(
+                                            ml_result.get("model"),
+                                            ml_result.get("feature_names", []),
+                                            model_type=ml_result.get("模型"),
+                                            sample_limit=50
+                                        )
+                                        if shap_results:
+                                            st.success("✅ SHAP值计算完成！")
+                                            shap_df = shap_results.get("summary_df")
+                                            if shap_df is not None and not shap_df.empty:
+                                                shap_df_display = shap_df[shap_df['平均SHAP值'] > 0.001]
+                                                if not shap_df_display.empty:
+                                                    import plotly.express as px
+                                                    color_map = {'正向 ↑': 'green', '负向 ↓': 'red', '中性 →': 'gray'}
+                                                    fig = px.bar(shap_df_display, x='平均SHAP值', y='特征', orientation='h',
+                                                                 title='SHAP值 - 因子影响方向', color='影响方向',
+                                                                 color_discrete_map=color_map, text='平均SHAP值')
+                                                    fig.update_layout(height=max(300, len(shap_df_display)*30))
+                                                    fig.update_traces(texttemplate='%{text:.4f}', textposition='outside')
+                                                    st.plotly_chart(fig, use_container_width=True)
+                                                    st.dataframe(shap_df_display, use_container_width=True, hide_index=True)
+                                                else:
+                                                    st.info("所有因子的SHAP值都很小")
+                                            else:
+                                                st.warning("SHAP数据为空")
+                                        else:
+                                            st.warning("SHAP值计算失败")
+                                    else:
+                                        st.warning("未找到可用的ML模型")
+                    else:
+                        st.info("请先运行LightGBM或XGBoost回测，然后才能计算SHAP值")
+                    
+                    # ---- 相关性热力图 ----
+                    st.markdown("---")
+                    st.markdown('#### 🔥 因子相关性热力图')
+                    st.caption('显示18个因子之间的相关关系（帮助识别冗余因子）')
+                    
+                    if st.button("📊 计算相关性热力图", use_container_width=True, key="corr_heatmap_cached"):
+                        with st.spinner("正在计算相关性..."):
+                            correlation_fig = compute_correlation_heatmap(
+                                backtest_start.strftime("%Y-%m-%d"),
+                                backtest_end.strftime("%Y-%m-%d")
+                            )
+                            if correlation_fig:
+                                st.plotly_chart(correlation_fig, use_container_width=True)
+                            else:
+                                st.warning("无法计算相关性，请确保有足够的数据")
+                    
+                    st.markdown("---")
+                    st.caption("📌 回測結果基於歷史數據，不構成投資建議")
 # ==================== 管理员面板 ====================
 def render_admin_panel():
     """管理员面板 - 数据编辑器 + 回测 + 用户管理 + 马名映射"""
@@ -10151,6 +10334,7 @@ def render_backtest_page(show_title: bool = True):
     if st.session_state.get("backtest_completed", False):
         # 如果是刚刚运行回测，已经显示过了，跳过缓存显示并重置标记
         if st.session_state.get("_backtest_just_run", False):
+            st.write("🔍 缓存显示块被执行了！")  # ← 添加这行
             st.session_state._backtest_just_run = False
         else:
             cached_results = st.session_state.backtest_results
