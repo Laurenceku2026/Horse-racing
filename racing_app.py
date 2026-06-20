@@ -10047,7 +10047,16 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             result["位置总回报"] = total_position_return
             if total_position_stake > 0:
                 result["位置ROI"] = (total_position_return - total_position_stake) / total_position_stake * 100
-        
+            else:
+                result["位置ROI"] = 0
+            #--------
+            # 综合ROI（独赢 + 位置）
+            result["综合总投入"] = total_win_stake + total_position_stake
+            result["综合总回报"] = total_win_return + total_position_return
+            if result["综合总投入"] > 0:
+                result["综合ROI"] = (result["综合总回报"] - result["综合总投入"]) / result["综合总投入"] * 100
+            else:
+                result["综合ROI"] = 0
         # ⭐ 保存模型和特征重要性（供管理员查看）
         if last_model is not None:
             result["model"] = last_model
