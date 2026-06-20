@@ -5940,83 +5940,25 @@ def render_smart_betting(show_title: bool = True):
     import time
     perf_log = {}
     t0 = time.time()
-    
-    # ========== 🔧 调试代码开始（可删除）==========
-    #with st.expander("🔧 调试信息 - 赛程获取", expanded=False):
-    #    st.write("### 正在检查赛程获取逻辑")
-    #    
-    #    # 1. 检查 API 配置
-    #    api_url = st.secrets.get("HKJC_API_URL", "未配置")
-    #    st.write(f"1. API地址: {api_url}")
-    #    
-    #    # 2. 直接测试 API 调用
-    #    if api_url != "未配置":
-    #        try:
-    #            response = requests.get(f"{api_url}/meetings", timeout=10)
-    #            st.write(f"2. API状态码: {response.status_code}")
-    #            
-    #            if response.status_code == 200:
-    #                data = response.json()
-    #                st.write(f"3. API返回成功: {data.get('success')}")
-    #                
-    #                meetings = data.get("data", [])
-    #                st.write(f"4. 获取到 {len(meetings)} 个赛马日")
-    #                
-    #                for m in meetings:
-    #                    st.write(f"   - {m.get('date')} {m.get('venueCode')}: {len(m.get('races', []))} 场比赛")
-    #            else:
-    #                st.error(f"API返回错误: {response.text}")
-    #        except Exception as e:
-    #            st.error(f"API调用失败: {e}")
-    #    else:
-    #        st.error("API地址未配置！请在 secrets.toml 中设置 HKJC_API_URL")
-    #    
-    #    # 3. 检查数据库中的赛事
-    #    st.write("### 数据库中的未来赛事")
-    #    try:
-    #        headers = get_supabase_headers(use_secret=True)
-    #        today = datetime.now().strftime("%Y-%m-%d")
-    #        url = f"{SUPABASE_URL}/rest/v1/races?race_date=gte.{today}&order=race_date.asc&limit=50"
-    #        response = requests.get(url, headers=headers)
-    #        
-    #        if response.status_code == 200:
-    #            db_races = response.json()
-    #            st.write(f"从数据库获取到 {len(db_races)} 条记录")
-    #            
-    #            if db_races:
-    #                dates = {}
-    #                for r in db_races:
-    #                    date = r.get('race_date')
-    #                    if date not in dates:
-    #                        dates[date] = []
-    #                    dates[date].append(r.get('race_no'))
-    #                
-    #                for date, race_nos in sorted(dates.items()):
-    #                    st.write(f"   - {date}: {len(race_nos)} 场")
-    #            else:
-    #                st.warning("数据库中没有未来赛事")
-    #        else:
-    #            st.error(f"数据库查询失败: {response.status_code}")
-    #    except Exception as e:
-    #        st.error(f"数据库错误: {e}")
-    #    
-    #    # 4. 测试 get_upcoming_races 函数
-    #    st.write("### get_upcoming_races() 返回结果")
-    #    test_races = get_upcoming_races()
-    #    st.write(f"返回 {len(test_races)} 场赛事")
-    #    
-    #    if test_races:
-    #        by_date = {}
-    #        for r in test_races:
-    #            date = r.get('race_date')
-    #            if date not in by_date:
-    #                by_date[date] = []
-    #            by_date[date].append(r.get('race_no'))
-    #        
-    #        for date, race_nos in sorted(by_date.items()):
-    #            st.write(f"   - {date}: {len(race_nos)} 场")
-    # ========== 🔧 调试代码结束 ==========
-    
+#--------------------
+    # ⭐ 初始化折叠状态（用于扣费控制）
+    if "expand_win" not in st.session_state:
+        st.session_state.expand_win = False
+    if "expand_qin" not in st.session_state:
+        st.session_state.expand_qin = False
+    if "expand_tri" not in st.session_state:
+        st.session_state.expand_tri = False
+    if "expand_qin_recommend" not in st.session_state:
+        st.session_state.expand_qin_recommend = False
+    if "prev_selected_race" not in st.session_state:
+        st.session_state.prev_selected_race = None
+    if "prev_selected_date" not in st.session_state:
+        st.session_state.prev_selected_date = None
+    if "expand_parlay" not in st.session_state:
+        st.session_state.expand_parlay = False
+    if "expand_scoring_weights" not in st.session_state:
+        st.session_state.expand_scoring_weights = False
+    #------------------
     if show_title:
         st.markdown(f"## {t()['smart_betting']}")
     perf_log["初始化"] = time.time() - t0    
@@ -6070,23 +6012,39 @@ def render_smart_betting(show_title: bool = True):
     #-----------------
     lang = st.session_state.get("lang", "zh")
     # ==================== 评分权重设置（用户临时调整） ====================
-    with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=False):
-        st.caption("调整评分因子权重，仅对当前会话有效，退出后恢复默认值" if lang == "zh" else "Adjust rating weights, only valid for current session")
-        
-        # 从数据库加载默认配置
-        @st.cache_data(ttl=300, show_spinner=False)
-        def load_scoring_config_user():
-            try:
-                headers = get_supabase_headers(use_secret=True)
-                url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
-                response = requests.get(url, headers=headers)
-                if response.status_code == 200 and response.json():
-                    return response.json()[0]
-                return None
-            except Exception:
-                return None
-        
-        config = load_scoring_config_user()
+    # ⭐ 初始化折叠状态
+    if "expand_scoring_weights" not in st.session_state:
+        st.session_state.expand_scoring_weights = False
+    
+    with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=st.session_state.expand_scoring_weights):
+        # ⭐ 扣费逻辑：首次展开时扣费
+        if not st.session_state.expand_scoring_weights:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+                st.session_state.expand_scoring_weights = False
+            else:
+                st.session_state.expand_scoring_weights = True
+                st.rerun()
+        else:
+            # 显示权重设置内容
+            st.caption("调整评分因子权重，仅对当前会话有效，退出后恢复默认值" if lang == "zh" else "Adjust rating weights, only valid for current session")
+            
+            # 从数据库加载默认配置
+            @st.cache_data(ttl=300, show_spinner=False)
+            def load_scoring_config_user():
+                try:
+                    headers = get_supabase_headers(use_secret=True)
+                    url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
+                    response = requests.get(url, headers=headers)
+                    if response.status_code == 200 and response.json():
+                        return response.json()[0]
+                    return None
+                except Exception:
+                    return None
+            
+            config = load_scoring_config_user()
+            
+            # ... 后续权重调整代码（保持不变） ...
         
         # 如果配置不存在，使用默认值
         if config is None:
@@ -6514,6 +6472,18 @@ def render_smart_betting(show_title: bool = True):
         race_options.append(f"第{race_no}場 - {distance}米 ({race_class})")
     
     selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
+    #---------
+    # ⭐ 检查场次是否变化，如果变化则重置所有折叠状态
+    current_race_key = f"{selected_date}_{selected_idx}"
+    if st.session_state.get("prev_selected_race") != current_race_key:
+        st.session_state.expand_win = False
+        st.session_state.expand_qin = False
+        st.session_state.expand_tri = False
+        st.session_state.expand_qin_recommend = False
+        st.session_state.expand_parlay = False
+        st.session_state.expand_scoring_weights = False
+        st.session_state.prev_selected_race = current_race_key
+    #----------
     selected_race = races[selected_idx]
     
     col1, col2 = st.columns([1, 4])
@@ -6863,8 +6833,8 @@ def render_smart_betting(show_title: bool = True):
     perf_log["显示表格"] = t5 - t4
         
     #------------
-    # 投注建议 - 使用AI策略引擎
-    st.markdown(f"#### {t()['ai_strategy_suggestions']}")
+    # ==================== AI 投注策略建议（折叠版） ====================
+    st.markdown(f"### {t()['ai_strategy_suggestions']}")
     st.caption(t()["ev_description"])
     
     # 准备策略引擎所需数据
@@ -6881,7 +6851,6 @@ def render_smart_betting(show_title: bool = True):
         except:
             odds = 0
         odds_win.append(odds)
-        # 位置赔率约为独赢的30%（估算）
         odds_place.append(odds * 0.3 if odds > 0 else 0)
     
     # 获取连赢和单T赔率（从数据库）
@@ -6899,95 +6868,232 @@ def render_smart_betting(show_title: bool = True):
         odds_tri=odds_tri
     )
     
-    # 创建三列显示建议
-    col1, col2, col3 = st.columns(3)
-    
-    # 低风险 - 独赢/位置
-    with col1:
-        st.markdown(f"**{t()['low_risk']}**")
-        if recommendations.get('win') and recommendations['win']:
-            rec = recommendations['win'][0]
-            st.info(f"**{rec.description}**")
-            st.write(f"{t()['win_odds']}: {rec.odds}倍")
-            st.write(f"預期ROI: {rec.roi:+.1f}%")
-            st.caption(f"💡 {rec.reason}")
-        elif recommendations.get('place') and recommendations['place']:
-            rec = recommendations['place'][0]
-            st.info(f"**{rec.description}**")
-            st.write(f"{t()['place_odds']}: {rec.odds}倍")
-            st.write(f"預期ROI: {rec.roi:+.1f}%")
-            st.caption(f"💡 {rec.reason}")
-        else:
-            st.write(t()["no_suggestions"])
-    
-    # 中风险 - 连赢
-    with col2:
-        st.markdown(f"**{t()['medium_risk']}**")
-        if recommendations.get('qin') and recommendations['qin']:
-            rec = recommendations['qin'][0]
-            st.warning(f"**{rec.description}**")
-            st.write(f"{t()['win_odds']}: {rec.odds}倍")
-            st.write(f"預期ROI: {rec.roi:+.1f}%")
-            st.caption(f"💡 {rec.reason}")
-        else:
-            st.write(t()["no_suggestions"])
-    
-    # 高风险 - 单T
-    with col3:
-        st.markdown(f"**{t()['high_risk']}**")
-        if recommendations.get('tri') and recommendations['tri']:
-            rec = recommendations['tri'][0]
-            st.error(f"**{rec.description}**")
-            st.write(f"{t()['win_odds']}: {rec.odds}倍")
-            st.write(f"預期ROI: {rec.roi:+.1f}%")
-            st.caption(f"💡 {rec.reason}")
-        else:
-            st.write(t()["no_suggestions"])
-    
-    # ==================== 连赢推荐（追加）====================
-    st.markdown(f"#### {t()['qin_recommendation']}")
-    
-    if len(sorted_runners) >= 2:
-        # 获取前两名高胜率马的组合
-        top2 = sorted_runners[:2]
-        horse1 = top2[0]
-        horse2 = top2[1]
-        
-        horse1_id = horse1.get('horse_id')
-        horse2_id = horse2.get('horse_id')
-        horse1_name = horse1.get('horse_name', '')
-        horse2_name = horse2.get('horse_name', '')
-        
-        # 获取赔率
-        odds1_raw = horse1.get('odds_win')
-        odds2_raw = horse2.get('odds_win')
-        
-        try:
-            odds1 = float(odds1_raw) if odds1_raw else 0
-            odds2 = float(odds2_raw) if odds2_raw else 0
-        except (ValueError, TypeError):
-            odds1 = odds2 = 0
-        
-        # 估算连赢赔率（实际应从 API 获取 QIN 赔率）
-        estimated_qin_odds = (odds1 * odds2) / 2 if odds1 > 0 and odds2 > 0 else 0
-        
-        if estimated_qin_odds > 0:
-            prob1 = horse1.get('win_probability', 0)
-            prob2 = horse2.get('win_probability', 0)
-            joint_prob = prob1 * prob2 * 2
-            
-            if joint_prob * estimated_qin_odds > 1:
-                suggested_stake = bankroll * 0.05 * risk_multiplier
-                st.success(f"**{horse1_name} + {horse2_name}** | {t()['win_odds']}: {estimated_qin_odds:.1f} | 聯合概率: {joint_prob*100:.1f}% | 建議注額: HK${suggested_stake:.0f}")
+    # ==================== 折叠1：独赢/位置 ====================
+    with st.expander("🎯 独赢/位置 推荐", expanded=st.session_state.expand_win):
+        # 扣费逻辑
+        if not st.session_state.expand_win:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+                st.session_state.expand_win = False
             else:
-                st.info(t()["qin_ev_insufficient"].format(horse1=horse1_name, horse2=horse2_name))
+                st.session_state.expand_win = True
+                st.rerun()
         else:
-            st.caption("暫無連贏賠率數據")
-    else:
-        st.caption("馬匹數量不足，無法推薦連贏")
+            # 显示内容
+            if recommendations.get('win') and recommendations['win']:
+                rec = recommendations['win'][0]
+                st.info(f"**{rec.description}**")
+                st.write(f"獨贏賠率: {rec.odds:.1f}倍")
+                st.write(f"預期ROI: {rec.roi:+.1f}%")
+                st.caption(f"💡 {rec.reason}")
+            elif recommendations.get('place') and recommendations['place']:
+                rec = recommendations['place'][0]
+                st.info(f"**{rec.description}**")
+                st.write(f"位置賠率: {rec.odds:.1f}倍")
+                st.write(f"預期ROI: {rec.roi:+.1f}%")
+                st.caption(f"💡 {rec.reason}")
+            else:
+                st.write("暫無建議")
+    
+    # ==================== 折叠2：连赢 ====================
+    with st.expander("🔗 连赢 推荐", expanded=st.session_state.expand_qin):
+        if not st.session_state.expand_qin:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+                st.session_state.expand_qin = False
+            else:
+                st.session_state.expand_qin = True
+                st.rerun()
+        else:
+            # 显示内容
+            if recommendations.get('qin') and recommendations['qin']:
+                for i, rec in enumerate(recommendations['qin'][:3]):
+                    st.warning(f"**組合{i+1}: {rec.description}**")
+                    st.write(f"估算賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                    if i < len(recommendations['qin'][:3]) - 1:
+                        st.markdown("---")
+            else:
+                # 没有真实赔率时，显示估算
+                st.info("暫無連贏賠率數據，顯示估算建議")
+                if len(sorted_runners) >= 2:
+                    top2 = sorted_runners[:2]
+                    horse1, horse2 = top2[0], top2[1]
+                    odds1 = horse1.get('odds_win', 0)
+                    odds2 = horse2.get('odds_win', 0)
+                    if odds1 > 0 and odds2 > 0:
+                        estimated_odds = (odds1 * odds2) / 2
+                        prob1 = horse1.get('win_probability', 0)
+                        prob2 = horse2.get('win_probability', 0)
+                        joint_prob = prob1 * prob2 * 2
+                        ev = joint_prob * estimated_odds - 1
+                        st.write(f"**{horse1.get('horse_name', '')} + {horse2.get('horse_name', '')}**")
+                        st.write(f"估算賠率: {estimated_odds:.1f}倍")
+                        st.write(f"聯合概率: {joint_prob*100:.1f}%")
+                        st.write(f"期望值(EV): {ev:+.2f}")
+                        if ev > 0.15:
+                            st.success("✅ EV > 0.15，建議投注")
+                        else:
+                            st.info("❌ EV 不足，暫不建議")
+                else:
+                    st.write("馬匹數量不足")
+    
+    # ==================== 折叠3：单T ====================
+    with st.expander("🎲 单T 推荐", expanded=st.session_state.expand_tri):
+        if not st.session_state.expand_tri:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+                st.session_state.expand_tri = False
+            else:
+                st.session_state.expand_tri = True
+                st.rerun()
+        else:
+            # 显示内容
+            if recommendations.get('tri') and recommendations['tri']:
+                for i, rec in enumerate(recommendations['tri'][:3]):
+                    st.error(f"**組合{i+1}: {rec.description}**")
+                    st.write(f"估算賠率: {rec.odds:.1f}倍")
+                    st.write(f"預期ROI: {rec.roi:+.1f}%")
+                    st.caption(f"💡 {rec.reason}")
+                    if i < len(recommendations['tri'][:3]) - 1:
+                        st.markdown("---")
+            else:
+                # 没有真实赔率时，显示估算
+                st.info("暫無單T賠率數據，顯示估算建議")
+                if len(sorted_runners) >= 3:
+                    top3 = sorted_runners[:3]
+                    horse1, horse2, horse3 = top3[0], top3[1], top3[2]
+                    odds1 = horse1.get('odds_win', 0)
+                    odds2 = horse2.get('odds_win', 0)
+                    odds3 = horse3.get('odds_win', 0)
+                    if odds1 > 0 and odds2 > 0 and odds3 > 0:
+                        estimated_odds = odds1 * odds2 * odds3 * 0.5
+                        prob1 = horse1.get('win_probability', 0)
+                        prob2 = horse2.get('win_probability', 0)
+                        prob3 = horse3.get('win_probability', 0)
+                        joint_prob = prob1 * prob2 * prob3 * 6
+                        ev = joint_prob * estimated_odds - 1
+                        st.write(f"**{horse1.get('horse_name', '')} + {horse2.get('horse_name', '')} + {horse3.get('horse_name', '')}**")
+                        st.write(f"估算賠率: {estimated_odds:.1f}倍")
+                        st.write(f"聯合概率: {joint_prob*100:.1f}%")
+                        st.write(f"期望值(EV): {ev:+.2f}")
+                        if ev > 0.15:
+                            st.success("✅ EV > 0.15，建議投注")
+                        else:
+                            st.info("❌ EV 不足，暫不建議")
+                else:
+                    st.write("馬匹數量不足")
     
     st.markdown("---")
-    
+    #------------
+    # ==================== 连赢推荐（折叠版） ====================
+    with st.expander("🔗 連贏推薦（點擊展開）", expanded=st.session_state.expand_qin_recommend):
+        # 扣费逻辑
+        if not st.session_state.expand_qin_recommend:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning("免費次數已用完，請升級到專業版")
+                st.session_state.expand_qin_recommend = False
+            else:
+                st.session_state.expand_qin_recommend = True
+                st.rerun()
+        else:
+            # 显示连赢推荐内容
+            if len(sorted_runners) < 2:
+                st.warning("馬匹數量不足，無法推薦連贏")
+            else:
+                # 生成多组连赢组合（取前5名马匹的组合）
+                top_n = min(5, len(sorted_runners))
+                top_runners = sorted_runners[:top_n]
+                
+                # 生成组合列表
+                combinations = []
+                for i in range(len(top_runners)):
+                    for j in range(i+1, len(top_runners)):
+                        h1 = top_runners[i]
+                        h2 = top_runners[j]
+                        odds1 = h1.get('odds_win', 0)
+                        odds2 = h2.get('odds_win', 0)
+                        
+                        # 估算连赢赔率
+                        if odds1 > 0 and odds2 > 0:
+                            estimated_odds = (odds1 * odds2) / 2
+                        else:
+                            estimated_odds = 0
+                        
+                        prob1 = h1.get('win_probability', 0)
+                        prob2 = h2.get('win_probability', 0)
+                        joint_prob = prob1 * prob2 * 2
+                        
+                        ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
+                        
+                        # 建议投注额（EV > 0.15 时建议）
+                        if ev > 0.15:
+                            suggested_stake = bankroll * 0.05 * risk_multiplier
+                        else:
+                            suggested_stake = 0
+                        
+                        combinations.append({
+                            'horse1_name': h1.get('horse_name', ''),
+                            'horse2_name': h2.get('horse_name', ''),
+                            'horse1_no': h1.get('horse_no', ''),
+                            'horse2_no': h2.get('horse_no', ''),
+                            'estimated_odds': estimated_odds,
+                            'joint_prob': joint_prob,
+                            'ev': ev,
+                            'suggested_stake': suggested_stake,
+                            'recommended': ev > 0.15,
+                            'h1': h1,
+                            'h2': h2
+                        })
+                
+                # 按EV排序，显示前5组
+                combinations.sort(key=lambda x: x['ev'], reverse=True)
+                top_combos = combinations[:5]
+                
+                if not top_combos or all(c['estimated_odds'] <= 0 for c in top_combos):
+                    st.info("無法計算連贏賠率，請確保有足夠的賠率數據")
+                else:
+                    # 显示组合列表（带复选框）
+                    selected_qin_combos = []
+                    
+                    st.caption("💡 勾選您感興趣的組合，底部將顯示總投注額")
+                    st.markdown("---")
+                    
+                    for idx, combo in enumerate(top_combos):
+                        if combo['estimated_odds'] <= 0:
+                            continue
+                        
+                        col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1])
+                        
+                        with col1:
+                            st.write(f"**{combo['horse1_name']}({combo['horse1_no']}) + {combo['horse2_name']}({combo['horse2_no']})**")
+                        with col2:
+                            st.write(f"賠率: {combo['estimated_odds']:.1f}倍")
+                        with col3:
+                            ev_color = "🟢" if combo['ev'] > 0.15 else "🟡" if combo['ev'] > 0 else "🔴"
+                            st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
+                        with col4:
+                            if combo['recommended']:
+                                is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=True)
+                            else:
+                                is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=False)
+                        
+                        if is_selected:
+                            selected_qin_combos.append(combo)
+                        
+                        st.markdown("---")
+                    
+                    # 底部汇总
+                    if selected_qin_combos:
+                        total_qin_stake = sum(c['suggested_stake'] for c in selected_qin_combos if c['suggested_stake'] > 0)
+                        if total_qin_stake == 0:
+                            total_qin_stake = len(selected_qin_combos) * 20
+                        
+                        st.success(f"✅ 已選擇 {len(selected_qin_combos)} 組連贏，建議總投注額: HK${total_qin_stake:.0f}")
+                        st.caption("⚠️ 投注前請確認賠率變動，建議以馬會公佈為準")
+                    else:
+                        st.info("請勾選您感興趣的連贏組合")
     # ==================== 新增：過関投注推薦器 ====================
     st.markdown(f"## {t()['parlay_recommendation']}")
     st.caption(t()["parlay_description"])
@@ -7100,97 +7206,99 @@ def render_smart_betting(show_title: bool = True):
                     })
             
             if len(parlay_races_data) >= 2:
-                # 运行过关推荐
-                if st.button(t()["generate_parlay"], key="generate_parlay_recommendations", use_container_width=True):
-                    if not consume_free_trial(st.session_state.user_id):
-                        st.warning("免費次數已用完，請升級到專業版")
+                # 运行过关推荐（折叠版）
+                with st.expander("🎲 生成过关推荐（点击展开）", expanded=st.session_state.get("expand_parlay", False)):
+                    # 扣费逻辑（首次展开时扣费）
+                    if not st.session_state.get("expand_parlay", False):
+                        if not consume_free_trial(st.session_state.user_id):
+                            st.warning("免費次數已用完，請升級到專業版")
+                            st.session_state.expand_parlay = False
+                        else:
+                            st.session_state.expand_parlay = True
+                            st.rerun()
                     else:
-                        with st.spinner("正在计算过关推荐..."):
-                            from parlay_recommender import ParlayRecommender
-                            
-                            recommender = ParlayRecommender()
-                            max_legs = min(len(parlay_races_data), 6)
-                            
-                            # 生成推荐
-                            results = recommender.get_parlay_recommendations_for_schedule(
-                                races_data=parlay_races_data,
-                                max_legs=max_legs,
-                                top_parlay_types=['2x1', '2x3', '3x4', '3x7', '4x11']
-                            )
-                            
-                            if results:
-                                st.markdown("#### 📊 过关推荐结果")
+                        # 显示推荐内容
+                        if st.button("🔄 重新生成过关推荐", key="generate_parlay_recommendations", use_container_width=True):
+                            with st.spinner("正在计算过关推荐..."):
+                                from parlay_recommender import ParlayRecommender
                                 
-                                for parlay_type, recommendations in results.items():
-                                    config = recommender.parlay_configs.get(parlay_type, {})
-                                    st.markdown(f"**{config.get('description', parlay_type)}**")
+                                recommender = ParlayRecommender()
+                                max_legs = min(len(parlay_races_data), 6)
+                                
+                                # 生成推荐
+                                results = recommender.get_parlay_recommendations_for_schedule(
+                                    races_data=parlay_races_data,
+                                    max_legs=max_legs,
+                                    top_parlay_types=['2x1', '2x3', '3x4', '3x7', '4x11']
+                                )
+                                
+                                if results:
+                                    st.markdown("#### 📊 过关推荐结果")
                                     
-                                    for rec in recommendations[:3]:  # 每种类型显示前3个
-                                        # 构建显示文本
+                                    for parlay_type, recommendations in results.items():
+                                        config = recommender.parlay_configs.get(parlay_type, {})
+                                        st.markdown(f"**{config.get('description', parlay_type)}**")
+                                        
+                                        for rec in recommendations[:3]:
+                                            legs_display = []
+                                            for sel in rec.selections:
+                                                legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
+                                            
+                                            risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
+                                            
+                                            with st.container(border=True):
+                                                col1, col2, col3 = st.columns([2, 1, 1])
+                                                with col1:
+                                                    st.markdown(f"**{' → '.join(legs_display)}**")
+                                                with col2:
+                                                    st.markdown(f"賠率: **{rec.total_odds:.1f}**倍")
+                                                    st.markdown(f"聯合概率: {rec.combined_prob:.1f}%")
+                                                with col3:
+                                                    st.markdown(f"風險: {risk_color} {rec.risk_level}")
+                                                    st.markdown(f"預期ROI: {rec.roi:+.1f}%")
+                                            
+                                            st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
+                                    
+                                    # 最佳推薦汇总
+                                    st.markdown("---")
+                                    st.markdown("#### 🏆 最佳推薦")
+                                    
+                                    best_rec = None
+                                    best_roi = -100
+                                    for recs in results.values():
+                                        for rec in recs:
+                                            if rec.roi > best_roi:
+                                                best_roi = rec.roi
+                                                best_rec = rec
+                                    
+                                    if best_rec:
                                         legs_display = []
-                                        for sel in rec.selections:
+                                        for sel in best_rec.selections:
                                             legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
                                         
-                                        # 风险颜色
-                                        risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
-                                        
-                                        with st.container(border=True):
-                                            col1, col2, col3 = st.columns([2, 1, 1])
-                                            with col1:
-                                                st.markdown(f"**{' → '.join(legs_display)}**")
-                                            with col2:
-                                                st.markdown(f"賠率: **{rec.total_odds:.1f}**倍")
-                                                st.markdown(f"聯合概率: {rec.combined_prob:.1f}%")
-                                            with col3:
-                                                st.markdown(f"風險: {risk_color} {rec.risk_level}")
-                                                st.markdown(f"預期ROI: {rec.roi:+.1f}%")
-                                        
-                                        # 投注建议
-                                        st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
-                                
-                                # 最佳推薦汇总
-                                st.markdown("---")
-                                st.markdown("#### 🏆 最佳推薦")
-                                
-                                # 找出ROI最高的推荐
-                                best_rec = None
-                                best_roi = -100
-                                for recs in results.values():
-                                    for rec in recs:
-                                        if rec.roi > best_roi:
-                                            best_roi = rec.roi
-                                            best_rec = rec
-                                
-                                if best_rec:
-                                    legs_display = []
-                                    for sel in best_rec.selections:
-                                        legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
-                                    
-                                    st.success(f"""
-                                    **最佳过关组合**: {' → '.join(legs_display)}
-                                    - 过关方式: {best_rec.parlay_type} ({best_rec.num_bets}注)
-                                    - 总赔率: {best_rec.total_odds:.1f}倍
-                                    - 预期ROI: {best_rec.roi:+.1f}%
-                                    - 建议投注: ${best_rec.total_stake:.0f}
-                                    """)
-                            else:
-                                st.warning("未找到合适的过关组合，请尝试选择更多场次")
-            else:
-                st.warning("所选场次数据不足，请刷新后重试")
-        else:
-            st.info("请至少选择2场比赛进行过关推荐")
-    else:
-        st.info("当前赛日赛事不足2场，无法进行过关推荐")
+                                        st.success(f"""
+                                        **最佳过关组合**: {' → '.join(legs_display)}
+                                        - 过关方式: {best_rec.parlay_type} ({best_rec.num_bets}注)
+                                        - 总赔率: {best_rec.total_odds:.1f}倍
+                                        - 预期ROI: {best_rec.roi:+.1f}%
+                                        - 建议投注: ${best_rec.total_stake:.0f}
+                                        """)
+                                else:
+                                    st.warning("未找到合适的过关组合，请尝试选择更多场次")
     
     st.markdown("---")
     
     # ==================== 全天优化投注 ====================
     st.markdown(f"### {t()['full_day_optimization']}")
     st.caption(t()["kelly_description"])
-    
+    #----------------
     if st.button(t()["generate_full_day"], key="generate_full_day", use_container_width=True, type="primary"):
-        with st.spinner("正在計算全天投注策略..."):
-            all_bets = []
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在計算全天投注策略..."):
+                all_bets = []
+                # ... 后续代码 ...
             total_stake = 0
             total_expected = 0
             
@@ -7301,10 +7409,14 @@ def render_smart_betting(show_title: bool = True):
     # ==================== 过关组合推荐 ====================
     st.markdown(f"### {t()['parlay_generation']}")
     st.caption(t()["parlay_description"])
-    
+    #--------------------
     if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True):
-        with st.spinner("正在計算過關組合..."):
-            confidence_horses = []
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在計算過關組合..."):
+                confidence_horses = []
+                # ... 后续代码 ...
             
             for race in races:
                 race_runners = get_race_runners_with_details(
