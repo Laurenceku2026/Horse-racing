@@ -1585,25 +1585,24 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
         import pandas as pd
         import numpy as np
         
-        # ⭐ 首先检查 shap 库是否安装
+        # 检查 shap 库是否安装
         try:
             import shap
         except ImportError:
             print("⚠️ shap 库未安装，请运行: pip install shap")
             return None
         
-        # ⭐ 检查是否有保存的训练数据
+        # 检查是否有保存的训练数据
         X_sample = None
         if "admin_shap_train_data" in st.session_state:
             train_data = st.session_state.admin_shap_train_data
             X_sample = train_data.get('X_sample')
             if X_sample is not None and len(X_sample) > 0:
-                # 确保列顺序正确
                 if isinstance(X_sample, pd.DataFrame):
                     X_sample = X_sample[feature_names] if all(f in X_sample.columns for f in feature_names) else X_sample
                 print(f"✅ 使用训练数据，样本数: {len(X_sample)}")
         
-        # ⭐ 如果没有训练数据，使用随机数据（降级方案）
+        # 降级方案：随机数据
         if X_sample is None:
             print("⚠️ 未找到训练数据，使用随机数据（SHAP值可能不准确）")
             np.random.seed(42)
@@ -1612,7 +1611,6 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
                 columns=feature_names
             )
         else:
-            # 限制样本数量
             if len(X_sample) > sample_limit:
                 X_sample = X_sample.sample(n=sample_limit, random_state=42)
         
@@ -1625,52 +1623,43 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
             for sub_name, sub_model in [('lightgbm', model.get('lightgbm')), ('xgboost', model.get('xgboost'))]:
                 if sub_model is not None:
                     try:
-                        # 检查模型类别数
-                        n_classes = sub_model.n_classes_ if hasattr(sub_model, 'n_classes_') else 2
                         explainer = shap.TreeExplainer(sub_model)
                         shap_vals = explainer.shap_values(X_sample)
-                        
-                        # 处理三分类情况：取类别2（好马组）
+                        # 处理多分类：取类别2（好马组）
                         if isinstance(shap_vals, list) and len(shap_vals) >= 3:
                             shap_vals = shap_vals[2]
                         elif isinstance(shap_vals, list):
                             shap_vals = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
-                        
-                        shap_values_list.append(np.abs(shap_vals).mean(axis=0))
+                        shap_values_list.append(shap_vals)
                     except Exception as e:
                         print(f"子模型 SHAP 计算失败 ({sub_name}): {e}")
                         continue
             
             if shap_values_list:
+                # 平均所有子模型的 SHAP 值
                 shap_values = np.mean(shap_values_list, axis=0)
             else:
                 return None
         
         # LightGBM 单模型
         elif model_type == "LightGBM":
-            n_classes = model.n_classes_ if hasattr(model, 'n_classes_') else 2
             explainer = shap.TreeExplainer(model)
             shap_vals = explainer.shap_values(X_sample)
-            
             if isinstance(shap_vals, list) and len(shap_vals) >= 3:
-                shap_vals = shap_vals[2]  # 取好马组
+                shap_vals = shap_vals[2]
             elif isinstance(shap_vals, list):
                 shap_vals = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
-            
-            shap_values = np.abs(shap_vals).mean(axis=0)
+            shap_values = shap_vals
         
         # XGBoost 单模型
         elif model_type == "XGBoost":
-            n_classes = model.n_classes_ if hasattr(model, 'n_classes_') else 2
             explainer = shap.TreeExplainer(model)
             shap_vals = explainer.shap_values(X_sample)
-            
             if isinstance(shap_vals, list) and len(shap_vals) >= 3:
-                shap_vals = shap_vals[2]  # 取好马组
+                shap_vals = shap_vals[2]
             elif isinstance(shap_vals, list):
                 shap_vals = shap_vals[1] if len(shap_vals) > 1 else shap_vals[0]
-            
-            shap_values = np.abs(shap_vals).mean(axis=0)
+            shap_values = shap_vals
         
         else:
             return None
@@ -1678,36 +1667,45 @@ def compute_shap_values(model, feature_names: List[str], model_type: str, sample
         if shap_values is None:
             return None
         
-        # 创建汇总 DataFrame
+        # ==================== 计算汇总指标 ====================
+        # 1. 平均绝对 SHAP 值（衡量影响大小）
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)
+        
+        # 2. 平均 SHAP 值（带符号，用于判断方向）
+        mean_shap = shap_values.mean(axis=0)
+        
+        # 创建 DataFrame
         summary_df = pd.DataFrame({
             '特征': feature_names,
-            '平均SHAP值': shap_values
+            '平均SHAP值': mean_abs_shap,      # 影响大小（绝对值）
+            '平均SHAP值(带符号)': mean_shap,  # 方向信息
         }).sort_values('平均SHAP值', ascending=False)
         
         # 过滤掉重要性为0的因子
         summary_df = summary_df[summary_df['平均SHAP值'] > 0.001]
         
-        # 添加影响方向
+        # ==================== 判断影响方向（使用带符号的平均值） ====================
         direction = []
         explanation = []
-        for i, name in enumerate(feature_names):
-            if i < len(shap_values):
-                avg_shap = shap_values[i]
-                if avg_shap > 0.005:
-                    direction.append("正向 ↑")
-                    explanation.append("数值越大，胜率越高")
-                elif avg_shap < -0.005:
-                    direction.append("负向 ↓")
-                    explanation.append("数值越大，胜率越低")
-                else:
-                    direction.append("中性 →")
-                    explanation.append("影响较小或中性")
+        # 阈值可调，此处设为 0.005 仍然有效，若希望更敏感可降至 0.001
+        threshold = 0.005
+        for _, row in summary_df.iterrows():
+            avg_sign = row['平均SHAP值(带符号)']
+            if avg_sign > threshold:
+                direction.append("正向 ↑")
+                explanation.append("该因子值增大，跑入前三名概率升高")
+            elif avg_sign < -threshold:
+                direction.append("负向 ↓")
+                explanation.append("该因子值增大，跑入前三名概率降低")
             else:
                 direction.append("中性 →")
-                explanation.append("无数据")
+                explanation.append("该因子影响方向不明显（正负抵消）")
         
-        summary_df['影响方向'] = direction[:len(summary_df)]
-        summary_df['说明'] = explanation[:len(summary_df)]
+        summary_df['影响方向'] = direction
+        summary_df['说明'] = explanation
+        
+        # 删除辅助列（带符号的平均值不显示）
+        summary_df = summary_df.drop(columns=['平均SHAP值(带符号)'])
         
         return {'summary_df': summary_df}
         
