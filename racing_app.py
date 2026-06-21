@@ -7080,9 +7080,9 @@ def render_smart_betting(show_title: bool = True):
                     st.caption(f"💡 {rec.reason}")
                 else:
                     st.write("暫無建議")
+        #------
         else:
-            st.caption("点击展开并扣费（1次）")
-            # 显示内容
+            # 已付费，显示内容
             if recommendations.get('tri') and recommendations['tri']:
                 for i, rec in enumerate(recommendations['tri'][:3]):
                     st.error(f"**組合{i+1}: {rec.description}**")
@@ -7097,9 +7097,9 @@ def render_smart_betting(show_title: bool = True):
                 if len(sorted_runners) >= 3:
                     top3 = sorted_runners[:3]
                     horse1, horse2, horse3 = top3[0], top3[1], top3[2]
-                    odds1 = horse1.get('odds_win', 0)
-                    odds2 = horse2.get('odds_win', 0)
-                    odds3 = horse3.get('odds_win', 0)
+                    odds1 = horse1.get('odds_win', 0) or 0
+                    odds2 = horse2.get('odds_win', 0) or 0
+                    odds3 = horse3.get('odds_win', 0) or 0
                     if odds1 > 0 and odds2 > 0 and odds3 > 0:
                         estimated_odds = odds1 * odds2 * odds3 * 0.5
                         prob1 = horse1.get('win_probability', 0)
