@@ -5775,41 +5775,25 @@ def get_trainer_base_scores() -> Dict[str, int]:
 def get_model_predictions(race_date: str, venue: str, race_no: int, 
                           runners: List[Dict], model_type: str, model=None) -> List[float]:
     """
-    获取 ML 模型预测的胜率（三分类版本）
-    使用与回测相同的逻辑：好马组概率 → 取前3名
-    
-    参数：
-        race_date: 赛事日期
-        venue: 场地
-        race_no: 场次
-        runners: 出赛马匹列表
-        model_type: 'lightgbm' | 'xgboost' | 'ensemble'
-        model: 预训练模型（如果为None，则返回默认概率）
-    
-    返回：
-        每匹马的"好马组概率"列表
+    获取 ML 模型预测的胜率
+    支持二分类和三分类模型
     """
     from scoring_engine import get_ml_config
     ml_config = get_ml_config()
     recent_games = ml_config.get("recent_games", 60)
     
-    # 如果没有 runners 或 model，返回默认概率
     if not runners:
         return []
     if model is None:
         return [0.34] * len(runners)
     
-    # 获取赛事距离
     distance = runners[0].get('distance', 1200) if runners else 1200
     
-    # 获取马匹往绩缓存
     horse_ids = [r.get('horse_id') for r in runners if r.get('horse_id')]
     if not horse_ids:
         return [0.34] * len(runners)
     
     perf_cache = get_horses_performances_batch(tuple(set(horse_ids)))
-    
-    # 获取辅助数据
     horse_birth_years = get_horse_birth_years_from_db()
     jockey_win_rates = get_jockey_win_rates_from_db()
     trainer_base_scores = get_trainer_base_scores()
@@ -5822,10 +5806,8 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
             predictions.append(0.34)
             continue
         
-        # 获取往绩
         past_before = perf_cache.get(horse_id, [])[:recent_games]
         
-        # 构建完整特征（30个因子）
         features = build_ml_features_for_prediction(
             runner, past_before, race_date, venue, distance,
             horse_birth_years, jockey_win_rates, trainer_base_scores,
@@ -5833,15 +5815,19 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
         )
         
         if features:
-            # 使用三分类预测（return_all_probs=True）
-            try:
-                all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
-                if isinstance(all_probs, list) and len(all_probs) >= 3:
-                    good_group_prob = all_probs[2]  # 好马组概率
+            all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
+            
+            # ⭐ 关键修复：处理二分类和三分类
+            if isinstance(all_probs, list):
+                if len(all_probs) >= 3:
+                    # 三分类：取好马组概率（索引2）
+                    good_group_prob = all_probs[2]
+                elif len(all_probs) == 2:
+                    # 二分类：取正类概率（索引1）
+                    good_group_prob = all_probs[1]
                 else:
                     good_group_prob = 0.34
-            except Exception as e:
-                print(f"预测失败: {e}")
+            else:
                 good_group_prob = 0.34
         else:
             good_group_prob = 0.34
