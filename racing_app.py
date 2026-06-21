@@ -5346,9 +5346,8 @@ def prepare_ml_features(horse_id: int, race_id: int, past_performances_v2: List[
 
 #--------
 def train_lightgbm_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
-    """训练 LightGBM 模型（带调试）"""
+    """训练 LightGBM 模型（三分类：好/中/差）"""
     if not LGB_AVAILABLE:
-        st.warning("LightGBM 未安装")
         return None
     
     try:
@@ -5356,9 +5355,6 @@ def train_lightgbm_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
         y_list = []
         
         races = [d for d in draws if d.get('race_date')]
-        
-        # ⭐ 调试
-        st.write(f"🔍 [train_lightgbm] 输入赛事数量: {len(races)}")
         
         for i, race in enumerate(races):
             if i < lookback:
@@ -5379,41 +5375,44 @@ def train_lightgbm_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
                     features['distance'] = race.get('distance', 0)
                     
                     X_list.append(features)
-                    y_list.append(1 if runner.get('position', 0) <= 3 else 0)
-        
-        # ⭐ 调试
-        st.write(f"🔍 [train_lightgbm] X_list 长度: {len(X_list)}")
+                    
+                    # ⭐ 三分类标签
+                    position = runner.get('position', 0)
+                    if position <= 3:
+                        y_list.append(2)   # 好马组
+                    elif position <= 8:
+                        y_list.append(1)   # 中马组
+                    else:
+                        y_list.append(0)   # 差马组
         
         if len(X_list) < 50:
-            st.warning(f"⚠️ [train_lightgbm] 训练数据不足: {len(X_list)} < 50")
             return None
         
         X_df = pd.DataFrame(X_list).fillna(0)
         y_series = pd.Series(y_list)
         
+        # ⭐ 三分类参数
         model = lgb.LGBMClassifier(
             n_estimators=100,
             max_depth=5,
             learning_rate=0.1,
             random_state=42,
-            verbose=-1
+            verbose=-1,
+            objective='multiclass',
+            num_class=3
         )
         
         model.fit(X_df, y_series)
-        st.success("✅ LightGBM 模型训练成功")
         return model
         
     except Exception as e:
-        st.error(f"❌ LightGBM 训练失败: {e}")
-        import traceback
-        st.code(traceback.format_exc())
+        print(f"LightGBM 训练失败: {e}")
         return None
 
 #-------------
 def train_xgboost_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
-    """训练 XGBoost 模型（带调试）"""
+    """训练 XGBoost 模型（三分类：好/中/差）"""
     if not XGB_AVAILABLE:
-        st.warning("XGBoost 未安装")
         return None
     
     try:
@@ -5421,10 +5420,6 @@ def train_xgboost_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
         y_list = []
         
         races = [d for d in draws if d.get('race_date')]
-        
-        # ⭐ 调试1：检查输入数据
-        st.write(f"🔍 [train_xgboost] 输入赛事数量: {len(races)}")
-        st.write(f"🔍 [train_xgboost] lookback 参数: {lookback}")
         
         for i, race in enumerate(races):
             if i < lookback:
@@ -5445,37 +5440,40 @@ def train_xgboost_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
                     features['distance'] = race.get('distance', 0)
                     
                     X_list.append(features)
-                    y_list.append(1 if runner.get('position', 0) <= 3 else 0)
-        
-        # ⭐ 调试2：检查特征提取结果
-        st.write(f"🔍 [train_xgboost] X_list 长度: {len(X_list)}")
-        st.write(f"🔍 [train_xgboost] y_list 长度: {len(y_list)}")
+                    
+                    # ⭐ 三分类标签
+                    position = runner.get('position', 0)
+                    if position <= 3:
+                        y_list.append(2)   # 好马组
+                    elif position <= 8:
+                        y_list.append(1)   # 中马组
+                    else:
+                        y_list.append(0)   # 差马组
         
         if len(X_list) < 50:
-            st.warning(f"⚠️ [train_xgboost] 训练数据不足: {len(X_list)} < 50")
             return None
         
         X_df = pd.DataFrame(X_list).fillna(0)
         y_series = pd.Series(y_list)
         
+        # ⭐ 三分类参数
         model = xgb.XGBClassifier(
             n_estimators=100,
             max_depth=5,
             learning_rate=0.1,
             random_state=42,
             use_label_encoder=False,
-            eval_metric='logloss',
-            verbosity=0
+            eval_metric='mlogloss',
+            verbosity=0,
+            objective='multi:softprob',
+            num_class=3
         )
         
         model.fit(X_df, y_series)
-        st.success("✅ XGBoost 模型训练成功")
         return model
         
     except Exception as e:
-        st.error(f"❌ XGBoost 训练失败: {e}")
-        import traceback
-        st.code(traceback.format_exc())
+        print(f"XGBoost 训练失败: {e}")
         return None
 
 
@@ -5813,20 +5811,12 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
             horse_birth_years, jockey_win_rates, trainer_base_scores,
             horse_id
         )
-        
+        #---------
         if features:
             all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
-            
-            # ⭐ 关键修复：处理二分类和三分类
-            if isinstance(all_probs, list):
-                if len(all_probs) >= 3:
-                    # 三分类：取好马组概率（索引2）
-                    good_group_prob = all_probs[2]
-                elif len(all_probs) == 2:
-                    # 二分类：取正类概率（索引1）
-                    good_group_prob = all_probs[1]
-                else:
-                    good_group_prob = 0.34
+            # 三分类：取好马组概率（索引2）
+            if isinstance(all_probs, list) and len(all_probs) >= 3:
+                good_group_prob = all_probs[2]
             else:
                 good_group_prob = 0.34
         else:
