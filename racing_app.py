@@ -7114,6 +7114,11 @@ def render_smart_betting(show_title: bool = True):
                     st.session_state.paid_qin_recommend = True
                     st.rerun()
             else:
+                # ⭐ 调试：检查 sorted_runners 是否有数据
+                st.write(f"🔍 调试：sorted_runners 数量 = {len(sorted_runners) if sorted_runners else 0}")
+                if sorted_runners:
+                    st.write(f"🔍 调试：第一匹马数据 = {sorted_runners[0].get('horse_name')}")
+                
                 # 已付费，显示内容
                 if len(sorted_runners) < 2:
                     st.warning("馬匹數量不足，無法推薦連贏")
@@ -7191,9 +7196,9 @@ def render_smart_betting(show_title: bool = True):
                                 st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
                             with col4:
                                 if combo['recommended']:
-                                    is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=True)
+                                    is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}_{combo['horse1_no']}_{combo['horse2_no']}", value=True)
                                 else:
-                                    is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}", value=False)
+                                    is_selected = st.checkbox("選擇", key=f"qin_combo_{idx}_{combo['horse1_no']}_{combo['horse2_no']}", value=False)
                             
                             if is_selected:
                                 selected_qin_combos.append(combo)
