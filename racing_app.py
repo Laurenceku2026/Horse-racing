@@ -7053,11 +7053,9 @@ def render_smart_betting(show_title: bool = True):
                     st.write("馬匹數量不足")
     
     # ==================== 折叠3：单T ====================
-    # ==================== 折叠3：单T ====================
     with st.expander("🎲 单T 推荐", expanded=st.session_state.expand_tri):
         if st.session_state.expand_tri:
             if not st.session_state.paid_tri:
-                # 首次展开，扣费
                 if not consume_free_trial(st.session_state.user_id):
                     st.warning("免費次數已用完，請升級到專業版")
                     st.session_state.expand_tri = False
@@ -7076,9 +7074,8 @@ def render_smart_betting(show_title: bool = True):
                         if i < len(recommendations['tri'][:3]) - 1:
                             st.markdown("---")
                 else:
-                    # 没有真实赔率时，显示估算
                     st.info("暫無單T賠率數據，顯示估算建議")
-                    # ⭐ 关键：所有对 horse1/horse2/horse3 的访问都在此条件内
+                    # ⭐ 所有使用 horse1/horse2/horse3 的代码都在此条件块内
                     if len(sorted_runners) >= 3:
                         top3 = sorted_runners[:3]
                         horse1, horse2, horse3 = top3[0], top3[1], top3[2]
@@ -7101,7 +7098,7 @@ def render_smart_betting(show_title: bool = True):
                             else:
                                 st.info("❌ EV 不足，暫不建議")
                     else:
-                        st.write("馬匹數量不足（少於3匹）")
+                        st.write("⚠️ 馬匹數量不足（少於3匹）")
         else:
             st.caption("点击展开并扣费（1次）")
     
