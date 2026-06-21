@@ -5838,7 +5838,7 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
     return predictions
 
 
-def get_historical_draws_for_training(limit: int = 300) -> List[Dict]:
+def get_historical_draws_for_training(limit: int = 500) -> List[Dict]:
     """获取用于训练的历史数据"""
     try:
         headers = get_supabase_headers(use_secret=True)
@@ -6700,7 +6700,7 @@ def render_smart_betting(show_title: bool = True):
             
             if model is None:
                 st.write("🔍 调试: 开始训练模型...")
-                draws = get_historical_draws_for_training(limit=300)
+                draws = get_historical_draws_for_training(limit=500)
                 st.write(f"🔍 调试: 获取到 {len(draws)} 场历史赛事")
                 
                 if model_type == 'lightgbm':
@@ -7243,7 +7243,7 @@ def render_smart_betting(show_title: bool = True):
                         
                         if model is None:
                             # 训练模型（使用历史数据）
-                            draws = get_historical_draws_for_training(limit=300)
+                            draws = get_historical_draws_for_training(limit=500)
                             if model_type == 'lightgbm':
                                 model = train_lightgbm_model(draws)
                             elif model_type == 'xgboost':
@@ -7420,7 +7420,7 @@ def render_smart_betting(show_title: bool = True):
                     
                     if model is None:
                         # 训练模型（使用历史数据）
-                        draws = get_historical_draws_for_training(limit=300)
+                        draws = get_historical_draws_for_training(limit=500)
                         if model_type == 'lightgbm':
                             model = train_lightgbm_model(draws)
                         elif model_type == 'xgboost':
@@ -7535,7 +7535,7 @@ def render_smart_betting(show_title: bool = True):
                     
                     if model is None:
                         # 训练模型（使用历史数据）
-                        draws = get_historical_draws_for_training(limit=300)
+                        draws = get_historical_draws_for_training(limit=500)
                         if model_type == 'lightgbm':
                             model = train_lightgbm_model(draws)
                         elif model_type == 'xgboost':
