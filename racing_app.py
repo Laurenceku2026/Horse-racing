@@ -5815,19 +5815,6 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
         if features:
             all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
             
-            # ⭐ 调试：打印所有概率（仅第一匹马）
-            if len(runners) < 2:
-                st.write(f"🔍 调试: all_probs = {all_probs}")
-                st.write(f"🔍 调试: all_probs 类型 = {type(all_probs)}")
-                st.write(f"🔍 调试: all_probs 长度 = {len(all_probs) if isinstance(all_probs, list) else 'N/A'}")
-            
-            if isinstance(all_probs, list) and len(all_probs) >= 3:
-                # 打印三个类别的概率
-                if len(runners) < 2:
-                    st.write(f"🔍 调试: 类别0(差) = {all_probs[0]:.4f}")
-                    st.write(f"🔍 调试: 类别1(中) = {all_probs[1]:.4f}")
-                    st.write(f"🔍 调试: 类别2(好) = {all_probs[2]:.4f}")
-                good_group_prob = all_probs[2]
             else:
                 good_group_prob = 0.34
         else:
@@ -6556,11 +6543,6 @@ def render_smart_betting(show_title: bool = True):
         st.warning("该日期暂无详细赛事数据")
         return
     
-    # ⭐ 调试：查看数据结构（可删除）
-    # if races and len(races) > 0:
-    #     st.write("🔍 调试: 第一场赛事的数据结构:")
-    #     st.json(races[0])
-    
     race_options = []
     for r in races:
         distance = r.get('distance', r.get('distanceMeters', 0))
@@ -6802,7 +6784,7 @@ def render_smart_betting(show_title: bool = True):
             model = train_model_for_smart_betting(model_type)
             
             if model is not None:
-                st.write("🔍 调试: 模型加载成功，开始预测...")
+                st.write("🔍 模型加载成功，开始预测...")
                 try:
                     ml_probs = get_model_predictions(
                         selected_race.get('race_date'),
@@ -6812,13 +6794,11 @@ def render_smart_betting(show_title: bool = True):
                         model_type,
                         model
                     )
-                    st.write(f"🔍 调试: 预测完成，返回 {len(ml_probs)} 个概率")
-                    st.write(f"🔍 调试: 前3个概率 = {ml_probs[:3]}")
+                    st.write(f"🔍 预测完成")
                 except Exception as e:
                     st.error(f"🔍 预测异常: {e}")
                     ml_probs = [0.34] * len(runners)
             else:
-                st.warning("🔍 调试: 模型加载失败，使用默认值")
                 ml_probs = [0.34] * len(runners)
         
         t3 = time.time()
@@ -9444,10 +9424,6 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
         else:
             # 单模型
             probs = model.predict_proba(X_pred)[0]
-            # ⭐ 调试
-            st.write(f"🔍 [predict_with_model] probs 长度: {len(probs)}")
-            st.write(f"🔍 [predict_with_model] probs: {probs}")
-            
             if return_all_probs:
                 return probs.tolist()
             else:
