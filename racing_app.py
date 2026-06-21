@@ -5386,7 +5386,7 @@ def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any
                     # 目标：是否跑入前三
                     y_list.append(1 if runner.get('position', 0) <= 3 else 0)
         
-        if len(X_list) < 100:
+        if len(X_list) < 50:
             return None
         
         X_df = pd.DataFrame(X_list).fillna(0)
@@ -5442,7 +5442,7 @@ def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]
                     X_list.append(features)
                     y_list.append(1 if runner.get('position', 0) <= 3 else 0)
         
-        if len(X_list) < 100:
+        if len(X_list) < 50:
             return None
         
         X_df = pd.DataFrame(X_list).fillna(0)
