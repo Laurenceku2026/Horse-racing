@@ -5850,24 +5850,63 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
     
     return predictions
 
-
-def get_historical_draws_for_training(limit: int = 500) -> List[Dict]:
-    """获取用于训练的历史数据"""
+#------------
+def get_historical_draws_for_training(limit: int = 300) -> List[Dict]:
+    """
+    获取用于训练的历史数据
+    优先从 race_runners_clean 获取，若无数据则从 past_performances_v2 获取
+    """
     try:
         headers = get_supabase_headers(use_secret=True)
         url = f"{SUPABASE_URL}/rest/v1/races?order=race_date.desc&limit={limit}"
         response = requests.get(url, headers=headers)
         
-        if response.status_code == 200:
-            races = response.json()
-            # 获取每场比赛的出赛马匹
-            for race in races:
-                runners_url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_id=eq.{race.get('race_id')}"
-                runners_response = requests.get(runners_url, headers=headers)
-                if runners_response.status_code == 200:
-                    race['runners'] = runners_response.json()
-            return races
-        return []
+        if response.status_code != 200:
+            return []
+        
+        races = response.json()
+        
+        for race in races:
+            race_date = race.get('race_date')
+            venue = race.get('venue')
+            race_no = race.get('race_no')
+            race_id = race.get('race_id')
+            
+            runners = []
+            
+            # 1. 首先尝试从 race_runners_clean 获取（未来赛事）
+            runners_url = f"{SUPABASE_URL}/rest/v1/race_runners_clean?race_id=eq.{race_id}"
+            runners_response = requests.get(runners_url, headers=headers)
+            
+            if runners_response.status_code == 200 and runners_response.json():
+                runners = runners_response.json()
+            else:
+                # 2. 如果 race_runners_clean 无数据，从 past_performances_v2 获取（历史赛事）
+                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}&order=position.asc"
+                perf_response = requests.get(perf_url, headers=headers)
+                if perf_response.status_code == 200:
+                    perf_data = perf_response.json()
+                    for p in perf_data:
+                        # 构造与 race_runners_clean 兼容的 runners 结构
+                        runners.append({
+                            'horse_id': p.get('horse_id'),
+                            'horse_name': p.get('horse_name'),
+                            'horse_no': p.get('horse_no'),
+                            'draw': p.get('draw'),
+                            'actual_weight': p.get('actual_weight'),
+                            'odds_win': p.get('odds'),
+                            'position': p.get('position'),  # 用于训练标签
+                            'jockey_name': p.get('jockey'),
+                            'trainer_name': p.get('trainer'),
+                            'body_weight': p.get('body_weight'),
+                            'running_position': p.get('running_position'),
+                            'incident': p.get('incident'),
+                        })
+            
+            race['runners'] = runners
+        
+        return races
+        
     except Exception as e:
         print(f"获取训练数据失败: {e}")
         return []
