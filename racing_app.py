@@ -5973,6 +5973,58 @@ def get_cached_race_scores(race_date: str, race_no: int, venue: str) -> Tuple[Li
     except Exception as e:
         print(f"❌ 缓存评分失败: {e}")
         return [], []
+#-----------
+def train_model_for_smart_betting(model_type: str, start_date: str = None, end_date: str = None) -> Optional[Any]:
+    """
+    为智能投注训练ML模型（使用与回测相同的数据和特征）
+    如果未指定日期范围，则使用最近300天的数据
+    """
+    from scoring_engine import get_cached_model, set_cached_model, get_current_weights_hash
+    import hashlib
+    
+    # 确定日期范围
+    if start_date is None or end_date is None:
+        end_date_dt = datetime.now()
+        start_date_dt = end_date_dt - timedelta(days=300)
+        start_date = start_date_dt.strftime("%Y-%m-%d")
+        end_date = end_date_dt.strftime("%Y-%m-%d")
+    
+    # 生成缓存键（与回测一致）
+    weight_hash = get_current_weights_hash()
+    cache_key = f"{model_type}_{start_date}_{end_date}_{weight_hash}"
+    
+    # 检查缓存
+    cached_model = get_cached_model(cache_key)
+    if cached_model is not None:
+        print(f"✅ 智能投注使用缓存模型: {cache_key}")
+        return cached_model
+    
+    # 批量获取数据（与回测相同）
+    all_performances = get_performances_batch(start_date, end_date)
+    if not all_performances:
+        st.error("无法获取历史数据，请检查日期范围")
+        return None
+    
+    # 构建马匹往绩缓存
+    horse_cache = build_horse_performances_cache(all_performances)
+    
+    # 使用 cutoff_date = end_date（使用所有数据训练）
+    train_X, train_y = prepare_training_data_by_date(end_date, all_performances, horse_cache)
+    
+    if train_X is None or len(train_X) < 50:
+        st.error(f"训练数据不足: {len(train_X) if train_X is not None else 0} 条")
+        return None
+    
+    # 训练模型（使用与回测相同的函数）
+    model = get_or_train_model(train_X, train_y, model_type, cache_key)
+    
+    if model is not None:
+        set_cached_model(cache_key, model)
+        print(f"✅ 智能投注模型训练完成: {cache_key}")
+    else:
+        st.error("模型训练失败")
+    
+    return model
 # ==================== 智能投注主页面 ====================
 def render_smart_betting(show_title: bool = True):
     """智能投注页面：单场分析 + 全天优化 + 过关组合"""
@@ -6726,47 +6778,14 @@ def render_smart_betting(show_title: bool = True):
                 print(f"5. 马号 {runner.get('horse_no')}: 评分={runner['overall_score']}, 胜率={runner['win_probability']}")
     #---------
     else:
-        # ==================== ML 模型预测（三分类版本） ====================
+        # ==================== ML 模型预测（使用与回测相同的训练数据） ====================
         model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
         with st.spinner(t()["calculating_ml"].format(model=model_choice)):
-            from scoring_engine import get_cached_model, set_cached_model
-            cache_key = f"{model_type}_smart_betting"
-            
-            # ⭐ 强制清除旧缓存（从二分类切换到三分类，仅调试期间使用）
-            from scoring_engine import clear_model_cache
-            clear_model_cache()
-            st.write("🔍 已清除旧模型缓存，强制重新训练三分类模型")
-            
-            model = get_cached_model(cache_key)
-            
-            # ... 后续代码保持不变 ...
-            
-            # ⭐ 调试1：检查缓存
-            st.write(f"🔍 调试: model_type={model_type}, cache_key={cache_key}")
-            st.write(f"🔍 调试: 缓存命中 = {model is not None}")
-            
-            if model is None:
-                st.write("🔍 调试: 开始训练模型...")
-                draws = get_historical_draws_for_training(limit=500)
-                st.write(f"🔍 调试: 获取到 {len(draws)} 场历史赛事")
-                
-                if model_type == 'lightgbm':
-                    model = train_lightgbm_model(draws)
-                elif model_type == 'xgboost':
-                    model = train_xgboost_model(draws)
-                elif model_type == 'ensemble':
-                    lgb_model = train_lightgbm_model(draws)
-                    xgb_model = train_xgboost_model(draws)
-                    model = {'lightgbm': lgb_model, 'xgboost': xgb_model}
-                
-                st.write(f"🔍 调试: 训练完成，model is None = {model is None}")
-                
-                if model is not None:
-                    set_cached_model(cache_key, model)
-                    st.write(f"🔍 调试: 模型已缓存")
+            # ⭐ 使用统一的训练函数（与回测共享数据源和特征）
+            model = train_model_for_smart_betting(model_type)
             
             if model is not None:
-                st.write("🔍 调试: 开始预测...")
+                st.write("🔍 调试: 模型加载成功，开始预测...")
                 try:
                     ml_probs = get_model_predictions(
                         selected_race.get('race_date'),
@@ -6782,7 +6801,7 @@ def render_smart_betting(show_title: bool = True):
                     st.error(f"🔍 预测异常: {e}")
                     ml_probs = [0.34] * len(runners)
             else:
-                st.warning("🔍 调试: 模型为 None，使用默认值")
+                st.warning("🔍 调试: 模型加载失败，使用默认值")
                 ml_probs = [0.34] * len(runners)
         
         t3 = time.time()
