@@ -7053,70 +7053,57 @@ def render_smart_betting(show_title: bool = True):
                     st.write("馬匹數量不足")
     
     # ==================== 折叠3：单T ====================
+    # ==================== 折叠3：单T ====================
     with st.expander("🎲 单T 推荐", expanded=st.session_state.expand_tri):
-        if st.session_state.expand_win:
-            if not st.session_state.paid_win:
+        if st.session_state.expand_tri:
+            if not st.session_state.paid_tri:
                 # 首次展开，扣费
                 if not consume_free_trial(st.session_state.user_id):
                     st.warning("免費次數已用完，請升級到專業版")
-                    st.session_state.expand_win = False
+                    st.session_state.expand_tri = False
                     st.rerun()
                 else:
-                    st.session_state.paid_win = True
+                    st.session_state.paid_tri = True
                     st.rerun()
             else:
                 # 已付费，显示内容
-                if recommendations.get('win') and recommendations['win']:
-                    rec = recommendations['win'][0]
-                    st.info(f"**{rec.description}**")
-                    st.write(f"獨贏賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
-                elif recommendations.get('place') and recommendations['place']:
-                    rec = recommendations['place'][0]
-                    st.info(f"**{rec.description}**")
-                    st.write(f"位置賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
+                if recommendations.get('tri') and recommendations['tri']:
+                    for i, rec in enumerate(recommendations['tri'][:3]):
+                        st.error(f"**組合{i+1}: {rec.description}**")
+                        st.write(f"估算賠率: {rec.odds:.1f}倍")
+                        st.write(f"預期ROI: {rec.roi:+.1f}%")
+                        st.caption(f"💡 {rec.reason}")
+                        if i < len(recommendations['tri'][:3]) - 1:
+                            st.markdown("---")
                 else:
-                    st.write("暫無建議")
-        #------
+                    # 没有真实赔率时，显示估算
+                    st.info("暫無單T賠率數據，顯示估算建議")
+                    # ⭐ 关键：所有对 horse1/horse2/horse3 的访问都在此条件内
+                    if len(sorted_runners) >= 3:
+                        top3 = sorted_runners[:3]
+                        horse1, horse2, horse3 = top3[0], top3[1], top3[2]
+                        odds1 = horse1.get('odds_win', 0) or 0
+                        odds2 = horse2.get('odds_win', 0) or 0
+                        odds3 = horse3.get('odds_win', 0) or 0
+                        if odds1 > 0 and odds2 > 0 and odds3 > 0:
+                            estimated_odds = odds1 * odds2 * odds3 * 0.5
+                            prob1 = horse1.get('win_probability', 0)
+                            prob2 = horse2.get('win_probability', 0)
+                            prob3 = horse3.get('win_probability', 0)
+                            joint_prob = prob1 * prob2 * prob3 * 6
+                            ev = joint_prob * estimated_odds - 1
+                            st.write(f"**{horse1.get('horse_name', '')} + {horse2.get('horse_name', '')} + {horse3.get('horse_name', '')}**")
+                            st.write(f"估算賠率: {estimated_odds:.1f}倍")
+                            st.write(f"聯合概率: {joint_prob*100:.1f}%")
+                            st.write(f"期望值(EV): {ev:+.2f}")
+                            if ev > 0.15:
+                                st.success("✅ EV > 0.15，建議投注")
+                            else:
+                                st.info("❌ EV 不足，暫不建議")
+                    else:
+                        st.write("馬匹數量不足（少於3匹）")
         else:
-            # 已付费，显示内容
-            if recommendations.get('tri') and recommendations['tri']:
-                for i, rec in enumerate(recommendations['tri'][:3]):
-                    st.error(f"**組合{i+1}: {rec.description}**")
-                    st.write(f"估算賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
-                    if i < len(recommendations['tri'][:3]) - 1:
-                        st.markdown("---")
-            else:
-                # 没有真实赔率时，显示估算
-                st.info("暫無單T賠率數據，顯示估算建議")
-                if len(sorted_runners) >= 3:
-                    top3 = sorted_runners[:3]
-                    horse1, horse2, horse3 = top3[0], top3[1], top3[2]
-                    odds1 = horse1.get('odds_win', 0) or 0
-                    odds2 = horse2.get('odds_win', 0) or 0
-                    odds3 = horse3.get('odds_win', 0) or 0
-                    if odds1 > 0 and odds2 > 0 and odds3 > 0:
-                        estimated_odds = odds1 * odds2 * odds3 * 0.5
-                        prob1 = horse1.get('win_probability', 0)
-                        prob2 = horse2.get('win_probability', 0)
-                        prob3 = horse3.get('win_probability', 0)
-                        joint_prob = prob1 * prob2 * prob3 * 6
-                        ev = joint_prob * estimated_odds - 1
-                        st.write(f"**{horse1.get('horse_name', '')} + {horse2.get('horse_name', '')} + {horse3.get('horse_name', '')}**")
-                        st.write(f"估算賠率: {estimated_odds:.1f}倍")
-                        st.write(f"聯合概率: {joint_prob*100:.1f}%")
-                        st.write(f"期望值(EV): {ev:+.2f}")
-                        if ev > 0.15:
-                            st.success("✅ EV > 0.15，建議投注")
-                        else:
-                            st.info("❌ EV 不足，暫不建議")
-                else:
-                    st.write("馬匹數量不足")
+            st.caption("点击展开并扣费（1次）")
     
     st.markdown("---")
     #------------
