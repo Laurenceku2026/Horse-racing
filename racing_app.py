@@ -6945,7 +6945,6 @@ def render_smart_betting(show_title: bool = True):
     with st.expander("🎯 独赢/位置 推荐", expanded=st.session_state.expand_win):
         if st.session_state.expand_win:
             if not st.session_state.paid_win:
-                # 首次展开，扣费
                 if not consume_free_trial(st.session_state.user_id):
                     st.warning("免費次數已用完，請升級到專業版")
                     st.session_state.expand_win = False
@@ -6954,7 +6953,6 @@ def render_smart_betting(show_title: bool = True):
                     st.session_state.paid_win = True
                     st.rerun()
             else:
-                # 已付费，显示内容
                 if recommendations.get('win') and recommendations['win']:
                     rec = recommendations['win'][0]
                     st.info(f"**{rec.description}**")
@@ -6988,33 +6986,24 @@ def render_smart_betting(show_title: bool = True):
                 st.write("暫無建議")
     
     # ==================== 折叠2：连赢 ====================
+    # 折叠2：连赢
     with st.expander("🔗 连赢 推荐", expanded=st.session_state.expand_qin):
-        if st.session_state.expand_win:
-            if not st.session_state.paid_win:
-                # 首次展开，扣费
+        if st.session_state.expand_qin:   # ← 改为 expand_qin
+            if not st.session_state.paid_qin:   # ← 改为 paid_qin
                 if not consume_free_trial(st.session_state.user_id):
                     st.warning("免費次數已用完，請升級到專業版")
-                    st.session_state.expand_win = False
+                    st.session_state.expand_qin = False   # ← 改为 expand_qin
                     st.rerun()
                 else:
-                    st.session_state.paid_win = True
+                    st.session_state.paid_qin = True   # ← 改为 paid_qin
                     st.rerun()
             else:
                 # 已付费，显示内容
-                if recommendations.get('win') and recommendations['win']:
-                    rec = recommendations['win'][0]
-                    st.info(f"**{rec.description}**")
-                    st.write(f"獨贏賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
-                elif recommendations.get('place') and recommendations['place']:
-                    rec = recommendations['place'][0]
-                    st.info(f"**{rec.description}**")
-                    st.write(f"位置賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
+                if recommendations.get('qin') and recommendations['qin']:
+                    # ... 显示内容
                 else:
-                    st.write("暫無建議")
+                    # 估算显示（此处需要删除 horse3 的引用）
+                    ...
         else:
             st.caption("点击展开并扣费（1次）")
             # 显示内容
@@ -7034,7 +7023,6 @@ def render_smart_betting(show_title: bool = True):
                     horse1, horse2 = top2[0], top2[1]
                     odds1 = horse1.get('odds_win', 0) or 0
                     odds2 = horse2.get('odds_win', 0) or 0
-                    odds3 = horse3.get('odds_win', 0) or 0
                     if odds1 > 0 and odds2 > 0:
                         estimated_odds = (odds1 * odds2) / 2
                         prob1 = horse1.get('win_probability', 0)
