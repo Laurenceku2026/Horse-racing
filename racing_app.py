@@ -6685,31 +6685,42 @@ def render_smart_betting(show_title: bool = True):
                     runner['odds_score'] = scores[i]['odds_score']
                     runner['status_score'] = scores[i]['status_score']
                 print(f"5. 马号 {runner.get('horse_no')}: 评分={runner['overall_score']}, 胜率={runner['win_probability']}")
-    
+    #---------
     else:
-        # ==================== ML 模型预测（三分类版本） ====================
-        model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
-        with st.spinner(t()["calculating_ml"].format(model=model_choice)):
-            # 获取或训练模型
-            from scoring_engine import get_cached_model, set_cached_model
-            cache_key = f"{model_type}_smart_betting"
-            model = get_cached_model(cache_key)
+    # ==================== ML 模型预测（三分类版本） ====================
+    model_type = 'lightgbm' if model_choice == "LightGBM" else 'xgboost' if model_choice == "XGBoost" else 'ensemble'
+    with st.spinner(t()["calculating_ml"].format(model=model_choice)):
+        from scoring_engine import get_cached_model, set_cached_model
+        cache_key = f"{model_type}_smart_betting"
+        model = get_cached_model(cache_key)
+        
+        # ⭐ 调试1：检查缓存
+        st.write(f"🔍 调试: model_type={model_type}, cache_key={cache_key}")
+        st.write(f"🔍 调试: 缓存命中 = {model is not None}")
+        
+        if model is None:
+            st.write("🔍 调试: 开始训练模型...")
+            draws = get_historical_draws_for_training(limit=300)
+            st.write(f"🔍 调试: 获取到 {len(draws)} 场历史赛事")
             
-            if model is None:
-                # 训练模型（使用历史数据）
-                draws = get_historical_draws_for_training(limit=300)
-                if model_type == 'lightgbm':
-                    model = train_lightgbm_model(draws)
-                elif model_type == 'xgboost':
-                    model = train_xgboost_model(draws)
-                elif model_type == 'ensemble':
-                    lgb_model = train_lightgbm_model(draws)
-                    xgb_model = train_xgboost_model(draws)
-                    model = {'lightgbm': lgb_model, 'xgboost': xgb_model}
-                if model is not None:
-                    set_cached_model(cache_key, model)
+            if model_type == 'lightgbm':
+                model = train_lightgbm_model(draws)
+            elif model_type == 'xgboost':
+                model = train_xgboost_model(draws)
+            elif model_type == 'ensemble':
+                lgb_model = train_lightgbm_model(draws)
+                xgb_model = train_xgboost_model(draws)
+                model = {'lightgbm': lgb_model, 'xgboost': xgb_model}
+            
+            st.write(f"🔍 调试: 训练完成，model is None = {model is None}")
             
             if model is not None:
+                set_cached_model(cache_key, model)
+                st.write(f"🔍 调试: 模型已缓存")
+        
+        if model is not None:
+            st.write("🔍 调试: 开始预测...")
+            try:
                 ml_probs = get_model_predictions(
                     selected_race.get('race_date'),
                     selected_race.get('venue'),
@@ -6718,8 +6729,14 @@ def render_smart_betting(show_title: bool = True):
                     model_type,
                     model
                 )
-            else:
+                st.write(f"🔍 调试: 预测完成，返回 {len(ml_probs)} 个概率")
+                st.write(f"🔍 调试: 前3个概率 = {ml_probs[:3]}")
+            except Exception as e:
+                st.error(f"🔍 预测异常: {e}")
                 ml_probs = [0.34] * len(runners)
+        else:
+            st.warning("🔍 调试: 模型为 None，使用默认值")
+            ml_probs = [0.34] * len(runners)
         
         t3 = time.time()
         perf_log["计算胜率"] = t3 - t2
