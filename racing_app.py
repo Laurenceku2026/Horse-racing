@@ -5814,8 +5814,19 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
         #---------
         if features:
             all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
-            # 三分类：取好马组概率（索引2）
+            
+            # ⭐ 调试：打印所有概率（仅第一匹马）
+            if len(runners) < 2:
+                st.write(f"🔍 调试: all_probs = {all_probs}")
+                st.write(f"🔍 调试: all_probs 类型 = {type(all_probs)}")
+                st.write(f"🔍 调试: all_probs 长度 = {len(all_probs) if isinstance(all_probs, list) else 'N/A'}")
+            
             if isinstance(all_probs, list) and len(all_probs) >= 3:
+                # 打印三个类别的概率
+                if len(runners) < 2:
+                    st.write(f"🔍 调试: 类别0(差) = {all_probs[0]:.4f}")
+                    st.write(f"🔍 调试: 类别1(中) = {all_probs[1]:.4f}")
+                    st.write(f"🔍 调试: 类别2(好) = {all_probs[2]:.4f}")
                 good_group_prob = all_probs[2]
             else:
                 good_group_prob = 0.34
@@ -6720,7 +6731,15 @@ def render_smart_betting(show_title: bool = True):
         with st.spinner(t()["calculating_ml"].format(model=model_choice)):
             from scoring_engine import get_cached_model, set_cached_model
             cache_key = f"{model_type}_smart_betting"
+            
+            # ⭐ 强制清除旧缓存（从二分类切换到三分类，仅调试期间使用）
+            from scoring_engine import clear_model_cache
+            clear_model_cache()
+            st.write("🔍 已清除旧模型缓存，强制重新训练三分类模型")
+            
             model = get_cached_model(cache_key)
+            
+            # ... 后续代码保持不变 ...
             
             # ⭐ 调试1：检查缓存
             st.write(f"🔍 调试: model_type={model_type}, cache_key={cache_key}")
@@ -7013,8 +7032,9 @@ def render_smart_betting(show_title: bool = True):
                 if len(sorted_runners) >= 2:
                     top2 = sorted_runners[:2]
                     horse1, horse2 = top2[0], top2[1]
-                    odds1 = horse1.get('odds_win', 0)
-                    odds2 = horse2.get('odds_win', 0)
+                    odds1 = horse1.get('odds_win', 0) or 0
+                    odds2 = horse2.get('odds_win', 0) or 0
+                    odds3 = horse3.get('odds_win', 0) or 0
                     if odds1 > 0 and odds2 > 0:
                         estimated_odds = (odds1 * odds2) / 2
                         prob1 = horse1.get('win_probability', 0)
