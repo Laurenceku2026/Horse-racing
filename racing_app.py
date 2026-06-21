@@ -5344,33 +5344,31 @@ def prepare_ml_features(horse_id: int, race_id: int, past_performances_v2: List[
     
     return features
 
-
+#--------
 def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]:
-    """训练 LightGBM 模型"""
+    """训练 LightGBM 模型（带调试）"""
     if not LGB_AVAILABLE:
+        st.warning("LightGBM 未安装")
         return None
     
     try:
-        # 准备训练数据
         X_list = []
         y_list = []
         
-        # 获取所有赛事
         races = [d for d in draws if d.get('race_date')]
+        
+        # ⭐ 调试
+        st.write(f"🔍 [train_lightgbm] 输入赛事数量: {len(races)}")
         
         for i, race in enumerate(races):
             if i < lookback:
                 continue
-            
-            # 使用 race 之前的数据训练
-            train_draws = races[:i]
             
             for runner in race.get('runners', []):
                 horse_id = runner.get('horse_id')
                 if not horse_id:
                     continue
                 
-                # 获取该马匹的历史往绩
                 past = get_horse_past_performances_v2(horse_id, limit=10)
                 features = prepare_ml_features(horse_id, race.get('race_id'), past)
                 
@@ -5378,15 +5376,16 @@ def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any
                     features['draw'] = runner.get('draw', 0)
                     features['actual_weight'] = runner.get('actual_weight', 0)
                     features['odds'] = runner.get('odds_win', 0)
-                    features['jockey_id'] = runner.get('jockey_id', 0)
-                    features['trainer_id'] = runner.get('trainer_id', 0)
                     features['distance'] = race.get('distance', 0)
                     
                     X_list.append(features)
-                    # 目标：是否跑入前三
                     y_list.append(1 if runner.get('position', 0) <= 3 else 0)
         
+        # ⭐ 调试
+        st.write(f"🔍 [train_lightgbm] X_list 长度: {len(X_list)}")
+        
         if len(X_list) < 50:
+            st.warning(f"⚠️ [train_lightgbm] 训练数据不足: {len(X_list)} < 50")
             return None
         
         X_df = pd.DataFrame(X_list).fillna(0)
@@ -5401,16 +5400,20 @@ def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any
         )
         
         model.fit(X_df, y_series)
+        st.success("✅ LightGBM 模型训练成功")
         return model
         
     except Exception as e:
-        print(f"LightGBM 训练失败: {e}")
+        st.error(f"❌ LightGBM 训练失败: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return None
 
-
+#-------------
 def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]:
-    """训练 XGBoost 模型"""
+    """训练 XGBoost 模型（带调试）"""
     if not XGB_AVAILABLE:
+        st.warning("XGBoost 未安装")
         return None
     
     try:
@@ -5419,11 +5422,13 @@ def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]
         
         races = [d for d in draws if d.get('race_date')]
         
+        # ⭐ 调试1：检查输入数据
+        st.write(f"🔍 [train_xgboost] 输入赛事数量: {len(races)}")
+        st.write(f"🔍 [train_xgboost] lookback 参数: {lookback}")
+        
         for i, race in enumerate(races):
             if i < lookback:
                 continue
-            
-            train_draws = races[:i]
             
             for runner in race.get('runners', []):
                 horse_id = runner.get('horse_id')
@@ -5442,7 +5447,12 @@ def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]
                     X_list.append(features)
                     y_list.append(1 if runner.get('position', 0) <= 3 else 0)
         
+        # ⭐ 调试2：检查特征提取结果
+        st.write(f"🔍 [train_xgboost] X_list 长度: {len(X_list)}")
+        st.write(f"🔍 [train_xgboost] y_list 长度: {len(y_list)}")
+        
         if len(X_list) < 50:
+            st.warning(f"⚠️ [train_xgboost] 训练数据不足: {len(X_list)} < 50")
             return None
         
         X_df = pd.DataFrame(X_list).fillna(0)
@@ -5459,10 +5469,13 @@ def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]
         )
         
         model.fit(X_df, y_series)
+        st.success("✅ XGBoost 模型训练成功")
         return model
         
     except Exception as e:
-        print(f"XGBoost 训练失败: {e}")
+        st.error(f"❌ XGBoost 训练失败: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return None
 
 
