@@ -7026,6 +7026,7 @@ def render_smart_betting(show_title: bool = True):
                         if i < len(recommendations['qin'][:3]) - 1:
                             st.markdown("---")
                 else:
+                    # 没有真实赔率时，显示估算
                     st.info("暫無連贏賠率數據，顯示估算建議")
                     if len(sorted_runners) >= 2:
                         top2 = sorted_runners[:2]
@@ -7072,6 +7073,7 @@ def render_smart_betting(show_title: bool = True):
                         if i < len(recommendations['tri'][:3]) - 1:
                             st.markdown("---")
                 else:
+                    # 没有真实赔率时，显示估算
                     st.info("暫無單T賠率數據，顯示估算建議")
                     if len(sorted_runners) >= 3:
                         top3 = sorted_runners[:3]
@@ -7116,9 +7118,11 @@ def render_smart_betting(show_title: bool = True):
                 if len(sorted_runners) < 2:
                     st.warning("馬匹數量不足，無法推薦連贏")
                 else:
+                    # 生成多组连赢组合（取前5名马匹的组合）
                     top_n = min(5, len(sorted_runners))
                     top_runners = sorted_runners[:top_n]
                     
+                    # 生成组合列表
                     combinations = []
                     for i in range(len(top_runners)):
                         for j in range(i+1, len(top_runners)):
@@ -7127,6 +7131,7 @@ def render_smart_betting(show_title: bool = True):
                             odds1 = h1.get('odds_win', 0)
                             odds2 = h2.get('odds_win', 0)
                             
+                            # 估算连赢赔率
                             if odds1 > 0 and odds2 > 0:
                                 estimated_odds = (odds1 * odds2) / 2
                             else:
@@ -7138,6 +7143,7 @@ def render_smart_betting(show_title: bool = True):
                             
                             ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
                             
+                            # 建议投注额（EV > 0.15 时建议）
                             if ev > 0.15:
                                 suggested_stake = bankroll * 0.05 * risk_multiplier
                             else:
@@ -7153,15 +7159,20 @@ def render_smart_betting(show_title: bool = True):
                                 'ev': ev,
                                 'suggested_stake': suggested_stake,
                                 'recommended': ev > 0.15,
+                                'h1': h1,
+                                'h2': h2
                             })
                     
+                    # 按EV排序，显示前5组
                     combinations.sort(key=lambda x: x['ev'], reverse=True)
                     top_combos = combinations[:5]
                     
                     if not top_combos or all(c['estimated_odds'] <= 0 for c in top_combos):
                         st.info("無法計算連贏賠率，請確保有足夠的賠率數據")
                     else:
+                        # 显示组合列表（带复选框）
                         selected_qin_combos = []
+                        
                         st.caption("💡 勾選您感興趣的組合，底部將顯示總投注額")
                         st.markdown("---")
                         
@@ -7170,6 +7181,7 @@ def render_smart_betting(show_title: bool = True):
                                 continue
                             
                             col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1])
+                            
                             with col1:
                                 st.write(f"**{combo['horse1_name']}({combo['horse1_no']}) + {combo['horse2_name']}({combo['horse2_no']})**")
                             with col2:
@@ -7185,12 +7197,15 @@ def render_smart_betting(show_title: bool = True):
                             
                             if is_selected:
                                 selected_qin_combos.append(combo)
+                            
                             st.markdown("---")
                         
+                        # 底部汇总
                         if selected_qin_combos:
                             total_qin_stake = sum(c['suggested_stake'] for c in selected_qin_combos if c['suggested_stake'] > 0)
                             if total_qin_stake == 0:
                                 total_qin_stake = len(selected_qin_combos) * 20
+                            
                             st.success(f"✅ 已選擇 {len(selected_qin_combos)} 組連贏，建議總投注額: HK${total_qin_stake:.0f}")
                             st.caption("⚠️ 投注前請確認賠率變動，建議以馬會公佈為準")
                         else:
