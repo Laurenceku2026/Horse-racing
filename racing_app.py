@@ -9446,6 +9446,9 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
         else:
             # 单模型
             probs = model.predict_proba(X_pred)[0]
+            # ⭐ 调试
+            st.write(f"🔍 [predict_with_model] probs 长度: {len(probs)}")
+            st.write(f"🔍 [predict_with_model] probs: {probs}")
             
             if return_all_probs:
                 return probs.tolist()
