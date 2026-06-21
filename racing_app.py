@@ -5345,7 +5345,7 @@ def prepare_ml_features(horse_id: int, race_id: int, past_performances_v2: List[
     return features
 
 #--------
-def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]:
+def train_lightgbm_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
     """训练 LightGBM 模型（带调试）"""
     if not LGB_AVAILABLE:
         st.warning("LightGBM 未安装")
@@ -5410,7 +5410,7 @@ def train_lightgbm_model(draws: List[Dict], lookback: int = 200) -> Optional[Any
         return None
 
 #-------------
-def train_xgboost_model(draws: List[Dict], lookback: int = 200) -> Optional[Any]:
+def train_xgboost_model(draws: List[Dict], lookback: int = 0) -> Optional[Any]:
     """训练 XGBoost 模型（带调试）"""
     if not XGB_AVAILABLE:
         st.warning("XGBoost 未安装")
