@@ -5797,7 +5797,7 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
     trainer_base_scores = get_trainer_base_scores()
     
     predictions = []
-    
+    #-----------
     for runner in runners:
         horse_id = runner.get('horse_id')
         if not horse_id:
@@ -5811,10 +5811,12 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
             horse_birth_years, jockey_win_rates, trainer_base_scores,
             horse_id
         )
-        #---------
+        
         if features:
             all_probs = predict_with_model(model, features, model_type, return_all_probs=True)
-            
+            # 三分类：取好马组概率（索引2）
+            if isinstance(all_probs, list) and len(all_probs) >= 3:
+                good_group_prob = all_probs[2]
             else:
                 good_group_prob = 0.34
         else:
