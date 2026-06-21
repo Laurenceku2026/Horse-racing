@@ -6556,12 +6556,29 @@ def render_smart_betting(show_title: bool = True):
         st.warning("该日期暂无详细赛事数据")
         return
     
+    # ⭐ 调试：查看数据结构（可删除）
+    # if races and len(races) > 0:
+    #     st.write("🔍 调试: 第一场赛事的数据结构:")
+    #     st.json(races[0])
+    
     race_options = []
     for r in races:
-        distance = r.get('distance', 0)
+        distance = r.get('distance', r.get('distanceMeters', 0))
         race_class = r.get('race_class', '')
         race_no = r.get('race_no', 0)
-        race_options.append(f"第{race_no}場 - {distance}米 ({race_class})")
+        race_time = r.get('scheduledStart', r.get('startTime', r.get('race_time', '')))
+        
+        # 构建显示文本
+        if distance and distance > 0:
+            if race_time:
+                race_options.append(f"第{race_no}場 - {distance}米 ({race_class}) {race_time}")
+            else:
+                race_options.append(f"第{race_no}場 - {distance}米 ({race_class})")
+        else:
+            if race_time:
+                race_options.append(f"第{race_no}場 ({race_class}) {race_time}")
+            else:
+                race_options.append(f"第{race_no}場 ({race_class})")
     
     selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     #---------
