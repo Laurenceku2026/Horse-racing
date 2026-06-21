@@ -6988,57 +6988,51 @@ def render_smart_betting(show_title: bool = True):
     # ==================== 折叠2：连赢 ====================
     # 折叠2：连赢
     with st.expander("🔗 连赢 推荐", expanded=st.session_state.expand_qin):
-        if st.session_state.expand_qin:   # ← 改为 expand_qin
-            if not st.session_state.paid_qin:   # ← 改为 paid_qin
+        if st.session_state.expand_qin:
+            if not st.session_state.paid_qin:
                 if not consume_free_trial(st.session_state.user_id):
                     st.warning("免費次數已用完，請升級到專業版")
-                    st.session_state.expand_qin = False   # ← 改为 expand_qin
+                    st.session_state.expand_qin = False
                     st.rerun()
                 else:
-                    st.session_state.paid_qin = True   # ← 改为 paid_qin
+                    st.session_state.paid_qin = True
                     st.rerun()
             else:
                 # 已付费，显示内容
                 if recommendations.get('qin') and recommendations['qin']:
-                    # ... 显示内容
+                    for i, rec in enumerate(recommendations['qin'][:3]):
+                        st.warning(f"**組合{i+1}: {rec.description}**")
+                        st.write(f"估算賠率: {rec.odds:.1f}倍")
+                        st.write(f"預期ROI: {rec.roi:+.1f}%")
+                        st.caption(f"💡 {rec.reason}")
+                        if i < len(recommendations['qin'][:3]) - 1:
+                            st.markdown("---")
                 else:
-                    # 估算显示（此处需要删除 horse3 的引用）
-                    ...
+                    # 没有真实赔率时，显示估算
+                    st.info("暫無連贏賠率數據，顯示估算建議")
+                    if len(sorted_runners) >= 2:
+                        top2 = sorted_runners[:2]
+                        horse1, horse2 = top2[0], top2[1]
+                        odds1 = horse1.get('odds_win', 0) or 0
+                        odds2 = horse2.get('odds_win', 0) or 0
+                        if odds1 > 0 and odds2 > 0:
+                            estimated_odds = (odds1 * odds2) / 2
+                            prob1 = horse1.get('win_probability', 0)
+                            prob2 = horse2.get('win_probability', 0)
+                            joint_prob = prob1 * prob2 * 2
+                            ev = joint_prob * estimated_odds - 1
+                            st.write(f"**{horse1.get('horse_name', '')} + {horse2.get('horse_name', '')}**")
+                            st.write(f"估算賠率: {estimated_odds:.1f}倍")
+                            st.write(f"聯合概率: {joint_prob*100:.1f}%")
+                            st.write(f"期望值(EV): {ev:+.2f}")
+                            if ev > 0.15:
+                                st.success("✅ EV > 0.15，建議投注")
+                            else:
+                                st.info("❌ EV 不足，暫不建議")
+                    else:
+                        st.write("馬匹數量不足")
         else:
             st.caption("点击展开并扣费（1次）")
-            # 显示内容
-            if recommendations.get('qin') and recommendations['qin']:
-                for i, rec in enumerate(recommendations['qin'][:3]):
-                    st.warning(f"**組合{i+1}: {rec.description}**")
-                    st.write(f"估算賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
-                    if i < len(recommendations['qin'][:3]) - 1:
-                        st.markdown("---")
-            else:
-                # 没有真实赔率时，显示估算
-                st.info("暫無連贏賠率數據，顯示估算建議")
-                if len(sorted_runners) >= 2:
-                    top2 = sorted_runners[:2]
-                    horse1, horse2 = top2[0], top2[1]
-                    odds1 = horse1.get('odds_win', 0) or 0
-                    odds2 = horse2.get('odds_win', 0) or 0
-                    if odds1 > 0 and odds2 > 0:
-                        estimated_odds = (odds1 * odds2) / 2
-                        prob1 = horse1.get('win_probability', 0)
-                        prob2 = horse2.get('win_probability', 0)
-                        joint_prob = prob1 * prob2 * 2
-                        ev = joint_prob * estimated_odds - 1
-                        st.write(f"**{horse1.get('horse_name', '')} + {horse2.get('horse_name', '')}**")
-                        st.write(f"估算賠率: {estimated_odds:.1f}倍")
-                        st.write(f"聯合概率: {joint_prob*100:.1f}%")
-                        st.write(f"期望值(EV): {ev:+.2f}")
-                        if ev > 0.15:
-                            st.success("✅ EV > 0.15，建議投注")
-                        else:
-                            st.info("❌ EV 不足，暫不建議")
-                else:
-                    st.write("馬匹數量不足")
     
     # ==================== 折叠3：单T ====================
     with st.expander("🎲 单T 推荐", expanded=st.session_state.expand_tri):
