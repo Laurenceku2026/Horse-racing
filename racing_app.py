@@ -844,6 +844,36 @@ def sign_out():
     st.session_state.token_expiry = 0
     st.session_state.admin_mode = False
     st.rerun()
+#--------
+def refresh_auth_token() -> Optional[str]:
+    """使用 refresh_token 刷新 access_token"""
+    refresh_token = st.session_state.get("refresh_token")
+    if not refresh_token:
+        print("❌ 无 refresh_token，无法刷新")
+        return None
+    
+    try:
+        url = f"{SUPABASE_URL}/auth/v1/token?grant_type=refresh_token"
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Content-Type": "application/json"
+        }
+        data = {"refresh_token": refresh_token}
+        response = requests.post(url, headers=headers, json=data)
+        
+        if response.status_code == 200:
+            resp_data = response.json()
+            st.session_state.access_token = resp_data["access_token"]
+            st.session_state.refresh_token = resp_data["refresh_token"]
+            st.session_state.token_expiry = time.time() + resp_data.get("expires_in", 3600)
+            print("✅ 令牌刷新成功")
+            return resp_data["access_token"]
+        else:
+            print(f"❌ 刷新令牌失败: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"❌ 刷新令牌异常: {e}")
+        return None
 #---------
 def get_user_profile(user_id: str) -> Dict:
     """获取用户资料"""
@@ -903,7 +933,7 @@ def get_user_profile(user_id: str) -> Dict:
     }
 #-------------
 def update_user_profile(user_id: str, data: Dict) -> bool:
-    """更新用户资料"""
+    """更新用户资料（支持令牌过期后自动刷新重试）"""
     try:
         access_token = st.session_state.get("access_token", "")
         headers = {
@@ -911,13 +941,31 @@ def update_user_profile(user_id: str, data: Dict) -> bool:
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json"
         }
-        # 注意：表名是 user_settings_racing
         url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
         response = requests.patch(url, headers=headers, json=data)
-        print(f"update_user_profile - URL: {url}")
+        
         print(f"update_user_profile - 状态码: {response.status_code}")
-        print(f"update_user_profile - 响应: {response.text}")
+        
+        # ⭐ 如果令牌过期，刷新并重试一次
+        if response.status_code == 401:
+            print("🔄 令牌过期，尝试刷新...")
+            new_token = refresh_auth_token()
+            if new_token:
+                # 使用新令牌重试
+                headers["Authorization"] = f"Bearer {new_token}"
+                retry_response = requests.patch(url, headers=headers, json=data)
+                print(f"update_user_profile - 重试状态码: {retry_response.status_code}")
+                return retry_response.status_code in [200, 204]
+            else:
+                print("❌ 刷新令牌失败，请重新登录")
+                # 清除失效的认证状态
+                st.session_state.authenticated = False
+                st.session_state.access_token = None
+                st.warning("登录已过期，请重新登录")
+                return False
+        
         return response.status_code in [200, 204]
+        
     except Exception as e:
         print(f"更新用户资料失败: {e}")
         return False
@@ -930,10 +978,9 @@ def get_remaining_trials(user_id: str) -> int:
     return profile.get("free_trials_remaining", 0)
 #----------------
 def consume_free_trial(user_id: str) -> bool:
-    """消耗一次免费次数"""
+    """消耗一次免费次数（区分次数不足与系统错误）"""
     print(f"consume_free_trial 收到的 user_id: {user_id}")
     
-    # ⭐ 新增：管理员无限免费（后台静默跳过）
     if user_id == "admin":
         print("✅ 管理员特权：不消耗免费次数")
         return True
@@ -944,7 +991,7 @@ def consume_free_trial(user_id: str) -> bool:
     if profile.get("subscription_tier") == "pro":
         return True
     
-    # ⭐ 修复：确保剩余次数为整数
+    # ⭐ 确保剩余次数为整数
     remaining = profile.get("free_trials_remaining", 0)
     try:
         remaining = int(remaining)
@@ -956,9 +1003,17 @@ def consume_free_trial(user_id: str) -> bool:
     if remaining > 0:
         new_remaining = remaining - 1
         success = update_user_profile(user_id, {"free_trials_remaining": new_remaining})
-        print(f"更新结果: {success}")
-        return success
+        
+        if success:
+            return True
+        else:
+            # ⭐ 关键修复：更新失败不代表次数用完，可能是网络或认证问题
+            # 此时不显示付费墙，而是提示用户重试或重新登录
+            # 注意：如果 update_user_profile 内部已经显示了 warning（如登录过期），这里不再重复显示
+            st.error("⚠️ 更新次数失败，请检查网络连接或刷新页面后重试")
+            return False
     else:
+        # 真正次数用完
         st.session_state.show_paywall = True
         return False
 
