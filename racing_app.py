@@ -6154,9 +6154,10 @@ def render_smart_betting(show_title: bool = True):
     lang = st.session_state.get("lang", "zh")
     # ==================== 评分权重设置（用户临时调整） ====================
     with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=st.session_state.get("expand_scoring_weights", False)):
-        # ⭐ 调试：显示当前状态
+        # ⭐ 调试：显示当前状态（测试后可删除）
         st.write(f"expand_scoring_weights = {st.session_state.get('expand_scoring_weights', False)}")
         st.write(f"paid_scoring_weights = {st.session_state.get('paid_scoring_weights', False)}")
+        
         if st.session_state.get("expand_scoring_weights", False):
             if not st.session_state.get("paid_scoring_weights", False):
                 # 首次展开，扣费
@@ -6166,7 +6167,7 @@ def render_smart_betting(show_title: bool = True):
                     st.rerun()
                 else:
                     st.session_state.paid_scoring_weights = True
-                    st.session_state.expand_scoring_weights = True  # ⭐ 保持展开
+                    st.session_state.expand_scoring_weights = True  # ⭐ 关键：保持展开
                     st.rerun()
             else:
                 # 已付费，显示权重设置内容
