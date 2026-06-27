@@ -944,7 +944,13 @@ def consume_free_trial(user_id: str) -> bool:
     if profile.get("subscription_tier") == "pro":
         return True
     
+    # ⭐ 修复：确保剩余次数为整数
     remaining = profile.get("free_trials_remaining", 0)
+    try:
+        remaining = int(remaining)
+    except (ValueError, TypeError):
+        remaining = 0
+    
     print(f"剩余次数: {remaining}")
     
     if remaining > 0:
