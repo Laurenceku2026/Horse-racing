@@ -978,42 +978,28 @@ def get_remaining_trials(user_id: str) -> int:
     return profile.get("free_trials_remaining", 0)
 #----------------
 def consume_free_trial(user_id: str) -> bool:
-    """消耗一次免费次数（区分次数不足与系统错误）"""
     print(f"consume_free_trial 收到的 user_id: {user_id}")
-    
     if user_id == "admin":
         print("✅ 管理员特权：不消耗免费次数")
         return True
-    
     profile = get_user_profile(user_id)
     print(f"获取到的 profile: {profile}")
-    
     if profile.get("subscription_tier") == "pro":
         return True
-    
-    # ⭐ 确保剩余次数为整数
     remaining = profile.get("free_trials_remaining", 0)
     try:
         remaining = int(remaining)
     except (ValueError, TypeError):
         remaining = 0
-    
     print(f"剩余次数: {remaining}")
-    
     if remaining > 0:
         new_remaining = remaining - 1
         success = update_user_profile(user_id, {"free_trials_remaining": new_remaining})
-        
-        if success:
-            return True
-        else:
-            # ⭐ 关键修复：更新失败不代表次数用完，可能是网络或认证问题
-            # 此时不显示付费墙，而是提示用户重试或重新登录
-            # 注意：如果 update_user_profile 内部已经显示了 warning（如登录过期），这里不再重复显示
-            st.error("⚠️ 更新次数失败，请检查网络连接或刷新页面后重试")
-            return False
+        print(f"更新结果: {success}")
+        if not success:
+            st.error("更新次数失败，可能是网络或认证问题，请刷新页面重试")  # ← 添加错误提示
+        return success
     else:
-        # 真正次数用完
         st.session_state.show_paywall = True
         return False
 
@@ -6168,6 +6154,9 @@ def render_smart_betting(show_title: bool = True):
     lang = st.session_state.get("lang", "zh")
     # ==================== 评分权重设置（用户临时调整） ====================
     with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=st.session_state.get("expand_scoring_weights", False)):
+        # ⭐ 调试：显示当前状态
+        st.write(f"expand_scoring_weights = {st.session_state.get('expand_scoring_weights', False)}")
+        st.write(f"paid_scoring_weights = {st.session_state.get('paid_scoring_weights', False)}")
         if st.session_state.get("expand_scoring_weights", False):
             if not st.session_state.get("paid_scoring_weights", False):
                 # 首次展开，扣费
