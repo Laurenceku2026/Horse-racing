@@ -1464,7 +1464,7 @@ def calculate_race_scores(
 # ==================== 模型缓存（内存缓存）====================
 
 # 全局模型缓存字典
-_model_cache = {}
+#_model_cache = {}
 
 # 缓存键生成函数
 def get_cache_key(model_type: str, date_range: str, weight_hash: str) -> str:
@@ -1479,31 +1479,34 @@ def get_cache_key(model_type: str, date_range: str, weight_hash: str) -> str:
     """
     return f"{model_type}_{date_range}_{weight_hash}"
 
+#---------
+# ==================== 模型缓存（使用 st.session_state） ====================
 
 def get_cached_model(cache_key: str):
     """
-    从缓存获取模型
-    返回：
-        模型对象 或 None
+    从 session_state 获取缓存模型
     """
-    return _model_cache.get(cache_key)
+    if 'model_cache' not in st.session_state:
+        st.session_state.model_cache = {}
+    return st.session_state.model_cache.get(cache_key)
 
 
 def set_cached_model(cache_key: str, model):
     """
-    将模型存入缓存
+    将模型存入 session_state
     """
-    _model_cache[cache_key] = model
-    print(f"✅ 模型已缓存: {cache_key}")
+    if 'model_cache' not in st.session_state:
+        st.session_state.model_cache = {}
+    st.session_state.model_cache[cache_key] = model
 
 
 def clear_model_cache():
     """
-    清空所有模型缓存（管理员强制刷新时使用）
+    清空所有模型缓存
     """
-    global _model_cache
-    _model_cache = {}
-    print("🗑️ 模型缓存已清空")
+    if 'model_cache' in st.session_state:
+        st.session_state.model_cache = {}
+        print("🗑️ 模型缓存已清空")
 
 #----------
 def get_cache_key_from_params(
