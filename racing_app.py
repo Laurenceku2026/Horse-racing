@@ -6167,14 +6167,9 @@ def render_smart_betting(show_title: bool = True):
     #-----------------
     lang = st.session_state.get("lang", "zh")
     # ==================== 评分权重设置（用户临时调整） ====================
-    # ⭐ 初始化折叠状态
-    if "expand_scoring_weights" not in st.session_state:
-        st.session_state.expand_scoring_weights = False
-    #-------------
-    # ==================== 评分权重设置（用户临时调整） ====================
-    with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=st.session_state.expand_scoring_weights):
-        if st.session_state.expand_scoring_weights:
-            if not st.session_state.paid_scoring_weights:
+    with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=st.session_state.get("expand_scoring_weights", False)):
+        if st.session_state.get("expand_scoring_weights", False):
+            if not st.session_state.get("paid_scoring_weights", False):
                 # 首次展开，扣费
                 if not consume_free_trial(st.session_state.user_id):
                     st.warning("免費次數已用完，請升級到專業版")
@@ -6182,6 +6177,7 @@ def render_smart_betting(show_title: bool = True):
                     st.rerun()
                 else:
                     st.session_state.paid_scoring_weights = True
+                    st.session_state.expand_scoring_weights = True  # ⭐ 保持展开
                     st.rerun()
             else:
                 # 已付费，显示权重设置内容
@@ -6278,50 +6274,24 @@ def render_smart_betting(show_title: bool = True):
                 else:
                     st.error(f"❌ 总和: {total_level1:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1:.0f}%, must be 100%")
                 
-                # 二级因子（省略详细代码，与之前相同，保持原样）
+                # 二级因子
                 with st.expander("📈 基础往绩二级因子" if lang == "zh" else "📈 Basic Performance Sub-factors", expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
-                        win3 = st.number_input(
-                            "近3场胜率" if lang == "zh" else "Win Rate (L3)",
-                            min_value=0, max_value=100, value=int(user_basic.get("win_rate_3", 0.20) * 100),
-                            step=1, key="user_win3"
-                        )
-                        win10 = st.number_input(
-                            "近10场胜率" if lang == "zh" else "Win Rate (L10)",
-                            min_value=0, max_value=100, value=int(user_basic.get("win_rate_10", 0.20) * 100),
-                            step=1, key="user_win10"
-                        )
-                        place10 = st.number_input(
-                            "近10场入Q率" if lang == "zh" else "Place Rate (L10)",
-                            min_value=0, max_value=100, value=int(user_basic.get("place_rate_10", 0.15) * 100),
-                            step=1, key="user_place10"
-                        )
+                        win3 = st.number_input("近3场胜率" if lang == "zh" else "Win Rate (L3)", min_value=0, max_value=100, value=int(user_basic.get("win_rate_3", 0.20)*100), step=1, key="user_win3")
+                        win10 = st.number_input("近10场胜率" if lang == "zh" else "Win Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("win_rate_10", 0.20)*100), step=1, key="user_win10")
+                        place10 = st.number_input("近10场入Q率" if lang == "zh" else "Place Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("place_rate_10", 0.15)*100), step=1, key="user_place10")
                     with col2:
-                        show10 = st.number_input(
-                            "近10场入T率" if lang == "zh" else "Show Rate (L10)",
-                            min_value=0, max_value=100, value=int(user_basic.get("show_rate_10", 0.15) * 100),
-                            step=1, key="user_show10"
-                        )
-                        distance_rating = st.number_input(
-                            "同程表现评分" if lang == "zh" else "Distance Rating",
-                            min_value=0, max_value=100, value=int(user_basic.get("distance_rating", 0.15) * 100),
-                            step=1, key="user_distance"
-                        )
-                        trend = st.number_input(
-                            "名次趋势" if lang == "zh" else "Ranking Trend",
-                            min_value=0, max_value=100, value=int(user_basic.get("trend", 0.15) * 100),
-                            step=1, key="user_trend"
-                        )
-                    
-                    user_basic["win_rate_3"] = win3 / 100
-                    user_basic["win_rate_10"] = win10 / 100
-                    user_basic["place_rate_10"] = place10 / 100
-                    user_basic["show_rate_10"] = show10 / 100
-                    user_basic["distance_rating"] = distance_rating / 100
-                    user_basic["trend"] = trend / 100
-                    
-                    total_basic = sum(user_basic.values()) * 100
+                        show10 = st.number_input("近10场入T率" if lang == "zh" else "Show Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("show_rate_10", 0.15)*100), step=1, key="user_show10")
+                        distance_rating = st.number_input("同程表现评分" if lang == "zh" else "Distance Rating", min_value=0, max_value=100, value=int(user_basic.get("distance_rating", 0.15)*100), step=1, key="user_distance")
+                        trend = st.number_input("名次趋势" if lang == "zh" else "Ranking Trend", min_value=0, max_value=100, value=int(user_basic.get("trend", 0.15)*100), step=1, key="user_trend")
+                    user_basic["win_rate_3"] = win3/100
+                    user_basic["win_rate_10"] = win10/100
+                    user_basic["place_rate_10"] = place10/100
+                    user_basic["show_rate_10"] = show10/100
+                    user_basic["distance_rating"] = distance_rating/100
+                    user_basic["trend"] = trend/100
+                    total_basic = sum(user_basic.values())*100
                     if abs(total_basic - 100) < 0.1:
                         st.success(f"✅ 总和: {total_basic:.0f}%" if lang == "zh" else f"✅ Total: {total_basic:.0f}%")
                     else:
@@ -6330,46 +6300,20 @@ def render_smart_betting(show_title: bool = True):
                 with st.expander("🏟️ 场次因素二级因子" if lang == "zh" else "🏟️ Race Factors Sub-factors", expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
-                        same_course = st.number_input(
-                            "同场地胜率" if lang == "zh" else "Same Course",
-                            min_value=0, max_value=100, value=int(user_race.get("same_course", 0.25) * 100),
-                            step=1, key="user_same_course"
-                        )
-                        same_distance = st.number_input(
-                            "同路程胜率" if lang == "zh" else "Same Distance",
-                            min_value=0, max_value=100, value=int(user_race.get("same_distance", 0.25) * 100),
-                            step=1, key="user_same_distance"
-                        )
-                        draw = st.number_input(
-                            "档位优势" if lang == "zh" else "Draw",
-                            min_value=0, max_value=100, value=int(user_race.get("draw", 0.15) * 100),
-                            step=1, key="user_draw"
-                        )
+                        same_course = st.number_input("同场地胜率" if lang == "zh" else "Same Course", min_value=0, max_value=100, value=int(user_race.get("same_course", 0.25)*100), step=1, key="user_same_course")
+                        same_distance = st.number_input("同路程胜率" if lang == "zh" else "Same Distance", min_value=0, max_value=100, value=int(user_race.get("same_distance", 0.25)*100), step=1, key="user_same_distance")
+                        draw = st.number_input("档位优势" if lang == "zh" else "Draw", min_value=0, max_value=100, value=int(user_race.get("draw", 0.15)*100), step=1, key="user_draw")
                     with col2:
-                        weight = st.number_input(
-                            "负磅变化" if lang == "zh" else "Weight",
-                            min_value=0, max_value=100, value=int(user_race.get("weight", 0.10) * 100),
-                            step=1, key="user_weight"
-                        )
-                        jockey = st.number_input(
-                            "骑师配合" if lang == "zh" else "Jockey",
-                            min_value=0, max_value=100, value=int(user_race.get("jockey", 0.15) * 100),
-                            step=1, key="user_jockey"
-                        )
-                        trainer = st.number_input(
-                            "练马师状态" if lang == "zh" else "Trainer",
-                            min_value=0, max_value=100, value=int(user_race.get("trainer", 0.10) * 100),
-                            step=1, key="user_trainer"
-                        )
-                    
-                    user_race["same_course"] = same_course / 100
-                    user_race["same_distance"] = same_distance / 100
-                    user_race["draw"] = draw / 100
-                    user_race["weight"] = weight / 100
-                    user_race["jockey"] = jockey / 100
-                    user_race["trainer"] = trainer / 100
-                    
-                    total_race = sum(user_race.values()) * 100
+                        weight = st.number_input("负磅变化" if lang == "zh" else "Weight", min_value=0, max_value=100, value=int(user_race.get("weight", 0.10)*100), step=1, key="user_weight")
+                        jockey = st.number_input("骑师配合" if lang == "zh" else "Jockey", min_value=0, max_value=100, value=int(user_race.get("jockey", 0.15)*100), step=1, key="user_jockey")
+                        trainer = st.number_input("练马师状态" if lang == "zh" else "Trainer", min_value=0, max_value=100, value=int(user_race.get("trainer", 0.10)*100), step=1, key="user_trainer")
+                    user_race["same_course"] = same_course/100
+                    user_race["same_distance"] = same_distance/100
+                    user_race["draw"] = draw/100
+                    user_race["weight"] = weight/100
+                    user_race["jockey"] = jockey/100
+                    user_race["trainer"] = trainer/100
+                    total_race = sum(user_race.values())*100
                     if abs(total_race - 100) < 0.1:
                         st.success(f"✅ 总和: {total_race:.0f}%" if lang == "zh" else f"✅ Total: {total_race:.0f}%")
                     else:
@@ -6378,22 +6322,12 @@ def render_smart_betting(show_title: bool = True):
                 with st.expander("💰 赔率因素二级因子" if lang == "zh" else "💰 Odds Factors Sub-factors", expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
-                        win_odds = st.number_input(
-                            "独赢赔率" if lang == "zh" else "Win Odds",
-                            min_value=0, max_value=100, value=int(user_odds.get("win_odds", 0.60) * 100),
-                            step=1, key="user_win_odds"
-                        )
+                        win_odds = st.number_input("独赢赔率" if lang == "zh" else "Win Odds", min_value=0, max_value=100, value=int(user_odds.get("win_odds", 0.60)*100), step=1, key="user_win_odds")
                     with col2:
-                        odds_trend = st.number_input(
-                            "赔率变动趋势" if lang == "zh" else "Odds Trend",
-                            min_value=0, max_value=100, value=int(user_odds.get("odds_trend", 0.40) * 100),
-                            step=1, key="user_odds_trend"
-                        )
-                    
-                    user_odds["win_odds"] = win_odds / 100
-                    user_odds["odds_trend"] = odds_trend / 100
-                    
-                    total_odds = sum(user_odds.values()) * 100
+                        odds_trend = st.number_input("赔率变动趋势" if lang == "zh" else "Odds Trend", min_value=0, max_value=100, value=int(user_odds.get("odds_trend", 0.40)*100), step=1, key="user_odds_trend")
+                    user_odds["win_odds"] = win_odds/100
+                    user_odds["odds_trend"] = odds_trend/100
+                    total_odds = sum(user_odds.values())*100
                     if abs(total_odds - 100) < 0.1:
                         st.success(f"✅ 总和: {total_odds:.0f}%" if lang == "zh" else f"✅ Total: {total_odds:.0f}%")
                     else:
@@ -6402,34 +6336,16 @@ def render_smart_betting(show_title: bool = True):
                 with st.expander("🩺 状态因素二级因子" if lang == "zh" else "🩺 Status Factors Sub-factors", expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
-                        age = st.number_input(
-                            "马龄因子" if lang == "zh" else "Age",
-                            min_value=0, max_value=100, value=int(user_status.get("age", 0.30) * 100),
-                            step=1, key="user_age"
-                        )
-                        weight_change = st.number_input(
-                            "体重变化" if lang == "zh" else "Weight Change",
-                            min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25) * 100),
-                            step=1, key="user_status_weight_change"
-                        )
+                        age = st.number_input("马龄因子" if lang == "zh" else "Age", min_value=0, max_value=100, value=int(user_status.get("age", 0.30)*100), step=1, key="user_age")
+                        weight_change = st.number_input("体重变化" if lang == "zh" else "Weight Change", min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25)*100), step=1, key="user_status_weight_change")
                     with col2:
-                        incident = st.number_input(
-                            "事件报告" if lang == "zh" else "Incident",
-                            min_value=0, max_value=100, value=int(user_status.get("incident", 0.25) * 100),
-                            step=1, key="user_incident"
-                        )
-                        burst = st.number_input(
-                            "冲刺能力" if lang == "zh" else "Burst",
-                            min_value=0, max_value=100, value=int(user_status.get("burst", 0.20) * 100),
-                            step=1, key="user_burst"
-                        )
-                    
-                    user_status["age"] = age / 100
-                    user_status["weight_change"] = weight_change / 100
-                    user_status["incident"] = incident / 100
-                    user_status["burst"] = burst / 100
-                    
-                    total_status = sum(user_status.values()) * 100
+                        incident = st.number_input("事件报告" if lang == "zh" else "Incident", min_value=0, max_value=100, value=int(user_status.get("incident", 0.25)*100), step=1, key="user_incident")
+                        burst = st.number_input("冲刺能力" if lang == "zh" else "Burst", min_value=0, max_value=100, value=int(user_status.get("burst", 0.20)*100), step=1, key="user_burst")
+                    user_status["age"] = age/100
+                    user_status["weight_change"] = weight_change/100
+                    user_status["incident"] = incident/100
+                    user_status["burst"] = burst/100
+                    total_status = sum(user_status.values())*100
                     if abs(total_status - 100) < 0.1:
                         st.success(f"✅ 总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
                     else:
