@@ -6921,7 +6921,7 @@ def render_smart_betting(show_title: bool = True):
         
     #------------
     # 显示表格
-    st.markdown(f"#### 🏇 {t()['race_table_title'].format(race_no=selected_race.get('race_no'))}")
+    st.markdown(f"#### 🏇 {t()['race_table_title'].format(race_no=selected_race.get('race_no'))} ({model_choice})")
     #-----------
     race_data = []
     for runner in sorted_runners:
