@@ -1086,7 +1086,8 @@ def calculate_status_score(
     incident_text: str,
     running_position: str,
     finishing_position: int = None,
-    status_weights: Dict = None
+    status_weights: Dict = None,
+    reference_year: Optional[int] = None,
 ) -> float:
     """
     计算状态因子综合评分（0-100分）
@@ -1106,8 +1107,8 @@ def calculate_status_score(
         config = get_scoring_config()
         status_weights = config.get("status", {})
     
-    # 计算各因子得分
-    age_score = calculate_age_score(birth_year)
+    # 计算各因子得分（回测/历史赛事用赛年，避免用当前年算马龄）
+    age_score = calculate_age_score(birth_year, current_year=reference_year)
     weight_change_score = calculate_weight_change_score(current_weight, past_weights)
     incident_adjustment = calculate_incident_score(incident_text)
     burst_score = calculate_burst_score(running_position, finishing_position)
@@ -1539,6 +1540,159 @@ def get_cache_key_from_params(
     return f"{model_type}_{date_range}_{weight_hash}"
 
 
+_horse_birth_years_cache: Optional[Dict[str, int]] = None
+_horse_birth_years_cache_time: float = 0
+
+
+def load_horse_birth_years(force_refresh: bool = False) -> Dict[str, int]:
+    """从 horses_v2 加载马匹出生年份（缓存 10 分钟）。"""
+    global _horse_birth_years_cache, _horse_birth_years_cache_time
+    import time
+
+    current_time = time.time()
+    if (
+        not force_refresh
+        and _horse_birth_years_cache is not None
+        and (current_time - _horse_birth_years_cache_time) < 600
+    ):
+        return _horse_birth_years_cache
+
+    result: Dict[str, int] = {}
+    try:
+        supabase_url = st.secrets.get("SUPABASE_STOCK_URL", "")
+        supabase_key = st.secrets.get("SUPABASE_STOCK_SECRET_KEY", "")
+        if not supabase_url or not supabase_key:
+            return result
+
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+        }
+        url = f"{supabase_url}/rest/v1/horses_v2?select=horse_id,birth_year"
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            for h in response.json():
+                horse_id = h.get("horse_id")
+                if horse_id:
+                    result[horse_id] = h.get("birth_year")
+    except Exception as e:
+        print(f"加载马匹出生年份失败: {e}")
+
+    _horse_birth_years_cache = result
+    _horse_birth_years_cache_time = current_time
+    return result
+
+
+def score_runners_for_prediction(
+    race_date: str,
+    venue: str,
+    distance: int,
+    runners: List[Dict],
+    perf_cache: Dict[str, List[Dict]],
+    horse_birth_years: Dict[str, int],
+    weights_config: Optional[Dict] = None,
+    temperature: float = 0.8,
+) -> List[Dict]:
+    """
+    与回测一致的评分逻辑：仅使用 race_date 之前的往绩，按 combined_score 排序。
+    softmax 仅用于 win_probability 展示，不改变排名。
+    """
+    if weights_config is None:
+        config = get_scoring_config()
+        level1 = config.get("level1", {})
+        basic_w = config.get("basic", {})
+        race_w = config.get("race", {})
+        odds_w = config.get("odds", {})
+        status_w = config.get("status", {})
+    else:
+        level1 = weights_config.get("level1_weights") or weights_config.get("level1", {})
+        basic_w = weights_config.get("basic_weights") or weights_config.get("basic", {})
+        race_w = weights_config.get("race_weights") or weights_config.get("race", {})
+        odds_w = weights_config.get("odds_weights") or weights_config.get("odds", {})
+        status_w = weights_config.get("status_weights") or weights_config.get("status", {})
+
+    try:
+        reference_year = int(str(race_date)[:4])
+    except (TypeError, ValueError):
+        reference_year = datetime.now().year
+
+    scored: List[Dict] = []
+    for runner in runners:
+        horse_id = runner.get("horse_id")
+        if not horse_id:
+            continue
+
+        all_past = perf_cache.get(horse_id, [])
+        past_before = [p for p in all_past if p.get("race_date", "") < race_date][:10]
+
+        weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_before)
+
+        jockey = runner.get("jockey") or runner.get("jockey_name") or ""
+        trainer = runner.get("trainer") or runner.get("trainer_name") or ""
+
+        odds_raw = runner.get("odds_win")
+        if odds_raw is None:
+            odds_raw = runner.get("odds")
+        try:
+            odds_win = float(odds_raw) if odds_raw not in (None, "") else 10.0
+        except (ValueError, TypeError):
+            odds_win = 10.0
+
+        basic_score = calculate_basic_score(past_before, distance, basic_w)
+        race_score = calculate_race_score(
+            horse_id,
+            venue,
+            distance,
+            runner.get("draw"),
+            runner.get("actual_weight"),
+            jockey,
+            trainer,
+            weight_comfort_range,
+            past_before,
+            race_w,
+        )
+        odds_score = calculate_odds_score(odds_win, 50.0, odds_w)
+        birth_year = horse_birth_years.get(horse_id)
+        status_score = calculate_status_score(
+            birth_year,
+            runner.get("body_weight"),
+            [p.get("body_weight") for p in past_before if p.get("body_weight")],
+            runner.get("incident", ""),
+            runner.get("running_position", ""),
+            None,
+            status_w,
+            reference_year=reference_year,
+        )
+        combined_score = calculate_overall_score(
+            basic_score, race_score, odds_score, status_score, level1
+        )
+
+        enriched = dict(runner)
+        enriched.update(
+            {
+                "basic_score": basic_score,
+                "race_score": race_score,
+                "odds_score": odds_score,
+                "status_score": status_score,
+                "combined_score": combined_score,
+                "overall_score": combined_score,
+                "odds_win": odds_win,
+            }
+        )
+        scored.append(enriched)
+
+    if scored:
+        probabilities = softmax_probabilities(
+            [s["combined_score"] for s in scored], temperature=temperature
+        )
+        for i, runner in enumerate(scored):
+            runner["win_probability"] = probabilities[i]
+
+    scored.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
+    return scored
+
+
 def get_current_weights_hash() -> str:
     """
     获取当前权重配置的哈希值
@@ -1577,6 +1731,8 @@ __all__ = [
     'analyze_incident',
     # 批量函数
     'get_horses_performances_batch',
+    'load_horse_birth_years',
+    'score_runners_for_prediction',
     'calculate_horse_full_score',
     # ML 配置
     'get_ml_config',

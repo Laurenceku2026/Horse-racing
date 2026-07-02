@@ -6093,6 +6093,106 @@ def train_model_for_smart_betting(model_type: str, start_date: str = None, end_d
         st.error("模型训练失败")
     
     return model
+# ==================== 智能投注：连赢/单T 展示辅助 ====================
+def _horse_display_label(runner: Dict) -> str:
+    from betting_strategy_engine import format_horse_display
+    return format_horse_display(runner.get("horse_name", ""), runner.get("horse_no"))
+
+
+def _render_qin_suggestions(sorted_runners: List[Dict], key_prefix: str = "qin") -> None:
+    """連贏組合推薦（展開即顯示，無二次扣費）"""
+    if len(sorted_runners) < 2:
+        st.warning("馬匹數量不足，無法推薦連贏")
+        return
+
+    top_n = min(5, len(sorted_runners))
+    top_runners = sorted_runners[:top_n]
+    combinations = []
+    for i in range(len(top_runners)):
+        for j in range(i + 1, len(top_runners)):
+            h1, h2 = top_runners[i], top_runners[j]
+            odds1 = float(h1.get("odds_win") or 0)
+            odds2 = float(h2.get("odds_win") or 0)
+            estimated_odds = (odds1 * odds2) / 2 if odds1 > 0 and odds2 > 0 else 0
+            prob1 = float(h1.get("win_probability") or 0)
+            prob2 = float(h2.get("win_probability") or 0)
+            joint_prob = prob1 * prob2 * 2
+            ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
+            combinations.append(
+                {
+                    "name": f"{_horse_display_label(h1)} + {_horse_display_label(h2)}",
+                    "odds": estimated_odds,
+                    "ev": ev,
+                    "recommended": ev > 0.15,
+                }
+            )
+
+    combinations.sort(key=lambda x: x["ev"], reverse=True)
+    top_combos = combinations[:5]
+    if not top_combos:
+        st.info("暫無連贏組合數據")
+        return
+
+    if all(c["odds"] <= 0 for c in top_combos):
+        st.caption("⚠️ 缺少獨贏賠率，以下 EV 僅供參考（估算連贏賠率）")
+
+    selected = []
+    for idx, combo in enumerate(top_combos):
+        col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1])
+        with col1:
+            st.write(f"**{combo['name']}**")
+        with col2:
+            st.write(f"賠率: {combo['odds']:.1f}倍" if combo["odds"] > 0 else "賠率: 估算")
+        with col3:
+            ev_color = "🟢" if combo["ev"] > 0.15 else "🟡" if combo["ev"] > 0 else "🔴"
+            st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
+        with col4:
+            if st.checkbox("選擇", key=f"{key_prefix}_pick_{idx}", value=combo["recommended"]):
+                selected.append(combo)
+        st.markdown("---")
+
+    if selected:
+        total_stake = len(selected) * 20
+        st.success(f"✅ 已選擇 {len(selected)} 組，建議總投注額: HK${total_stake:.0f}")
+    else:
+        st.info("請勾選您感興趣的組合")
+
+
+def _render_tri_suggestions(sorted_runners: List[Dict]) -> None:
+    """單T 推薦（展開即顯示）"""
+    if len(sorted_runners) < 3:
+        st.warning("馬匹數量不足，無法推薦單T")
+        return
+
+    top3 = sorted_runners[:3]
+    h1, h2, h3 = top3[0], top3[1], top3[2]
+    odds1 = float(h1.get("odds_win") or 0)
+    odds2 = float(h2.get("odds_win") or 0)
+    odds3 = float(h3.get("odds_win") or 0)
+    label = f"{_horse_display_label(h1)} + {_horse_display_label(h2)} + {_horse_display_label(h3)}"
+
+    if odds1 > 0 and odds2 > 0 and odds3 > 0:
+        estimated_odds = odds1 * odds2 * odds3 * 0.5
+    else:
+        estimated_odds = 0
+        st.caption("⚠️ 缺少獨贏賠率，以下為估算值")
+
+    prob1 = float(h1.get("win_probability") or 0)
+    prob2 = float(h2.get("win_probability") or 0)
+    prob3 = float(h3.get("win_probability") or 0)
+    joint_prob = prob1 * prob2 * prob3 * 6
+    ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
+
+    st.write(f"**{label}**")
+    st.write(f"估算賠率: {estimated_odds:.1f}倍" if estimated_odds > 0 else "估算賠率: 待補充")
+    st.write(f"聯合概率: {joint_prob * 100:.1f}%")
+    st.write(f"期望值(EV): {ev:+.2f}")
+    if ev > 0.15:
+        st.success("✅ EV > 0.15，建議投注")
+    else:
+        st.info("❌ EV 不足，暫不建議")
+
+
 # ==================== 智能投注主页面 ====================
 def render_smart_betting(show_title: bool = True):
     """智能投注页面：单场分析 + 全天优化 + 过关组合"""
@@ -6425,8 +6525,8 @@ def render_smart_betting(show_title: bool = True):
     
     # ⭐ 新增：日期模式选择
     date_mode = st.radio(
-        "选择日期模式",
-        options=["未来赛事", "历史赛事（测试用）"],
+        "選擇日期模式",
+        options=["未來賽事", "歷史賽事（測試用）"],
         index=0,
         horizontal=True,
         key="date_mode_select"
@@ -6451,7 +6551,7 @@ def render_smart_betting(show_title: bool = True):
                     st.warning(t()["no_races"])
     
     # ==================== 根据模式获取赛事列表 ====================
-    if date_mode == "未来赛事":
+    if date_mode == "未來賽事":
         # 原有逻辑：获取未来14天赛事
         upcoming_races = get_cached_upcoming_races()
         if not upcoming_races:
@@ -6478,7 +6578,7 @@ def render_smart_betting(show_title: bool = True):
     
     else:
         # ⭐ 新增：历史赛事模式
-        st.info("📅 选择历史日期进行测试（数据来自 past_performances_v2 表）")
+        st.info("📅 選擇歷史日期進行測試（評分僅使用該賽日之前往績，不會洩露賽果）")
         historical_races = get_cached_historical_race_summaries()
         if not historical_races:
             st.warning("暂无历史赛事数据")
@@ -6607,136 +6707,39 @@ def render_smart_betting(show_title: bool = True):
     # ==================== 计算胜率 ====================
     if model_choice == "评分系统":
         with st.spinner(t()["calculating_win_rate"]):
-            # 获取用户权重配置（如果已应用）
-            if st.session_state.get('scoring_weights_applied', False):
-                user_config = st.session_state.get('user_scoring_config', {})
-                level1_weights = user_config.get('level1_weights', {})
-                basic_weights = user_config.get('basic_weights', {})
-                race_weights = user_config.get('race_weights', {})
-                odds_weights = user_config.get('odds_weights', {})
-                status_weights = user_config.get('status_weights', {})
-            else:
-                # 使用管理员默认配置
-                from scoring_engine import get_scoring_config
-                config = get_scoring_config()
-                level1_weights = config.get('level1', {})
-                basic_weights = config.get('basic', {})
-                race_weights = config.get('race', {})
-                odds_weights = config.get('odds', {})
-                status_weights = config.get('status', {})
-            
-            # 导入新的评分函数
             from scoring_engine import (
-                calculate_basic_score,
-                calculate_race_score,
-                calculate_odds_score,
-                calculate_status_score,
-                calculate_overall_score,
-                get_horse_weight_comfort_range_from_cache,
-                get_horses_performances_batch
+                score_runners_for_prediction,
+                load_horse_birth_years,
+                get_horses_performances_batch,
+                get_scoring_config,
             )
-            
-            # 获取马匹往绩
-            horse_ids = [r.get('horse_id') for r in runners if r.get('horse_id')]
-            perf_cache = get_horses_performances_batch(tuple(set(horse_ids)))
-            
-            # 计算每匹马的评分
-            scores = []
-            for runner in runners:
-                horse_id = runner.get('horse_id')
-                if not horse_id:
-                    scores.append({
-                        'overall_score': 50,
-                        'win_probability': 50,
-                        'basic_score': 50,
-                        'race_score': 50,
-                        'odds_score': 50,
-                        'status_score': 50
-                    })
-                    continue
-                
-                # 获取往绩
-                past_performances = perf_cache.get(horse_id, [])[:10]
-                
-                # 获取负磅舒适区
-                weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_performances)
-                
-                # 计算基础往绩评分
-                basic_score = calculate_basic_score(
-                    past_performances,
-                    selected_race.get('distance', 1200),
-                    basic_weights
-                )
-                
-                # 计算场次因素评分
-                race_score = calculate_race_score(
-                    horse_id,
-                    selected_race.get('venue', 'ST'),
-                    selected_race.get('distance', 1200),
-                    runner.get('draw'),
-                    runner.get('actual_weight'),
-                    runner.get('jockey_id'),
-                    runner.get('trainer_id'),
-                    weight_comfort_range,
-                    past_performances,
-                    race_weights
-                )
-                
-                # 计算赔率因素评分
-                odds_win = runner.get('odds_win', 10.0)
-                if odds_win is None or odds_win == '':
-                    odds_win = 10.0
-                try:
-                    odds_win = float(odds_win)
-                except (ValueError, TypeError):
-                    odds_win = 10.0
-                
-                odds_score = calculate_odds_score(odds_win, 50.0, odds_weights)
-                
-                # 计算状态因素评分
-                from scoring_engine import calculate_status_score
-                status_score = calculate_status_score(
-                    None,  # birth_year - 可以从horses表获取
-                    runner.get('body_weight'),
-                    [p.get('body_weight') for p in past_performances if p.get('body_weight')],
-                    runner.get('incident', ''),
-                    runner.get('running_position', ''),
-                    None,  # finishing_position
-                    status_weights
-                )
-                
-                # 计算综合评分
-                overall_score = calculate_overall_score(
-                    basic_score,
-                    race_score,
-                    odds_score,
-                    status_score,
-                    level1_weights
-                )
-                
-                scores.append({
-                    'overall_score': overall_score,
-                    'win_probability': overall_score,  # 稍后用softmax转换
-                    'basic_score': basic_score,
-                    'race_score': race_score,
-                    'odds_score': odds_score,
-                    'status_score': status_score
-                })
-            
-            # 使用softmax计算胜率
-            from scoring_engine import softmax_probabilities
-            prob_scores = [s['overall_score'] for s in scores]
-            probabilities = softmax_probabilities(prob_scores, temperature=0.8)
-            
-            for i, runner in enumerate(runners):
-                if i < len(scores):
-                    runner['overall_score'] = scores[i]['overall_score']
-                    runner['win_probability'] = probabilities[i] if i < len(probabilities) else 0
-                    runner['basic_score'] = scores[i]['basic_score']
-                    runner['race_score'] = scores[i]['race_score']
-                    runner['odds_score'] = scores[i]['odds_score']
-                    runner['status_score'] = scores[i]['status_score']
-                print(f"5. 马号 {runner.get('horse_no')}: 评分={runner['overall_score']}, 胜率={runner['win_probability']}")
+
+            if st.session_state.get("scoring_weights_applied", False):
+                weights_config = st.session_state.get("user_scoring_config", {})
+            else:
+                config = get_scoring_config()
+                weights_config = {
+                    "level1_weights": config.get("level1", {}),
+                    "basic_weights": config.get("basic", {}),
+                    "race_weights": config.get("race", {}),
+                    "odds_weights": config.get("odds", {}),
+                    "status_weights": config.get("status", {}),
+                }
+
+            horse_ids = tuple({r.get("horse_id") for r in runners if r.get("horse_id")})
+            perf_cache = get_horses_performances_batch(horse_ids)
+            horse_birth_years = load_horse_birth_years()
+
+            runners = score_runners_for_prediction(
+                selected_race.get("race_date"),
+                selected_race.get("venue"),
+                selected_race.get("distance", 1200),
+                runners,
+                perf_cache,
+                horse_birth_years,
+                weights_config,
+                temperature=0.8,
+            )
     #---------
     else:
         # ==================== ML 模型预测（使用与回测相同的训练数据） ====================
@@ -6771,7 +6774,9 @@ def render_smart_betting(show_title: bool = True):
                 runner['win_probability'] = ml_probs[i]
                 runner['overall_score'] = ml_probs[i] * 100
     
-    sorted_runners = sorted(runners, key=lambda x: x.get('win_probability', 0), reverse=True)
+    sorted_runners = runners if model_choice == "评分系统" else sorted(
+        runners, key=lambda x: x.get("win_probability", 0), reverse=True
+    )
     #--------------------
     # 在计算完 runners 的 win_probability 之后添加
 
@@ -6781,8 +6786,9 @@ def render_smart_betting(show_title: bool = True):
     
     if sorted_runners:
         # 准备策略引擎所需数据
-        scores = [runner.get('overall_score', 50) for runner in sorted_runners]
-        horse_names = [runner.get('horse_name', '') for runner in sorted_runners]
+        scores = [runner.get("combined_score", runner.get("overall_score", 50)) for runner in sorted_runners]
+        horse_names = [runner.get("horse_name", "") for runner in sorted_runners]
+        horse_nos = [runner.get("horse_no") for runner in sorted_runners]
         
         # 获取赔率
         odds_win = []
@@ -6808,9 +6814,9 @@ def render_smart_betting(show_title: bool = True):
             odds_win=odds_win,
             odds_place=odds_place,
             odds_qin=odds_qin,
-            odds_tri=odds_tri
+            odds_tri=odds_tri,
+            horse_nos=horse_nos,
         )
-        
         t4 = time.time()
         perf_log["策略引擎"] = t4 - t3
     else:
@@ -6824,7 +6830,7 @@ def render_smart_betting(show_title: bool = True):
     #-----------
     race_data = []
     for runner in sorted_runners:
-        horse_name = runner.get('horse_name', '')
+        horse_name = _horse_display_label(runner)
         
         # 安全处理赔率
         odds_win_raw = runner.get('odds_win')
@@ -6889,8 +6895,9 @@ def render_smart_betting(show_title: bool = True):
     st.caption(t()["ev_description"])
     
     # 准备策略引擎所需数据
-    scores = [runner.get('overall_score', 50) for runner in sorted_runners]
-    horse_names = [runner.get('horse_name', '') for runner in sorted_runners]
+    scores = [runner.get("combined_score", runner.get("overall_score", 50)) for runner in sorted_runners]
+    horse_names = [runner.get("horse_name", "") for runner in sorted_runners]
+    horse_nos = [runner.get("horse_no") for runner in sorted_runners]
     
     # 获取赔率
     odds_win = []
@@ -6916,224 +6923,36 @@ def render_smart_betting(show_title: bool = True):
         odds_win=odds_win,
         odds_place=odds_place,
         odds_qin=odds_qin,
-        odds_tri=odds_tri
+        odds_tri=odds_tri,
+        horse_nos=horse_nos,
     )
     
     # ==================== 折叠1：独赢/位置 ====================
-    with st.expander("🎯 独赢/位置 推荐", expanded=st.session_state.expand_win):
-        if st.session_state.expand_win:
-            if not st.session_state.paid_win:
-                if not consume_free_trial(st.session_state.user_id):
-                    st.warning("免費次數已用完，請升級到專業版")
-                    st.session_state.expand_win = False
-                    st.rerun()
-                else:
-                    st.session_state.paid_win = True
-                    st.rerun()
-            else:
-                if recommendations.get('win') and recommendations['win']:
-                    rec = recommendations['win'][0]
-                    st.info(f"**{rec.description}**")
-                    st.write(f"獨贏賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
-                elif recommendations.get('place') and recommendations['place']:
-                    rec = recommendations['place'][0]
-                    st.info(f"**{rec.description}**")
-                    st.write(f"位置賠率: {rec.odds:.1f}倍")
-                    st.write(f"預期ROI: {rec.roi:+.1f}%")
-                    st.caption(f"💡 {rec.reason}")
-                else:
-                    st.write("暫無建議")
+    with st.expander("🎯 獨贏/位置 推薦", expanded=False):
+        if recommendations.get('win') and recommendations['win']:
+            rec = recommendations['win'][0]
+            st.info(f"**{rec.description}**")
+            st.write(f"獨贏賠率: {rec.odds:.1f}倍")
+            st.write(f"預期ROI: {rec.roi:+.1f}%")
+            st.caption(f"💡 {rec.reason}")
+        elif recommendations.get('place') and recommendations['place']:
+            rec = recommendations['place'][0]
+            st.info(f"**{rec.description}**")
+            st.write(f"位置賠率: {rec.odds:.1f}倍")
+            st.write(f"預期ROI: {rec.roi:+.1f}%")
+            st.caption(f"💡 {rec.reason}")
         else:
-            st.caption("点击展开并扣费（1次）")
-            # 显示内容
-            if recommendations.get('win') and recommendations['win']:
-                rec = recommendations['win'][0]
-                st.info(f"**{rec.description}**")
-                st.write(f"獨贏賠率: {rec.odds:.1f}倍")
-                st.write(f"預期ROI: {rec.roi:+.1f}%")
-                st.caption(f"💡 {rec.reason}")
-            elif recommendations.get('place') and recommendations['place']:
-                rec = recommendations['place'][0]
-                st.info(f"**{rec.description}**")
-                st.write(f"位置賠率: {rec.odds:.1f}倍")
-                st.write(f"預期ROI: {rec.roi:+.1f}%")
-                st.caption(f"💡 {rec.reason}")
-            else:
-                st.write("暫無建議")
+            st.write("暫無建議")
     
-    # ==================== 折叠2：连赢 ====================
-    # 折叠2：连赢
-    with st.expander("🔗 连赢 推荐", expanded=st.session_state.get("expand_qin", False)):
-        if st.session_state.get("paid_qin", False):
-            # 已付费，显示内容
-            if len(sorted_runners) < 2:
-                st.warning("馬匹數量不足，無法推薦連贏")
-            else:
-                top_n = min(5, len(sorted_runners))
-                top_runners = sorted_runners[:top_n]
-                combinations = []
-                for i in range(len(top_runners)):
-                    for j in range(i+1, len(top_runners)):
-                        h1 = top_runners[i]
-                        h2 = top_runners[j]
-                        odds1 = h1.get('odds_win', 0) or 0
-                        odds2 = h2.get('odds_win', 0) or 0
-                        if odds1 > 0 and odds2 > 0:
-                            estimated_odds = (odds1 * odds2) / 2
-                        else:
-                            estimated_odds = 0
-                        prob1 = h1.get('win_probability', 0) or 0
-                        prob2 = h2.get('win_probability', 0) or 0
-                        joint_prob = prob1 * prob2 * 2
-                        ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
-                        combinations.append({
-                            'name': f"{h1.get('horse_name', '')}({h1.get('horse_no', '')}) + {h2.get('horse_name', '')}({h2.get('horse_no', '')})",
-                            'odds': estimated_odds,
-                            'ev': ev,
-                            'recommended': ev > 0.15
-                        })
-                combinations.sort(key=lambda x: x['ev'], reverse=True)
-                top_combos = combinations[:5]
-                if not top_combos or all(c['odds'] <= 0 for c in top_combos):
-                    st.info("無法計算連贏賠率，請確保馬匹有足夠的賠率數據")
-                else:
-                    selected = []
-                    for idx, combo in enumerate(top_combos):
-                        col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1])
-                        with col1:
-                            st.write(f"**{combo['name']}**")
-                        with col2:
-                            st.write(f"賠率: {combo['odds']:.1f}倍")
-                        with col3:
-                            ev_color = "🟢" if combo['ev'] > 0.15 else "🟡" if combo['ev'] > 0 else "🔴"
-                            st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
-                        with col4:
-                            if st.checkbox("選擇", key=f"qin_fold2_{idx}", value=combo['recommended']):
-                                selected.append(combo)
-                        st.markdown("---")
-                    if selected:
-                        total_stake = len(selected) * 20
-                        st.success(f"✅ 已選擇 {len(selected)} 組，建議總投注額: HK${total_stake:.0f}")
-                    else:
-                        st.info("請勾選您感興趣的組合")
-        else:
-            st.info("💡 点击下方按钮扣费（1次）后查看連贏推薦")
-            if st.button("💎 扣費查看連贏推薦", key="btn_qin_fold", use_container_width=True):
-                if not consume_free_trial(st.session_state.user_id):
-                    st.warning("免費次數已用完，請升級到專業版")
-                else:
-                    st.session_state.paid_qin = True
-                    st.session_state.expand_qin = True
-                    st.rerun()
-    
-    # ==================== 折叠3：单T ====================
-    # 折叠3：单T
-    with st.expander("🎲 单T 推荐", expanded=st.session_state.get("expand_tri", False)):
-        if st.session_state.get("paid_tri", False):
-            # 已付费，显示内容
-            if len(sorted_runners) < 3:
-                st.warning("馬匹數量不足，無法推薦單T")
-            else:
-                top3 = sorted_runners[:3]
-                h1, h2, h3 = top3[0], top3[1], top3[2]
-                odds1 = h1.get('odds_win', 0) or 0
-                odds2 = h2.get('odds_win', 0) or 0
-                odds3 = h3.get('odds_win', 0) or 0
-                if odds1 > 0 and odds2 > 0 and odds3 > 0:
-                    estimated_odds = odds1 * odds2 * odds3 * 0.5
-                    prob1 = h1.get('win_probability', 0) or 0
-                    prob2 = h2.get('win_probability', 0) or 0
-                    prob3 = h3.get('win_probability', 0) or 0
-                    joint_prob = prob1 * prob2 * prob3 * 6
-                    ev = joint_prob * estimated_odds - 1
-                    st.write(f"**{h1.get('horse_name', '')} + {h2.get('horse_name', '')} + {h3.get('horse_name', '')}**")
-                    st.write(f"估算賠率: {estimated_odds:.1f}倍")
-                    st.write(f"聯合概率: {joint_prob*100:.1f}%")
-                    st.write(f"期望值(EV): {ev:+.2f}")
-                    if ev > 0.15:
-                        st.success("✅ EV > 0.15，建議投注")
-                    else:
-                        st.info("❌ EV 不足，暫不建議")
-                else:
-                    st.info("無法計算單T賠率，請確保馬匹有足夠的賠率數據")
-        else:
-            st.info("💡 点击下方按钮扣费（1次）后查看單T推薦")
-            if st.button("💎 扣費查看單T推薦", key="btn_tri_fold", use_container_width=True):
-                if not consume_free_trial(st.session_state.user_id):
-                    st.warning("免費次數已用完，請升級到專業版")
-                else:
-                    st.session_state.paid_tri = True
-                    st.session_state.expand_tri = True
-                    st.rerun()
-    
+    # ==================== 連贏推薦 ====================
+    with st.expander("🔗 連贏 推薦", expanded=False):
+        _render_qin_suggestions(sorted_runners, key_prefix="qin_fold")
+
+    # ==================== 單T推薦 ====================
+    with st.expander("🎲 單T 推薦", expanded=False):
+        _render_tri_suggestions(sorted_runners)
+
     st.markdown("---")
-    #------------
-    # ==================== 连赢推荐（折叠版） ====================
-    # 连赢推荐（折叠版）
-    with st.expander("🔗 連贏推薦（點擊展開）", expanded=st.session_state.get("expand_qin_recommend", False)):
-        if st.session_state.get("paid_qin_recommend", False):
-            # 已付费，显示内容
-            if len(sorted_runners) < 2:
-                st.warning("馬匹數量不足，無法推薦連贏")
-            else:
-                top_n = min(5, len(sorted_runners))
-                top_runners = sorted_runners[:top_n]
-                combinations = []
-                for i in range(len(top_runners)):
-                    for j in range(i+1, len(top_runners)):
-                        h1 = top_runners[i]
-                        h2 = top_runners[j]
-                        odds1 = h1.get('odds_win', 0) or 0
-                        odds2 = h2.get('odds_win', 0) or 0
-                        if odds1 > 0 and odds2 > 0:
-                            estimated_odds = (odds1 * odds2) / 2
-                        else:
-                            estimated_odds = 0
-                        prob1 = h1.get('win_probability', 0) or 0
-                        prob2 = h2.get('win_probability', 0) or 0
-                        joint_prob = prob1 * prob2 * 2
-                        ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
-                        combinations.append({
-                            'name': f"{h1.get('horse_name', '')}({h1.get('horse_no', '')}) + {h2.get('horse_name', '')}({h2.get('horse_no', '')})",
-                            'odds': estimated_odds,
-                            'ev': ev,
-                            'recommended': ev > 0.15
-                        })
-                combinations.sort(key=lambda x: x['ev'], reverse=True)
-                top_combos = combinations[:5]
-                if not top_combos or all(c['odds'] <= 0 for c in top_combos):
-                    st.info("無法計算連贏賠率，請確保馬匹有足夠的賠率數據")
-                else:
-                    selected = []
-                    for idx, combo in enumerate(top_combos):
-                        col1, col2, col3, col4 = st.columns([2.5, 1.2, 1.2, 1])
-                        with col1:
-                            st.write(f"**{combo['name']}**")
-                        with col2:
-                            st.write(f"賠率: {combo['odds']:.1f}倍")
-                        with col3:
-                            ev_color = "🟢" if combo['ev'] > 0.15 else "🟡" if combo['ev'] > 0 else "🔴"
-                            st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
-                        with col4:
-                            if st.checkbox("選擇", key=f"qin_rec_{idx}", value=combo['recommended']):
-                                selected.append(combo)
-                        st.markdown("---")
-                    if selected:
-                        total_stake = len(selected) * 20
-                        st.success(f"✅ 已選擇 {len(selected)} 組，建議總投注額: HK${total_stake:.0f}")
-                    else:
-                        st.info("請勾選您感興趣的組合")
-        else:
-            st.info("💡 点击下方按钮扣费（1次）后查看連贏推薦")
-            if st.button("💎 扣費查看連贏推薦", key="btn_qin_rec", use_container_width=True):
-                if not consume_free_trial(st.session_state.user_id):
-                    st.warning("免費次數已用完，請升級到專業版")
-                else:
-                    st.session_state.paid_qin_recommend = True
-                    st.session_state.expand_qin_recommend = True
-                    st.rerun()
     # ==================== 新增：過関投注推薦器 ====================
     st.markdown(f"## {t()['parlay_recommendation']}")
     st.caption(t()["parlay_description"])
@@ -8213,6 +8032,8 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
     }
     
     try:
+        from scoring_engine import score_runners_for_prediction, load_horse_birth_years
+
         # ==================== 1. 加载评分配置 ====================
         from scoring_engine import get_scoring_config
         config = get_scoring_config()
@@ -8237,18 +8058,18 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         
         # 获取马匹信息（含出生年份）
         try:
-            headers = get_supabase_headers(use_secret=True)
-            horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=horse_id,birth_year"
-            horses_response = requests.get(horses_url, headers=headers)
-            horse_birth_years = {}
-            if horses_response.status_code == 200:
-                for h in horses_response.json():
-                    horse_id = h.get('horse_id')
-                    if horse_id:
-                        horse_birth_years[horse_id] = h.get('birth_year')
+            horse_birth_years = load_horse_birth_years()
         except Exception as e:
             print(f"获取马匹出生年份失败: {e}")
             horse_birth_years = {}
+        
+        weights_cfg = {
+            "level1": level1,
+            "basic": basic_w,
+            "race": race_w,
+            "odds": odds_w,
+            "status": status_w,
+        }
         
         # ==================== 4. 提取赛事列表 ====================
         races = get_races_from_performances(all_performances)
@@ -8259,16 +8080,6 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             st.warning(warn_msg)
             return result
         
-        # ==================== 5. 导入评分引擎函数 ====================
-        from scoring_engine import (
-            calculate_basic_score,
-            calculate_race_score,
-            calculate_odds_score,
-            calculate_status_score,
-            calculate_overall_score,
-            get_horse_weight_comfort_range_from_cache
-        )
-        #-----------
         # ==================== 6. 初始化统计变量 ====================
         correct_predictions = 0
         total_top3_hits = 0
@@ -8317,94 +8128,42 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             if not runners_data:
                 continue
             
-            # 构建 runners 列表并计算评分
-            runners = []
+            # 构建 runners 列表并计算评分（与智能投注共用逻辑）
+            runners_input = []
             for r in runners_data:
-                horse_id = r.get('horse_id')
+                horse_id = r.get("horse_id")
                 if not horse_id:
                     continue
-                
-                horse_name = r.get('horse_name', '')
-                
-                # 获取该马匹在 race_date 之前的往绩
-                all_past = horse_cache.get(horse_id, [])
-                past_before_race = [p for p in all_past 
-                                   if p.get('race_date', '') < race_date]
-                past_before_race = past_before_race[:10]
-                
-                # ========== 使用新评分引擎 ==========
-                # 获取负磅舒适区
-                weight_comfort_range = get_horse_weight_comfort_range_from_cache(horse_id, past_before_race)
-                
-                # 基础往绩评分
-                basic_score = calculate_basic_score(
-                    past_before_race,
-                    distance,
-                    basic_w
+                runners_input.append(
+                    {
+                        "horse_id": horse_id,
+                        "horse_name": r.get("horse_name", ""),
+                        "horse_no": r.get("horse_no"),
+                        "draw": r.get("draw"),
+                        "actual_weight": r.get("actual_weight"),
+                        "jockey": r.get("jockey"),
+                        "trainer": r.get("trainer"),
+                        "odds_win": r.get("odds"),
+                        "body_weight": r.get("body_weight"),
+                        "incident": r.get("incident", ""),
+                        "running_position": r.get("running_position", ""),
+                    }
                 )
-                
-                # 场次因素评分
-                race_score = calculate_race_score(
-                    horse_id,
-                    venue,
-                    distance,
-                    r.get('draw'),
-                    r.get('actual_weight'),
-                    r.get('jockey'),
-                    r.get('trainer'),
-                    weight_comfort_range,
-                    past_before_race,
-                    race_w
-                )
-                
-                # 赔率因素评分
-                odds_raw = r.get('odds')
-                try:
-                    odds_win = float(odds_raw) if odds_raw else 10.0
-                except (ValueError, TypeError):
-                    odds_win = 10.0
-                
-                odds_score = calculate_odds_score(odds_win, 50.0, odds_w)
-                
-                # 状态因素评分
-                birth_year = horse_birth_years.get(horse_id)
-                status_score = calculate_status_score(
-                    birth_year,
-                    r.get('body_weight'),
-                    [p.get('body_weight') for p in past_before_race if p.get('body_weight')],
-                    r.get('incident', ''),
-                    r.get('running_position', ''),
-                    r.get('position'),
-                    status_w
-                )
-                
-                # 综合评分
-                combined_score = calculate_overall_score(
-                    basic_score,
-                    race_score,
-                    odds_score,
-                    status_score,
-                    level1
-                )
-                
-                runners.append({
-                    "horse_id": horse_id,
-                    "horse_name": horse_name,
-                    "horse_no": r.get('horse_no'),
-                    "finishing_position": r.get('position'),
-                    "combined_score": combined_score,
-                    "odds_win": odds_win,
-                    "basic_score": basic_score,
-                    "race_score": race_score,
-                    "odds_score": odds_score,
-                    "status_score": status_score
-                })
+
+            runners = score_runners_for_prediction(
+                race_date,
+                venue,
+                distance,
+                runners_input,
+                horse_cache,
+                horse_birth_years,
+                weights_cfg,
+            )
             
             if not runners:
                 continue
             
-            # 排序找出预测前三名
-            runners.sort(key=lambda x: x.get('combined_score', 0), reverse=True)
+            # 排序找出预测前三名（已按 combined_score 排序）
             predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
             predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
             predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None

@@ -13,6 +13,14 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
+def format_horse_display(name: str, horse_no=None) -> str:
+    """统一显示：马名(马号)"""
+    name = (name or "").strip()
+    if horse_no is not None and str(horse_no).strip() not in ("", "0", "None"):
+        return f"{name}({horse_no})" if name else f"({horse_no})"
+    return name or "-"
+
+
 @dataclass
 class HorseProbability:
     """马匹概率数据"""
@@ -79,7 +87,12 @@ class BettingStrategyEngine:
         """计算预期ROI (%)"""
         return ev * 100
     
-    def get_horse_probabilities(self, scores: List[float], names: List[str]) -> List[HorseProbability]:
+    def get_horse_probabilities(
+        self,
+        scores: List[float],
+        names: List[str],
+        horse_nos: Optional[List] = None,
+    ) -> List[HorseProbability]:
         """
         从评分获取马匹各项概率
         参数:
@@ -117,9 +130,11 @@ class BettingStrategyEngine:
         
         results = []
         for i, name in enumerate(names):
+            hno = horse_nos[i] if horse_nos and i < len(horse_nos) else (i + 1)
+            display_name = format_horse_display(name, hno)
             results.append(HorseProbability(
-                horse_no=i + 1,
-                horse_name=name,
+                horse_no=hno,
+                horse_name=display_name,
                 win_prob=round(win_probs[i] * 100, 1),
                 place_prob=round(place_probs[i] * 100, 1),
                 show_prob=round(show_probs[i] * 100, 1)
@@ -149,7 +164,7 @@ class BettingStrategyEngine:
                 recommendations.append(BettingRecommendation(
                     type="WIN",
                     description=f"獨贏 - {prob.horse_name}",
-                    content=f"{prob.horse_no}號 {prob.horse_name}",
+                    content=f"{prob.horse_name}",
                     odds=odds,
                     ev=ev,
                     roi=roi,
@@ -182,7 +197,7 @@ class BettingStrategyEngine:
                 recommendations.append(BettingRecommendation(
                     type="PLA",
                     description=f"位置 - {prob.horse_name}",
-                    content=f"{prob.horse_no}號 {prob.horse_name}",
+                    content=f"{prob.horse_name}",
                     odds=odds,
                     ev=ev,
                     roi=roi,
@@ -203,8 +218,13 @@ class BettingStrategyEngine:
         
         for i in range(n):
             for j in range(i + 1, n):
-                combo_key = f"{i+1},{j+1}"
+                hno_i = probs[i].horse_no
+                hno_j = probs[j].horse_no
+                combo_key = f"{hno_i},{hno_j}"
                 odds = odds_qin.get(combo_key)
+                if odds is None or odds <= 0:
+                    combo_key_alt = f"{hno_j},{hno_i}"
+                    odds = odds_qin.get(combo_key_alt)
                 if odds is None or odds <= 0:
                     continue
                 
@@ -219,7 +239,7 @@ class BettingStrategyEngine:
                     recommendations.append(BettingRecommendation(
                         type="QIN",
                         description=f"連贏 - {probs[i].horse_name} + {probs[j].horse_name}",
-                        content=f"{i+1}號 + {j+1}號",
+                        content=f"{probs[i].horse_name} + {probs[j].horse_name}",
                         odds=odds,
                         ev=ev,
                         roi=roi,
@@ -241,7 +261,8 @@ class BettingStrategyEngine:
         for i in range(n):
             for j in range(i + 1, n):
                 for k in range(j + 1, n):
-                    combo_key = f"{i+1},{j+1},{k+1}"
+                    nums = [probs[i].horse_no, probs[j].horse_no, probs[k].horse_no]
+                    combo_key = ",".join(str(x) for x in nums)
                     odds = odds_tri.get(combo_key)
                     if odds is None or odds <= 0:
                         continue
@@ -257,7 +278,7 @@ class BettingStrategyEngine:
                         recommendations.append(BettingRecommendation(
                             type="TRI",
                             description=f"單T - {probs[i].horse_name} + {probs[j].horse_name} + {probs[k].horse_name}",
-                            content=f"{i+1}號 + {j+1}號 + {k+1}號",
+                            content=f"{probs[i].horse_name} + {probs[j].horse_name} + {probs[k].horse_name}",
                             odds=odds,
                             ev=ev,
                             roi=roi,
@@ -275,7 +296,8 @@ class BettingStrategyEngine:
         odds_win: List[float],
         odds_place: List[float],
         odds_qin: Dict[str, float],
-        odds_tri: Dict[str, float]
+        odds_tri: Dict[str, float],
+        horse_nos: Optional[List] = None,
     ) -> Dict[str, List[BettingRecommendation]]:
         """
         生成所有彩池的投注建议
@@ -287,7 +309,7 @@ class BettingStrategyEngine:
         }
         """
         # 1. 计算概率
-        probs = self.get_horse_probabilities(scores, horse_names)
+        probs = self.get_horse_probabilities(scores, horse_names, horse_nos=horse_nos)
         
         # 2. 生成各彩池建议
         win_recs = self.recommend_win(probs, odds_win)
