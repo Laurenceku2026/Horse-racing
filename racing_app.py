@@ -22,6 +22,7 @@ from bs4 import BeautifulSoup
 from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db
 from parlay_recommender import ParlayRecommender
 # ==================== 从 scoring_engine 导入 ====================
+SCORING_ENGINE_OK = False
 try:
     from scoring_engine import (
         # 核心评分函数
@@ -37,17 +38,20 @@ try:
         calculate_burst_score,
         # 辅助函数
         softmax_probabilities,
-        get_horses_performances_batch,
+        get_horses_performances_batch as se_get_horses_performances_batch,
         get_horse_past_performances_v2_optimized,
         get_horse_weight_comfort_range_from_cache,
+        score_runners_for_prediction,
+        load_horse_birth_years,
         # 配置加载
         get_scoring_config,
         # 旧版兼容
         normalize_odds,
     )
-    print("✅ scoring_engine 导入成功")
+    SCORING_ENGINE_OK = True
+    print("scoring_engine loaded")
 except ImportError as e:
-    print(f"❌ scoring_engine 导入失败: {e}")
+    print(f"scoring_engine import failed: {e}")
 # ==================== 页面配置 ====================
 st.set_page_config(
     page_title="香港赛马AI分析系统",
@@ -115,6 +119,25 @@ st.markdown("""
     }
     div[data-testid="stRadio"] label[data-checked="true"] p {
         color: #ffffff !important;
+    }
+    /* 智能投注：日期模式 radio 保持简洁（非首个 radio） */
+    div[data-testid="stRadio"]:not(:first-of-type) label {
+        background-color: transparent !important;
+        border: none !important;
+        border-radius: 0 !important;
+        padding: 0.15rem 0.5rem !important;
+        min-width: auto !important;
+    }
+    div[data-testid="stRadio"]:not(:first-of-type) label p {
+        font-size: 0.85rem !important;
+        font-weight: 500 !important;
+    }
+    div[data-testid="stRadio"]:not(:first-of-type) label[data-checked="true"] {
+        background-color: transparent !important;
+        border: none !important;
+    }
+    div[data-testid="stRadio"]:not(:first-of-type) label[data-checked="true"] p {
+        color: #4f46e5 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -6523,13 +6546,15 @@ def render_smart_betting(show_title: bool = True):
     t1 = time.time()
     perf_log["选择赛日"] = t1 - t0
     
-    # ⭐ 新增：日期模式选择
+    # ⭐ 日期模式选择（简洁样式，无大框）
+    st.caption("選擇日期模式")
     date_mode = st.radio(
         "選擇日期模式",
-        options=["未來賽事", "歷史賽事（測試用）"],
+        options=["未來賽事", "歷史賽事"],
         index=0,
         horizontal=True,
-        key="date_mode_select"
+        key="date_mode_select",
+        label_visibility="collapsed",
     )
     
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -6707,12 +6732,9 @@ def render_smart_betting(show_title: bool = True):
     # ==================== 计算胜率 ====================
     if model_choice == "评分系统":
         with st.spinner(t()["calculating_win_rate"]):
-            from scoring_engine import (
-                score_runners_for_prediction,
-                load_horse_birth_years,
-                get_horses_performances_batch,
-                get_scoring_config,
-            )
+            if not SCORING_ENGINE_OK:
+                st.error("評分引擎未載入，請刷新頁面後重試。" if lang == "zh" else "Scoring engine failed to load. Please refresh.")
+                return
 
             if st.session_state.get("scoring_weights_applied", False):
                 weights_config = st.session_state.get("user_scoring_config", {})
@@ -6727,7 +6749,7 @@ def render_smart_betting(show_title: bool = True):
                 }
 
             horse_ids = tuple({r.get("horse_id") for r in runners if r.get("horse_id")})
-            perf_cache = get_horses_performances_batch(horse_ids)
+            perf_cache = se_get_horses_performances_batch(horse_ids)
             horse_birth_years = load_horse_birth_years()
 
             runners = score_runners_for_prediction(
