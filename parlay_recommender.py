@@ -97,6 +97,7 @@ class ParlayRecommender:
         odds: List[float],
         top_n: int = 3,
         horse_nos: Optional[List] = None,
+        win_probs: Optional[List[float]] = None,
     ) -> List[Dict]:
         """
         获取一场比赛的前N名推荐马匹
@@ -106,24 +107,40 @@ class ParlayRecommender:
             horse_names: 各马匹名称
             odds: 各马匹独赢赔率
             top_n: 返回前N匹
+            win_probs: 各马匹胜率（百分比，可选）
         
         返回:
-            按评分排序的马匹列表
+            按胜率排序的马匹列表
         """
         horses = []
         for i, (score, name, odd) in enumerate(zip(scores, horse_names, odds)):
-            if odd and odd > 0:
-                hno = horse_nos[i] if horse_nos and i < len(horse_nos) else (i + 1)
-                horses.append({
-                    'horse_no': hno,
-                    'horse_name': name,
-                    'score': score,
-                    'odds': odd,
-                    'win_prob': min(score * 0.8, 85)  # 简化：评分转换为胜率
-                })
-        
-        # 按评分排序
-        horses.sort(key=lambda x: x['score'], reverse=True)
+            if win_probs and i < len(win_probs):
+                prob = float(win_probs[i] or 0)
+            elif score is not None and float(score) <= 1:
+                prob = float(score) * 100
+            else:
+                prob = min(float(score or 0) * 0.8, 85)
+
+            if prob <= 0:
+                continue
+
+            hno = horse_nos[i] if horse_nos and i < len(horse_nos) else (i + 1)
+            try:
+                odds_val = float(odd) if odd else 0
+            except (TypeError, ValueError):
+                odds_val = 0
+            if odds_val <= 0:
+                odds_val = max(2.0, 100.0 / max(prob, 5.0))
+
+            horses.append({
+                'horse_no': hno,
+                'horse_name': name,
+                'score': float(score or 0),
+                'odds': odds_val,
+                'win_prob': round(prob, 2),
+            })
+
+        horses.sort(key=lambda x: x['win_prob'], reverse=True)
         return horses[:top_n]
     
     def recommend_for_single_race(
@@ -136,13 +153,16 @@ class ParlayRecommender:
         odds: List[float],
         top_n: int = 2,
         horse_nos: Optional[List] = None,
+        win_probs: Optional[List[float]] = None,
     ) -> List[RaceSelection]:
         """
         为单场比赛推荐可选马匹
         
         返回: 前 top_n 匹马的 RaceSelection 列表
         """
-        top_horses = self.get_top_horses_for_race(scores, horse_names, odds, top_n, horse_nos)
+        top_horses = self.get_top_horses_for_race(
+            scores, horse_names, odds, top_n, horse_nos, win_probs
+        )
         
         selections = []
         for horse in top_horses:
@@ -267,6 +287,7 @@ class ParlayRecommender:
                 odds=race['odds'],
                 top_n=2,
                 horse_nos=race.get('horse_nos'),
+                win_probs=race.get('win_probs'),
             )
             all_selections.append(selections)
         
@@ -283,6 +304,92 @@ class ParlayRecommender:
                 if recommendations:
                     results[parlay_type] = recommendations
         
+        return results
+
+    def build_optimal_parlay_results(
+        self,
+        races_data: List[Dict],
+        max_legs: int = 6,
+    ) -> Dict[str, List[ParlayRecommendation]]:
+        """
+        从所选场次各取最高信心马，生成最优 2串1 / 3串1 等推荐（EV 排序）。
+        当复杂组合无结果时作为可靠后备。
+        """
+        if len(races_data) < 2:
+            return {}
+
+        top_by_race: List[RaceSelection] = []
+        for race in races_data:
+            picks = self.recommend_for_single_race(
+                race_date=race["race_date"],
+                race_no=race["race_no"],
+                venue=race["venue"],
+                scores=race["scores"],
+                horse_names=race["horse_names"],
+                odds=race["odds"],
+                top_n=1,
+                horse_nos=race.get("horse_nos"),
+                win_probs=race.get("win_probs"),
+            )
+            if picks:
+                top_by_race.append(picks[0])
+
+        if len(top_by_race) < 2:
+            return {}
+
+        results: Dict[str, List[ParlayRecommendation]] = {}
+
+        def _make_rec(parlay_type: str, legs: List[RaceSelection]) -> ParlayRecommendation:
+            config = self.parlay_configs.get(parlay_type, {})
+            odds_list = [leg.odds for leg in legs]
+            prob_list = [leg.win_prob for leg in legs]
+            total_odds = self.calculate_parlay_odds(odds_list)
+            combined_prob = self.calculate_parlay_prob(prob_list)
+            ev = self.calculate_ev(total_odds, combined_prob)
+            roi = self.calculate_roi(ev)
+            num_bets = config.get("num_bets", 1)
+            total_stake = num_bets * self.default_stake_per_bet
+            expected_return = total_stake * (1 + roi / 100) if roi > 0 else total_stake * total_odds / max(num_bets, 1)
+            if combined_prob > 30:
+                risk_level = "低"
+            elif combined_prob > 15:
+                risk_level = "中"
+            else:
+                risk_level = "高"
+            return ParlayRecommendation(
+                parlay_type=parlay_type,
+                num_legs=len(legs),
+                num_bets=num_bets,
+                selections=legs,
+                total_odds=total_odds,
+                combined_prob=combined_prob,
+                ev=round(ev, 4),
+                roi=round(roi, 2),
+                total_stake=total_stake,
+                expected_return=round(expected_return, 2),
+                risk_level=risk_level,
+            )
+
+        pair_recs: List[ParlayRecommendation] = []
+        for i in range(len(top_by_race)):
+            for j in range(i + 1, len(top_by_race)):
+                pair_recs.append(_make_rec("2x1", [top_by_race[i], top_by_race[j]]))
+        pair_recs.sort(key=lambda x: x.ev, reverse=True)
+        if pair_recs:
+            results["2x1"] = pair_recs[:3]
+
+        if len(top_by_race) >= 3 and max_legs >= 3:
+            triple_recs: List[ParlayRecommendation] = []
+            for i in range(len(top_by_race)):
+                for j in range(i + 1, len(top_by_race)):
+                    for k in range(j + 1, len(top_by_race)):
+                        triple_recs.append(
+                            _make_rec("3x1", [top_by_race[i], top_by_race[j], top_by_race[k]])
+                        )
+            triple_recs.sort(key=lambda x: x.ev, reverse=True)
+            if triple_recs:
+                results["3x1"] = triple_recs[:3]
+
         return results
 
 

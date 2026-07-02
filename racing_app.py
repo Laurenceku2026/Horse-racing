@@ -6288,6 +6288,14 @@ def _pack_parlay_race_entry(race: Dict, runners_data: List[Dict]) -> Dict:
             odds.append(float(odds_raw) if odds_raw else 0)
         except (TypeError, ValueError):
             odds.append(0)
+    win_probs = []
+    for runner in sorted_runners:
+        prob_raw = runner.get("win_probability")
+        try:
+            prob_val = float(prob_raw) if prob_raw is not None else 0.0
+        except (TypeError, ValueError):
+            prob_val = 0.0
+        win_probs.append(round(prob_val * 100, 2) if prob_val <= 1 else round(prob_val, 2))
     return {
         "race_date": race.get("race_date"),
         "race_no": race.get("race_no"),
@@ -6295,6 +6303,7 @@ def _pack_parlay_race_entry(race: Dict, runners_data: List[Dict]) -> Dict:
         "scores": scores,
         "horse_names": horse_names,
         "horse_nos": horse_nos,
+        "win_probs": win_probs,
         "odds": odds,
     }
 
@@ -6314,7 +6323,11 @@ def _build_parlay_races_data(
         ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
 
     parlay_races_data = []
-    for idx in selected_indices:
+    sorted_indices = sorted(
+        selected_indices,
+        key=lambda i: races_list[i].get("race_no", 0),
+    )
+    for idx in sorted_indices:
         race = races_list[idx]
         runners_data = _score_runners_for_parlay_race(
             race,
@@ -6396,6 +6409,80 @@ def _generate_parlay_combo_results(
     for item in results:
         item.pop("_ev", None)
     return results
+
+def _parlay_schedule_cache_key(
+    selected_indices: List[int],
+    model_choice: str,
+    selected_date: str,
+    prediction_cutoff_date: Optional[str],
+) -> Tuple:
+    return (tuple(selected_indices), model_choice, selected_date, prediction_cutoff_date or "live")
+
+
+def _compute_parlay_schedule_results(
+    parlay_races_data: List[Dict],
+    max_legs: int,
+) -> Tuple[Dict, ParlayRecommender]:
+    """计算过关推荐：优先给出最优 2串1/3串1，并补充其他过关方式。"""
+    recommender = ParlayRecommender()
+    results = recommender.build_optimal_parlay_results(parlay_races_data, max_legs=max_legs)
+    extra = recommender.get_parlay_recommendations_for_schedule(
+        races_data=parlay_races_data,
+        max_legs=max_legs,
+        top_parlay_types=["2x3", "3x4", "3x7", "4x11"],
+    )
+    for key, recs in extra.items():
+        if key not in results:
+            results[key] = recs
+    return results, recommender
+
+
+def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommender) -> None:
+    if not results:
+        st.warning("未找到合适的过关组合，请尝试选择更多场次或更换 AI 模型")
+        return
+
+    st.markdown("#### 📊 过关推荐结果")
+    display_order = ["2x1", "3x1", "2x3", "3x4", "3x7", "4x11", "4x1", "5x1", "6x1"]
+    shown_types = [t for t in display_order if t in results] + [
+        t for t in results.keys() if t not in display_order
+    ]
+
+    best_rec = None
+    best_ev = -999.0
+    for parlay_type in shown_types:
+        recommendations = results.get(parlay_type) or []
+        if not recommendations:
+            continue
+        config = recommender.parlay_configs.get(parlay_type, {})
+        st.markdown(f"**{config.get('description', parlay_type)}**")
+        for rec in recommendations[:3]:
+            if rec.ev > best_ev:
+                best_ev = rec.ev
+                best_rec = rec
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([2, 1, 1])
+                with col1:
+                    st.markdown(f"**{format_parlay_display(rec)}**")
+                with col2:
+                    st.markdown(f"賠率: **{rec.total_odds:.1f}**倍")
+                    st.markdown(f"聯合概率: {rec.combined_prob:.1f}%")
+                with col3:
+                    risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
+                    st.markdown(f"風險: {risk_color} {rec.risk_level}")
+                    st.markdown(f"預期ROI: {rec.roi:+.1f}%")
+            st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
+
+    if best_rec:
+        st.markdown("---")
+        st.markdown("#### 🏆 最佳推薦")
+        st.success(
+            f"**最佳过关组合**: {format_parlay_display(best_rec)}\n"
+            f"- 过关方式: {best_rec.parlay_type} ({best_rec.num_bets}注)\n"
+            f"- 总赔率: {best_rec.total_odds:.1f}倍\n"
+            f"- 预期ROI: {best_rec.roi:+.1f}%\n"
+            f"- 建议投注: ${best_rec.total_stake:.0f}"
+        )
 
 # ==================== 智能投注：连赢/单T 展示辅助 ====================
 def _horse_display_label(runner: Dict) -> str:
@@ -7233,7 +7320,7 @@ def render_smart_betting(show_title: bool = True):
 
     st.markdown("---")
     # ==================== 新增：過関投注推薦器 ====================
-    st.markdown(f"## {t()['parlay_recommendation']}")
+    st.markdown(f"## {_model_section_title(t()['parlay_recommendation'], model_choice)}")
     st.caption(t()["parlay_description"])
     
     # 获取当前赛日的所有赛事（用于过关推荐）
@@ -7260,79 +7347,42 @@ def render_smart_betting(show_title: bool = True):
         
         if len(selected_parlay_indices) >= 2:
             st.caption(f"已选择 {len(selected_parlay_indices)} 场比赛")
+            parlay_cache_key = _parlay_schedule_cache_key(
+                selected_parlay_indices, model_choice, selected_date, prediction_cutoff_date
+            )
 
-            with st.expander("🎲 生成过关推荐（点击展开）", expanded=st.session_state.expand_parlay):
-                if st.session_state.expand_parlay:
-                    if not st.session_state.paid_parlay:
-                        if not consume_free_trial(st.session_state.user_id):
-                            st.warning("免費次數已用完，請升級到專業版")
-                            st.session_state.expand_parlay = False
-                            st.rerun()
-                        else:
-                            st.session_state.paid_parlay = True
-                            st.rerun()
-                    elif st.button("🔄 重新生成过关推荐", key="generate_parlay_recommendations", use_container_width=True):
-                        with st.spinner("正在计算过关推荐..."):
-                            weights_config = None
-                            if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
-                                weights_config = st.session_state.get("user_scoring_config", {})
-                            parlay_races_data = _build_parlay_races_data(
-                                current_races_for_parlay,
-                                selected_parlay_indices,
-                                model_choice,
-                                user_weights,
-                                weights_config,
-                                prediction_cutoff_date,
-                            )
-                            if len(parlay_races_data) < 2:
-                                st.warning("所选场次数据不足，请尝试选择更多场次")
-                            else:
-                                recommender = ParlayRecommender()
-                                max_legs = min(len(parlay_races_data), 6)
-                                results = recommender.get_parlay_recommendations_for_schedule(
-                                    races_data=parlay_races_data,
-                                    max_legs=max_legs,
-                                    top_parlay_types=['2x1', '2x3', '3x4', '3x7', '4x11']
-                                )
-                                if results:
-                                    st.markdown("#### 📊 过关推荐结果")
-                                    for parlay_type, recommendations in results.items():
-                                        config = recommender.parlay_configs.get(parlay_type, {})
-                                        st.markdown(f"**{config.get('description', parlay_type)}**")
-                                        for rec in recommendations[:3]:
-                                            with st.container(border=True):
-                                                col1, col2, col3 = st.columns([2, 1, 1])
-                                                with col1:
-                                                    st.markdown(f"**{format_parlay_display(rec)}**")
-                                                with col2:
-                                                    st.markdown(f"賠率: **{rec.total_odds:.1f}**倍")
-                                                    st.markdown(f"聯合概率: {rec.combined_prob:.1f}%")
-                                                with col3:
-                                                    risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
-                                                    st.markdown(f"風險: {risk_color} {rec.risk_level}")
-                                                    st.markdown(f"預期ROI: {rec.roi:+.1f}%")
-                                            st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
-                                    st.markdown("---")
-                                    st.markdown("#### 🏆 最佳推薦")
-                                    best_rec = None
-                                    best_roi = -100
-                                    for recs in results.values():
-                                        for rec in recs:
-                                            if rec.roi > best_roi:
-                                                best_roi = rec.roi
-                                                best_rec = rec
-                                    if best_rec:
-                                        st.success(
-                                            f"**最佳过关组合**: {format_parlay_display(best_rec)}\n"
-                                            f"- 过关方式: {best_rec.parlay_type} ({best_rec.num_bets}注)\n"
-                                            f"- 总赔率: {best_rec.total_odds:.1f}倍\n"
-                                            f"- 预期ROI: {best_rec.roi:+.1f}%\n"
-                                            f"- 建议投注: ${best_rec.total_stake:.0f}"
-                                        )
-                                else:
-                                    st.warning("未找到合适的过关组合，请尝试选择更多场次")
-                else:
-                    st.caption("点击展开并扣费（1次）后，再点击「重新生成过关推荐」")
+            if st.button("🎲 生成過關推薦", key="generate_parlay_schedule", use_container_width=True):
+                with st.spinner("正在計算過關推薦..."):
+                    weights_config = None
+                    if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
+                        weights_config = st.session_state.get("user_scoring_config", {})
+                    parlay_races_data = _build_parlay_races_data(
+                        current_races_for_parlay,
+                        selected_parlay_indices,
+                        model_choice,
+                        user_weights,
+                        weights_config,
+                        prediction_cutoff_date,
+                    )
+                    if len(parlay_races_data) < 2:
+                        st.session_state.pop("parlay_schedule_results", None)
+                        st.session_state.pop("parlay_schedule_cache_key", None)
+                        st.warning("所选场次数据不足，请尝试选择更多场次")
+                    else:
+                        max_legs = min(len(parlay_races_data), 6)
+                        results, recommender = _compute_parlay_schedule_results(
+                            parlay_races_data, max_legs
+                        )
+                        st.session_state["parlay_schedule_results"] = results
+                        st.session_state["parlay_schedule_cache_key"] = parlay_cache_key
+
+            cached_key = st.session_state.get("parlay_schedule_cache_key")
+            cached_results = st.session_state.get("parlay_schedule_results")
+            if cached_results and cached_key == parlay_cache_key:
+                display_recommender = ParlayRecommender()
+                _display_parlay_schedule_results(cached_results, display_recommender)
+            else:
+                st.caption("選好場次後，點擊「🎲 生成過關推薦」查看最優 2串1 / 3串1 等組合")
     
     st.markdown("---")
     
