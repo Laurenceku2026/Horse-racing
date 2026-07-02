@@ -6490,6 +6490,19 @@ def _horse_display_label(runner: Dict) -> str:
     return format_horse_display(runner.get("horse_name", ""), runner.get("horse_no"))
 
 
+def _backtest_horse_label(name: str, horse_no=None) -> str:
+    from betting_strategy_engine import format_horse_display
+    if not name:
+        return "-"
+    return format_horse_display(name, horse_no)
+
+
+def _runner_backtest_label(runner: Optional[Dict]) -> str:
+    if not runner:
+        return "-"
+    return _backtest_horse_label(runner.get("horse_name", ""), runner.get("horse_no"))
+
+
 def _render_qin_suggestions(sorted_runners: List[Dict], key_prefix: str = "qin") -> None:
     """連贏組合推薦（展開即顯示，無二次扣費）"""
     if len(sorted_runners) < 2:
@@ -8347,18 +8360,26 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             actual_3rd = None
             actual_top3_set = set()
             
+            actual_1st_label = actual_2nd_label = actual_3rd_label = "-"
             for r in runners_data_sorted:
                 pos = r.get('position')
                 horse_name = r.get('horse_name', '')
                 if pos == 1:
                     actual_1st = horse_name
+                    actual_1st_label = _backtest_horse_label(horse_name, r.get('horse_no'))
                     actual_top3_set.add(horse_name)
                 elif pos == 2:
                     actual_2nd = horse_name
+                    actual_2nd_label = _backtest_horse_label(horse_name, r.get('horse_no'))
                     actual_top3_set.add(horse_name)
                 elif pos == 3:
                     actual_3rd = horse_name
+                    actual_3rd_label = _backtest_horse_label(horse_name, r.get('horse_no'))
                     actual_top3_set.add(horse_name)
+
+            pred_1st_label = _runner_backtest_label(runners[0] if len(runners) > 0 else None)
+            pred_2nd_label = _runner_backtest_label(runners[1] if len(runners) > 1 else None)
+            pred_3rd_label = _runner_backtest_label(runners[2] if len(runners) > 2 else None)
             
             # 统计各指标
             is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
@@ -8421,12 +8442,12 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 result["debug_details"].append({
                     "赛期": race_date,
                     "场次": race_no,
-                    "预测第1名": predicted_1st or "-",
-                    "预测第2名": predicted_2nd or "-",
-                    "预测第3名": predicted_3rd or "-",
-                    "实际第1名": actual_1st or "-",
-                    "实际第2名": actual_2nd or "-",
-                    "实际第3名": actual_3rd or "-",
+                    "预测第1名": pred_1st_label,
+                    "预测第2名": pred_2nd_label,
+                    "预测第3名": pred_3rd_label,
+                    "实际第1名": actual_1st_label,
+                    "实际第2名": actual_2nd_label,
+                    "实际第3名": actual_3rd_label,
                     "独赢正确": "✅" if is_correct else "❌",
                     "前3名命中匹数": hits,
                     "前3名全中": "✅" if tri_correct else "❌",
@@ -8437,12 +8458,12 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 result["debug_details"].append({
                     "Date": race_date,
                     "Race": race_no,
-                    "Pred 1st": predicted_1st or "-",
-                    "Pred 2nd": predicted_2nd or "-",
-                    "Pred 3rd": predicted_3rd or "-",
-                    "Actual 1st": actual_1st or "-",
-                    "Actual 2nd": actual_2nd or "-",
-                    "Actual 3rd": actual_3rd or "-",
+                    "Pred 1st": pred_1st_label,
+                    "Pred 2nd": pred_2nd_label,
+                    "Pred 3rd": pred_3rd_label,
+                    "Actual 1st": actual_1st_label,
+                    "Actual 2nd": actual_2nd_label,
+                    "Actual 3rd": actual_3rd_label,
                     "Win": "✅" if is_correct else "❌",
                     "Top3 Hits": hits,
                     "Trio": "✅" if tri_correct else "❌",
@@ -9975,19 +9996,27 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 actual_2nd = None
                 actual_3rd = None
                 actual_top3_set = set()
+                actual_1st_label = actual_2nd_label = actual_3rd_label = "-"
                 
                 for rr in runners_data_sorted_actual:
                     pos = rr.get('position')
                     horse_name = rr.get('horse_name', '')
                     if pos == 1:
                         actual_1st = horse_name
+                        actual_1st_label = _backtest_horse_label(horse_name, rr.get('horse_no'))
                         actual_top3_set.add(horse_name)
                     elif pos == 2:
                         actual_2nd = horse_name
+                        actual_2nd_label = _backtest_horse_label(horse_name, rr.get('horse_no'))
                         actual_top3_set.add(horse_name)
                     elif pos == 3:
                         actual_3rd = horse_name
+                        actual_3rd_label = _backtest_horse_label(horse_name, rr.get('horse_no'))
                         actual_top3_set.add(horse_name)
+
+                pred_1st_label = _runner_backtest_label(runners[0] if len(runners) > 0 else None)
+                pred_2nd_label = _runner_backtest_label(runners[1] if len(runners) > 1 else None)
+                pred_3rd_label = _runner_backtest_label(runners[2] if len(runners) > 2 else None)
                 #------------
                 # ==================== 统计命中情况 ====================
 
@@ -10063,12 +10092,12 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 result["debug_details"].append({
                     "赛期": race_date,
                     "场次": race_no,
-                    "预测第1名": predicted_1st or "-",
-                    "预测第2名": predicted_2nd or "-",
-                    "预测第3名": predicted_3rd or "-",
-                    "实际第1名": actual_1st or "-",
-                    "实际第2名": actual_2nd or "-",
-                    "实际第3名": actual_3rd or "-",
+                    "预测第1名": pred_1st_label,
+                    "预测第2名": pred_2nd_label,
+                    "预测第3名": pred_3rd_label,
+                    "实际第1名": actual_1st_label,
+                    "实际第2名": actual_2nd_label,
+                    "实际第3名": actual_3rd_label,
                     "独赢正确": "✅" if is_correct_win else "❌",
                     "前3名命中匹数": hits,
                     "前3名全中": "✅" if tri_correct else "❌",
