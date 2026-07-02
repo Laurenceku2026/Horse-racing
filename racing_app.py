@@ -4400,9 +4400,81 @@ def render_horse_rating_table(df: pd.DataFrame):
     st.caption(f"📊 共 {len(df)} 匹馬")
 
 
+def _supabase_exact_count(table: str, select: str = "horse_id") -> int:
+    """使用 PostgREST count=exact 获取行数，避免拉取全表。"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        headers["Prefer"] = "count=exact"
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select={select}"
+        response = requests.get(url, headers=headers, params={"limit": 1})
+        if response.status_code not in (200, 206):
+            return 0
+        content_range = response.headers.get("Content-Range", "")
+        if "/" in content_range:
+            total = content_range.split("/")[-1]
+            if total.isdigit():
+                return int(total)
+        return len(response.json())
+    except Exception as e:
+        print(f"统计 {table} 失败: {e}")
+        return 0
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_dashboard_stats() -> Dict:
+    """缓存首页统计数据，避免每次交互重复查询 Supabase。"""
+    stats = {
+        "horse_count": 0,
+        "race_count": 0,
+        "perf_count": 0,
+        "jockey_count": 0,
+        "trainer_count": 0,
+        "oldest_date": "N/A",
+        "latest_date": "N/A",
+    }
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        stats["horse_count"] = _supabase_exact_count("horses_v2", "horse_id")
+        stats["perf_count"] = _supabase_exact_count("past_performances_v2", "horse_id")
+
+        perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date,venue,race_no&limit=50000"
+        perf_races_response = requests.get(perf_races_url, headers=headers, timeout=30)
+        if perf_races_response.status_code == 200:
+            unique_races = {
+                (p.get("race_date"), p.get("venue"), p.get("race_no"))
+                for p in perf_races_response.json()
+            }
+            stats["race_count"] = len(unique_races)
+
+            jockeys = set()
+            trainers = set()
+            for p in perf_races_response.json():
+                jockey_name = p.get("jockey")
+                if jockey_name and jockey_name.strip():
+                    jockeys.add(jockey_name)
+                trainer_name = p.get("trainer")
+                if trainer_name and trainer_name.strip():
+                    trainers.add(trainer_name)
+            stats["jockey_count"] = len(jockeys)
+            stats["trainer_count"] = len(trainers)
+
+        perf_url_latest = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date&order=race_date.desc&limit=1"
+        perf_response_latest = requests.get(perf_url_latest, headers=headers, timeout=15)
+        if perf_response_latest.status_code == 200 and perf_response_latest.json():
+            stats["latest_date"] = perf_response_latest.json()[0]["race_date"]
+
+        perf_url_oldest = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date&order=race_date.asc&limit=1"
+        perf_response_oldest = requests.get(perf_url_oldest, headers=headers, timeout=15)
+        if perf_response_oldest.status_code == 200 and perf_response_oldest.json():
+            stats["oldest_date"] = perf_response_oldest.json()[0]["race_date"]
+    except Exception as e:
+        print(f"获取首页统计失败: {e}")
+    return stats
+
+
 # ==================== 主页函数（替换原有的render_home） ====================
 def render_home():
-    """主页：数据概览 + 全马评分榜 + 智能投注 + 回测"""
+    """主页：按模块懒加载，避免每次点击重跑全部功能"""
     
     # 直接获取语言
     lang = st.session_state.get("lang", "zh")
@@ -4415,229 +4487,138 @@ def render_home():
         <p style="color: #666; font-size: 1.1rem;">{texts.get('home_subtitle', '基於AI技術，智能預測馬匹勝率，優化投注策略')}</p>
     </div>
     """, unsafe_allow_html=True)
+
+    section_labels = (
+        ["📊 數據概覽", "🐎 全馬評分", "🎯 智能投注", "📈 回測"]
+        if lang == "zh"
+        else ["📊 Overview", "🐎 Ratings", "🎯 Smart Betting", "📈 Backtest"]
+    )
+    section = st.radio(
+        "功能导航" if lang == "zh" else "Navigation",
+        section_labels,
+        horizontal=True,
+        key="home_section_nav",
+        label_visibility="collapsed",
+    )
+    st.markdown("---")
+
+    show_overview = section == section_labels[0]
+    show_ratings = section == section_labels[1]
+    show_smart_betting = section == section_labels[2]
+    show_backtest = section == section_labels[3]
    
     # ==================== 模块1：数据概览 ====================
-    st.markdown(f"## {texts.get('data_overview', '📊 數據概覽')}")
-    
-    # 获取统计数据
-    try:
-        headers = get_supabase_headers(use_secret=True)
-        
-        # 马匹数量
-        horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=*"
-        horses_response = requests.get(horses_url, headers=headers)
-        horse_count = len(horses_response.json()) if horses_response.status_code == 200 else 0
-        
-        # 赛事数量
-        # 赛事总数（从 past_performances_v2 统计不同的赛事）
-        try:
-            perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date,venue,race_no&limit=50000"
-            perf_races_response = requests.get(perf_races_url, headers=headers)
-            if perf_races_response.status_code == 200:
-                perf_data = perf_races_response.json()
-                unique_races = set()
-                for p in perf_data:
-                    unique_races.add((p.get('race_date'), p.get('venue'), p.get('race_no')))
-                race_count = len(unique_races)
-            else:
-                race_count = 0
-        except Exception as e:
-            print(f"统计赛事数量失败: {e}")
-            race_count = 0
-        
-        # 成绩记录数量
-        perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2"
-        perf_response = requests.get(perf_url, headers=headers)
-        perf_count = len(perf_response.json()) if perf_response.status_code == 200 else 0
-        #------
-        # 获取最新和最旧赛事日期（从 past_performances_v2 表）
-        try:
-            # 获取最新日期
-            perf_url_latest = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date&order=race_date.desc&limit=1"
-            perf_response_latest = requests.get(perf_url_latest, headers=headers)
-            if perf_response_latest.status_code == 200 and perf_response_latest.json():
-                latest_date = perf_response_latest.json()[0]['race_date']
-            else:
-                latest_date = 'N/A'
-            
-            # 获取最旧日期
-            perf_url_oldest = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date&order=race_date.asc&limit=1"
-            perf_response_oldest = requests.get(perf_url_oldest, headers=headers)
-            if perf_response_oldest.status_code == 200 and perf_response_oldest.json():
-                oldest_date = perf_response_oldest.json()[0]['race_date']
-            else:
-                oldest_date = 'N/A'
-        except Exception as e:
-            print(f"获取日期范围失败: {e}")
-            latest_date = 'N/A'
-            oldest_date = 'N/A'
-        #----
-        # 骑师总数（从 past_performances_v2 统计）
-        try:
-            jockeys_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=jockey&limit=50000"
-            jockeys_response = requests.get(jockeys_url, headers=headers)
-            if jockeys_response.status_code == 200:
-                jockey_data = jockeys_response.json()
-                unique_jockeys = set()
-                for j in jockey_data:
-                    jockey_name = j.get('jockey')
-                    if jockey_name and jockey_name.strip():
-                        unique_jockeys.add(jockey_name)
-                jockey_count = len(unique_jockeys)
-            else:
-                jockey_count = 0
-        except Exception as e:
-            print(f"统计骑师失败: {e}")
-            jockey_count = 0
-        
-        # 练马师总数（从 past_performances_v2 统计）
-        try:
-            trainers_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=trainer&limit=50000"
-            trainers_response = requests.get(trainers_url, headers=headers)
-            if trainers_response.status_code == 200:
-                trainer_data = trainers_response.json()
-                unique_trainers = set()
-                for t in trainer_data:
-                    trainer_name = t.get('trainer')
-                    if trainer_name and trainer_name.strip():
-                        unique_trainers.add(trainer_name)
-                trainer_count = len(unique_trainers)
-            else:
-                trainer_count = 0
-        except Exception as e:
-            print(f"统计练马师失败: {e}")
-            trainer_count = 0
-        
-        # 第一行：马匹、赛事、成绩、骑师、练马师（5列）
+    if show_overview:
+        st.markdown(f"## {texts.get('data_overview', '📊 數據概覽')}")
+        stats = get_dashboard_stats()
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric(f"🐎 {texts['horse_count']}", horse_count)
+            st.metric(f"🐎 {texts['horse_count']}", stats["horse_count"])
         with col2:
-            st.metric(f"🏆 {texts['race_count']}", race_count)
+            st.metric(f"🏆 {texts['race_count']}", stats["race_count"])
         with col3:
-            st.metric(f"📊 {texts['record_count']}", perf_count)
+            st.metric(f"📊 {texts['record_count']}", stats["perf_count"])
         with col4:
-            st.metric(f"🤠 {texts['jockey_count']}", jockey_count)
+            st.metric(f"🤠 {texts['jockey_count']}", stats["jockey_count"])
         with col5:
-            st.metric(f"🏋️ {texts['trainer_count']}", trainer_count)
-        
-        # 第二行：日期范围（居中）
+            st.metric(f"🏋️ {texts['trainer_count']}", stats["trainer_count"])
+
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.metric(texts.get('date_range', '📅 數據日期範圍'), f"{oldest_date} ~ {latest_date}", help="基于历史成绩数据的日期范围")
-            
-    except Exception as e:
-        st.warning(f"獲取數據統計失敗: {e}")
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            st.metric(f"🐎 {texts.get('horse_count', '馬匹總數')}", "0")
-        with col2:
-            st.metric(f"🏆 {texts.get('race_count', '賽事總數')}", "0")
-        with col3:
-            st.metric(f"📊 {texts.get('record_count', '成績記錄總數')}", "0")
-        with col4:
-            st.metric(f"🤠 {texts.get('jockey_count', '騎師總數')}", "0")
-        with col5:
-            st.metric(f"🏋️ {texts.get('trainer_count', '練馬師總數')}", "0")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.metric(texts.get('date_range', '📅 數據範圍'), "-")
-    
-    st.markdown("---")
+            st.metric(
+                texts.get("date_range", "📅 數據日期範圍"),
+                f"{stats['oldest_date']} ~ {stats['latest_date']}",
+                help="基于历史成绩数据的日期范围",
+            )
+        st.markdown("---")
    
     #--------------
     # ==================== 数据更新区域 ====================
-    st.markdown(f"### {texts.get('data_update', '🔄 數據更新')}")
-    
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
-        update_btn = st.button(f"🔄 {texts.get('update_all_data', '更新所有数据')}", type="primary", use_container_width=True)
-    
-    if update_btn:
-        if not consume_free_trial(st.session_state.user_id):
-            st.warning(texts.get('free_trial_used', '免費次數已用完，請升級到專業版'))
-        else:
-            with st.spinner(texts.get('checking_update', '正在检查并更新数据...')):
-                # 1. 同步数据（从 API 获取新赛事和成绩）
-                result = sync_all_data()
-                
-                # 2. 检查是否有新数据
-                new_races = result.get('new_races', 0)
-                new_records = result.get('new_records', 0)
-                
-                if result.get("success") and (new_races > 0 or new_records > 0):
-                    # ✅ 有新数据：刷新缓存
-                    try:
-                        with st.spinner("正在更新评分缓存..."):
-                            # 清空缓存表
-                            headers = get_supabase_headers(use_secret=True)
-                            delete_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
-                            requests.delete(delete_url, headers=headers)
-                            
-                            # 重新计算并保存缓存
-                            df = get_all_horses_base_score(limit=500, recent_games=10)
-                            if not df.empty:
-                                save_horse_scores_to_cache(df)
-                            
-                            st.success(texts.get('update_complete', '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录，評分緩存已刷新').format(
-                                new_races=new_races, 
-                                new_records=new_records
-                            ))
-                            
-                            # 清除 Streamlit 缓存
-                            st.cache_data.clear()
+    if show_overview:
+        st.markdown(f"### {texts.get('data_update', '🔄 數據更新')}")
+
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            update_btn = st.button(
+                f"🔄 {texts.get('update_all_data', '更新所有数据')}",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if update_btn:
+            if not consume_free_trial(st.session_state.user_id):
+                st.warning(texts.get('free_trial_used', '免費次數已用完，請升級到專業版'))
+            else:
+                with st.spinner(texts.get('checking_update', '正在检查并更新数据...')):
+                    result = sync_all_data()
+                    new_races = result.get('new_races', 0)
+                    new_records = result.get('new_records', 0)
+
+                    if result.get("success") and (new_races > 0 or new_records > 0):
+                        try:
+                            with st.spinner("正在更新评分缓存..."):
+                                headers = get_supabase_headers(use_secret=True)
+                                delete_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
+                                requests.delete(delete_url, headers=headers)
+
+                                df = get_all_horses_base_score(limit=500, recent_games=10)
+                                if not df.empty:
+                                    save_horse_scores_to_cache(df)
+
+                                st.success(
+                                    texts.get(
+                                        'update_complete',
+                                        '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录，評分緩存已刷新',
+                                    ).format(new_races=new_races, new_records=new_records)
+                                )
+                                st.cache_data.clear()
+                                st.rerun()
+                        except Exception as e:
+                            st.warning(f"数据同步成功，但缓存刷新失败: {e}")
                             st.rerun()
-                    except Exception as e:
-                        st.warning(f"数据同步成功，但缓存刷新失败: {e}")
-                        st.rerun()
-                elif result.get("success"):
-                    # ⚠️ 没有新数据：只提示，不重新计算
-                    st.info("✅ 数据已是最新，无需更新评分缓存")
-                else:
-                    st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
-    
-    st.markdown("---")
+                    elif result.get("success"):
+                        st.info("✅ 数据已是最新，无需更新评分缓存")
+                    else:
+                        st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
+        st.markdown("---")
     
     # ==================== 模块2：全马基础评分榜 ====================
-    st.markdown(f"### 🐎 {texts['horse_rating_title']}")
-    st.caption(texts["horse_rating_desc"])
-    
-    # 评分场次选择
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        recent_games = st.selectbox(
-            "計算場次",
-            options=[3, 5, 8, 10, 12, 15, 20, 0],
-            format_func=lambda x: "全部" if x == 0 else f"最近 {x} 場",
-            index=3,  # 默认 10 场
-            key="recent_games"
-        )
-    
-    # 评分数量选择
-    with col2:
-        rating_limit = st.selectbox(
-            "顯示數量",
-            options=[50, 100, 200, 300, 500],
-            index=1,  # 默认 100
-            key="rating_limit"
-        )
-    
-    with st.spinner(f"正在計算馬匹評分（最近 {recent_games if recent_games > 0 else '全部'} 場）..."):
-        rating_df = get_all_horses_base_score(limit=rating_limit, recent_games=recent_games)
-        render_horse_rating_table(rating_df)
-    
-    st.markdown("---")
+    if show_ratings:
+        st.markdown(f"### 🐎 {texts['horse_rating_title']}")
+        st.caption(texts["horse_rating_desc"])
+
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            recent_games = st.selectbox(
+                "計算場次",
+                options=[3, 5, 8, 10, 12, 15, 20, 0],
+                format_func=lambda x: "全部" if x == 0 else f"最近 {x} 場",
+                index=3,
+                key="recent_games",
+            )
+        with col2:
+            rating_limit = st.selectbox(
+                "顯示數量",
+                options=[50, 100, 200, 300, 500],
+                index=1,
+                key="rating_limit",
+            )
+
+        with st.spinner(f"正在計算馬匹評分（最近 {recent_games if recent_games > 0 else '全部'} 場）..."):
+            rating_df = get_all_horses_base_score(limit=rating_limit, recent_games=recent_games)
+            render_horse_rating_table(rating_df)
+        st.markdown("---")
     
     # ==================== 模块3：智能投注 ====================
-    render_smart_betting(show_title=True)
-    
-    st.markdown("---")
+    if show_smart_betting:
+        render_smart_betting(show_title=True)
+        st.markdown("---")
     
     # ==================== 模块4：回测 ====================
-    render_backtest_page(show_title=False)
-    
-    st.markdown("---")
+    if show_backtest:
+        render_backtest_page(show_title=False)
+        st.markdown("---")
+
     st.caption(texts.get('data_source', '📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新'))
 
 
@@ -4657,6 +4638,38 @@ def get_cached_upcoming_races() -> List[Dict]:
     """缓存未来14天的赛事列表（直接从 API 获取）"""
     races = get_upcoming_races()
     return races
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_cached_historical_race_summaries() -> List[Dict]:
+    """缓存历史赛日列表，避免智能投注页每次交互拉取 5 万条记录。"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date,venue,race_no,distance&order=race_date.desc&limit=50000"
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            return []
+
+        unique_races = {}
+        for p in response.json():
+            key = f"{p.get('race_date')}_{p.get('venue')}_{p.get('race_no')}"
+            if key not in unique_races:
+                unique_races[key] = {
+                    "race_date": p.get("race_date"),
+                    "venue": p.get("venue", "ST"),
+                    "race_no": p.get("race_no", 0),
+                    "distance": p.get("distance", 1200),
+                }
+
+        historical_races = sorted(
+            unique_races.values(),
+            key=lambda x: x.get("race_date", ""),
+            reverse=True,
+        )
+        return historical_races[:60]
+    except Exception as e:
+        print(f"获取历史赛事缓存失败: {e}")
+        return []
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -6447,56 +6460,24 @@ def render_smart_betting(show_title: bool = True):
     else:
         # ⭐ 新增：历史赛事模式
         st.info("📅 选择历史日期进行测试（数据来自 past_performances_v2 表）")
-        
-        # 从 past_performances_v2 获取所有历史赛日
-        try:
-            headers = get_supabase_headers(use_secret=True)
-            url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date,venue,race_no,distance&limit=50000"
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code == 200:
-                perf_data = response.json()
-                # 提取唯一赛事
-                unique_races = {}
-                for p in perf_data:
-                    key = f"{p['race_date']}_{p['venue']}_{p['race_no']}"
-                    if key not in unique_races:
-                        unique_races[key] = {
-                            'race_date': p.get('race_date'),
-                            'venue': p.get('venue', 'ST'),
-                            'race_no': p.get('race_no', 0),
-                            'distance': p.get('distance', 1200)
-                        }
-                
-                # 按日期降序排列（最近的在前）
-                historical_races = list(unique_races.values())
-                historical_races.sort(key=lambda x: x.get('race_date', ''), reverse=True)
-                
-                # 只取最近60天（避免列表太长）
-                historical_races = historical_races[:60]
-                
-                if not historical_races:
-                    st.warning("暂无历史赛事数据")
-                    return
-                
-                # 按日期分组显示
-                dates = sorted(set([r.get('race_date') for r in historical_races if r.get('race_date')]), reverse=True)
-                date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
-                
-                selected_date_str = st.selectbox("選擇歷史賽日", date_options, key="selected_history_date")
-                selected_date = selected_date_str.split(" ")[0]
-                
-                races = [r for r in historical_races if r.get('race_date') == selected_date]
-                # 按场次排序
-                races.sort(key=lambda x: x.get('race_no', 0))
-                
-            else:
-                st.error("获取历史赛事失败")
-                return
-                
-        except Exception as e:
-            st.error(f"获取历史赛事失败: {e}")
+        historical_races = get_cached_historical_race_summaries()
+        if not historical_races:
+            st.warning("暂无历史赛事数据")
             return
+
+        dates = sorted(
+            {r.get("race_date") for r in historical_races if r.get("race_date")},
+            reverse=True,
+        )
+        date_options = [
+            f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})"
+            for d in dates
+        ]
+
+        selected_date_str = st.selectbox("選擇歷史賽日", date_options, key="selected_history_date")
+        selected_date = selected_date_str.split(" ")[0]
+        races = [r for r in historical_races if r.get("race_date") == selected_date]
+        races.sort(key=lambda x: x.get("race_no", 0))
     #-------------
     # ==================== 单场分析 ====================
     st.markdown(f"### {t()['single_race_analysis']}")
@@ -6583,7 +6564,7 @@ def render_smart_betting(show_title: bool = True):
                     else:
                         st.warning(t()["update_failed"])
     
-    runners = get_race_runners_with_details(
+    runners = get_cached_race_runners(
         selected_race.get('race_date'),
         selected_race.get('venue'),
         selected_race.get('race_no')

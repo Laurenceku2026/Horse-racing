@@ -719,11 +719,19 @@ def get_horses_performances_batch(horse_ids: tuple) -> Dict[str, List[Dict]]:
         return {}
     
     try:
-        headers = get_supabase_headers(use_secret=True)
+        supabase_url = st.secrets.get("SUPABASE_STOCK_URL", "")
+        supabase_key = st.secrets.get("SUPABASE_STOCK_SECRET_KEY", "")
+        if not supabase_url or not supabase_key:
+            return {}
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+        }
         
         # 构建 IN 查询
         ids_str = ','.join([f"'{hid}'" for hid in horse_ids])
-        url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?horse_id=in.({ids_str})&order=race_date.desc&limit=10000"
+        url = f"{supabase_url}/rest/v1/past_performances_v2?horse_id=in.({ids_str})&order=race_date.desc&limit=10000"
         
         response = requests.get(url, headers=headers)
         
