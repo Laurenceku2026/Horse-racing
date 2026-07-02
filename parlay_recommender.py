@@ -12,6 +12,8 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from itertools import combinations
 
+from betting_strategy_engine import format_horse_display
+
 
 @dataclass
 class RaceSelection:
@@ -93,7 +95,8 @@ class ParlayRecommender:
         scores: List[float],
         horse_names: List[str],
         odds: List[float],
-        top_n: int = 3
+        top_n: int = 3,
+        horse_nos: Optional[List] = None,
     ) -> List[Dict]:
         """
         获取一场比赛的前N名推荐马匹
@@ -110,8 +113,9 @@ class ParlayRecommender:
         horses = []
         for i, (score, name, odd) in enumerate(zip(scores, horse_names, odds)):
             if odd and odd > 0:
+                hno = horse_nos[i] if horse_nos and i < len(horse_nos) else (i + 1)
                 horses.append({
-                    'horse_no': i + 1,
+                    'horse_no': hno,
                     'horse_name': name,
                     'score': score,
                     'odds': odd,
@@ -130,14 +134,15 @@ class ParlayRecommender:
         scores: List[float],
         horse_names: List[str],
         odds: List[float],
-        top_n: int = 2
+        top_n: int = 2,
+        horse_nos: Optional[List] = None,
     ) -> List[RaceSelection]:
         """
         为单场比赛推荐可选马匹
         
         返回: 前 top_n 匹马的 RaceSelection 列表
         """
-        top_horses = self.get_top_horses_for_race(scores, horse_names, odds, top_n)
+        top_horses = self.get_top_horses_for_race(scores, horse_names, odds, top_n, horse_nos)
         
         selections = []
         for horse in top_horses:
@@ -260,7 +265,8 @@ class ParlayRecommender:
                 scores=race['scores'],
                 horse_names=race['horse_names'],
                 odds=race['odds'],
-                top_n=2
+                top_n=2,
+                horse_nos=race.get('horse_nos'),
             )
             all_selections.append(selections)
         
@@ -284,6 +290,8 @@ def format_parlay_display(rec: ParlayRecommendation) -> str:
     """格式化过关推荐显示"""
     legs_text = []
     for sel in rec.selections:
-        legs_text.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
-    
+        legs_text.append(
+            f"第{sel.race_no}場 {format_horse_display(sel.horse_name, sel.selected_horse_no)}"
+        )
+
     return f"{' → '.join(legs_text)}"

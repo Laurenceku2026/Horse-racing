@@ -20,7 +20,7 @@ from typing import List, Dict, Tuple, Optional
 from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db
-from parlay_recommender import ParlayRecommender
+from parlay_recommender import ParlayRecommender, format_parlay_display
 # ==================== 从 scoring_engine 导入 ====================
 SCORING_ENGINE_OK = False
 try:
@@ -6254,6 +6254,7 @@ def _pack_parlay_race_entry(race: Dict, runners_data: List[Dict]) -> Dict:
     sorted_runners = sorted(runners_data, key=lambda x: x.get("win_probability", 0), reverse=True)
     scores = [runner.get("combined_score", runner.get("overall_score", 50)) for runner in sorted_runners]
     horse_names = [runner.get("horse_name", "") for runner in sorted_runners]
+    horse_nos = [runner.get("horse_no") for runner in sorted_runners]
     odds = []
     for runner in sorted_runners:
         odds_raw = runner.get("odds_win")
@@ -6267,6 +6268,7 @@ def _pack_parlay_race_entry(race: Dict, runners_data: List[Dict]) -> Dict:
         "venue": race.get("venue"),
         "scores": scores,
         "horse_names": horse_names,
+        "horse_nos": horse_nos,
         "odds": odds,
     }
 
@@ -7201,18 +7203,15 @@ def render_smart_betting(show_title: bool = True):
                                         config = recommender.parlay_configs.get(parlay_type, {})
                                         st.markdown(f"**{config.get('description', parlay_type)}**")
                                         for rec in recommendations[:3]:
-                                            legs_display = []
-                                            for sel in rec.selections:
-                                                legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
-                                            risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
                                             with st.container(border=True):
                                                 col1, col2, col3 = st.columns([2, 1, 1])
                                                 with col1:
-                                                    st.markdown(f"**{' → '.join(legs_display)}**")
+                                                    st.markdown(f"**{format_parlay_display(rec)}**")
                                                 with col2:
                                                     st.markdown(f"賠率: **{rec.total_odds:.1f}**倍")
                                                     st.markdown(f"聯合概率: {rec.combined_prob:.1f}%")
                                                 with col3:
+                                                    risk_color = "🟢" if rec.risk_level == "低" else "🟡" if rec.risk_level == "中" else "🔴"
                                                     st.markdown(f"風險: {risk_color} {rec.risk_level}")
                                                     st.markdown(f"預期ROI: {rec.roi:+.1f}%")
                                             st.caption(f"💡 建議投注: {parlay_type} ({rec.num_bets}注, 共${rec.total_stake:.0f})")
@@ -7226,11 +7225,8 @@ def render_smart_betting(show_title: bool = True):
                                                 best_roi = rec.roi
                                                 best_rec = rec
                                     if best_rec:
-                                        legs_display = []
-                                        for sel in best_rec.selections:
-                                            legs_display.append(f"第{sel.race_no}場 {sel.horse_name}({sel.selected_horse_no}號)")
                                         st.success(
-                                            f"**最佳过关组合**: {' → '.join(legs_display)}\n"
+                                            f"**最佳过关组合**: {format_parlay_display(best_rec)}\n"
                                             f"- 过关方式: {best_rec.parlay_type} ({best_rec.num_bets}注)\n"
                                             f"- 总赔率: {best_rec.total_odds:.1f}倍\n"
                                             f"- 预期ROI: {best_rec.roi:+.1f}%\n"
@@ -7300,7 +7296,7 @@ def render_smart_betting(show_title: bool = True):
                         if stake >= 10:
                             all_bets.append({
                                 "場次": f"第{race.get('race_no')}場",
-                                "馬匹": horse.get('horse_name', ''),
+                                "馬匹": _horse_display_label(horse),
                                 "賠率": odds,
                                 "勝率": f"{prob*100:.1f}%",
                                 "建議注額": f"HK${stake:.0f}",
@@ -7359,6 +7355,8 @@ def render_smart_betting(show_title: bool = True):
                         confidence_horses.append({
                             "race_no": race.get('race_no'),
                             "horse_name": top.get('horse_name', ''),
+                            "horse_no": top.get('horse_no'),
+                            "display_name": _horse_display_label(top),
                             "probability": top.get('win_probability', 0),
                             "odds": top.get('odds_win', 0)
                         })
@@ -7378,7 +7376,7 @@ def render_smart_betting(show_title: bool = True):
                             parlay_results.append({
                                 "組合": "2串1",
                                 "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
-                                "馬匹": f"{h1['horse_name']} + {h2['horse_name']}",
+                                "馬匹": f"{h1['display_name']} + {h2['display_name']}",
                                 "組合賠率": f"{combined_odds:.1f}",
                                 "聯合概率": f"{joint_prob*100:.1f}%",
                                 "建議注額": f"HK${suggested_stake:.0f}"
