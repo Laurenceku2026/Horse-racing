@@ -5906,7 +5906,9 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
             predictions.append(0.34)
             continue
         
-        past_before = perf_cache.get(horse_id, [])[:recent_games]
+        past_before = [
+            p for p in perf_cache.get(horse_id, []) if p.get("race_date", "") < race_date
+        ][:recent_games]
         
         features = build_ml_features_for_prediction(
             runner, past_before, race_date, venue, distance,
@@ -6068,7 +6070,8 @@ def get_cached_race_scores(race_date: str, race_no: int, venue: str) -> Tuple[Li
 def train_model_for_smart_betting(model_type: str, start_date: str = None, end_date: str = None) -> Optional[Any]:
     """
     为智能投注训练ML模型（使用与回测相同的数据和特征）
-    如果未指定日期范围，则使用最近300天的数据
+    end_date 作为 cutoff：训练标签仅包含严格早于该日的赛事（不含 cutoff 当日）。
+    历史测试模式下应传入所选赛日，确保预测赛日不在训练范围内。
     """
     from scoring_engine import get_cached_model, set_cached_model, get_current_weights_hash
     import hashlib
@@ -6129,20 +6132,42 @@ def _resolve_ml_model_type(model_choice: str) -> Optional[str]:
     return None
 
 
-def get_smart_betting_ml_model(model_choice: str):
-    """会话内缓存 ML 模型，避免每次 rerun 重复初始化。"""
+def _get_smart_betting_training_window(prediction_cutoff_date: Optional[str] = None) -> Tuple[str, str]:
+    """
+    返回 ML 训练数据窗口 (start_date, cutoff_date)。
+    cutoff_date 为预测赛日：训练标签仅使用严格早于该日的赛事（与回测一致）。
+    """
+    if prediction_cutoff_date:
+        cutoff_dt = datetime.strptime(prediction_cutoff_date, "%Y-%m-%d")
+        start_dt = cutoff_dt - timedelta(days=300)
+        return start_dt.strftime("%Y-%m-%d"), prediction_cutoff_date
+
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(days=300)
+    return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
+
+
+def _model_section_title(title: str, model_choice: str) -> str:
+    return f"{title}（{model_choice}）"
+
+
+def get_smart_betting_ml_model(model_choice: str, prediction_cutoff_date: Optional[str] = None):
+    """会话内缓存 ML 模型；历史模式下训练数据不包含预测赛日及之后赛事。"""
     model_type = _resolve_ml_model_type(model_choice)
     if not model_type:
         return None, None
 
+    session_key = f"{model_type}_{prediction_cutoff_date or 'live'}"
     if (
-        st.session_state.get("smart_betting_ml_type") == model_type
+        st.session_state.get("smart_betting_ml_session_key") == session_key
         and st.session_state.get("smart_betting_ml_model") is not None
     ):
         return model_type, st.session_state["smart_betting_ml_model"]
 
-    model = train_model_for_smart_betting(model_type)
+    start_date, cutoff_date = _get_smart_betting_training_window(prediction_cutoff_date)
+    model = train_model_for_smart_betting(model_type, start_date, cutoff_date)
     if model is not None:
+        st.session_state["smart_betting_ml_session_key"] = session_key
         st.session_state["smart_betting_ml_type"] = model_type
         st.session_state["smart_betting_ml_model"] = model
     return model_type, model
@@ -6189,6 +6214,7 @@ def _score_runners_for_parlay_race(
     weights_config: Optional[Dict] = None,
     ml_model=None,
     ml_model_type: Optional[str] = None,
+    prediction_cutoff_date: Optional[str] = None,
 ) -> List[Dict]:
     """为过关/全天分析计算单场胜率（使用缓存出马表）。"""
     runners_data = get_cached_race_runners(
@@ -6228,7 +6254,7 @@ def _score_runners_for_parlay_race(
         return runners_data
 
     if ml_model is None:
-        ml_model_type, ml_model = get_smart_betting_ml_model(model_choice)
+        ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
     if ml_model is None:
         for runner in runners_data:
             runner["win_probability"] = 0.34
@@ -6279,12 +6305,13 @@ def _build_parlay_races_data(
     model_choice: str,
     user_weights: Dict,
     weights_config: Optional[Dict] = None,
+    prediction_cutoff_date: Optional[str] = None,
 ) -> List[Dict]:
     """仅在用户点击生成过关时调用，避免每次 rerun 重复计算。"""
     ml_model = None
     ml_model_type = None
     if model_choice != "评分系统":
-        ml_model_type, ml_model = get_smart_betting_ml_model(model_choice)
+        ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
 
     parlay_races_data = []
     for idx in selected_indices:
@@ -6296,6 +6323,7 @@ def _build_parlay_races_data(
             weights_config,
             ml_model,
             ml_model_type,
+            prediction_cutoff_date,
         )
         if runners_data:
             parlay_races_data.append(_pack_parlay_race_entry(race, runners_data))
@@ -6305,6 +6333,69 @@ def _build_parlay_races_data(
 @st.cache_data(ttl=300, show_spinner=False)
 def get_cached_race_pool_odds(race_date: str, race_no: int) -> Tuple[Dict[str, float], Dict[str, float]]:
     return get_odds_qin_from_db(race_date, race_no), get_odds_tri_from_db(race_date, race_no)
+
+
+def _generate_parlay_combo_results(
+    confidence_horses: List[Dict],
+    bankroll: float,
+    risk_multiplier: float,
+) -> List[Dict]:
+    """
+    生成 2串1 / 3串1 过关组合。
+    3串1 选取三场各一匹马，要求联合期望值 EV > 0。
+    """
+    results: List[Dict] = []
+    n = len(confidence_horses)
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            h1, h2 = confidence_horses[i], confidence_horses[j]
+            prob1 = float(h1.get("probability") or 0)
+            prob2 = float(h2.get("probability") or 0)
+            odds1 = float(h1.get("odds") or 0)
+            odds2 = float(h2.get("odds") or 0)
+            joint_prob = prob1 * prob2
+            combined_odds = odds1 * odds2 if odds1 > 0 and odds2 > 0 else 0
+            ev = joint_prob * combined_odds - 1 if combined_odds > 0 else -1
+            if ev > 0:
+                results.append({
+                    "組合": "2串1",
+                    "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
+                    "馬匹": f"{h1['display_name']} + {h2['display_name']}",
+                    "組合賠率": f"{combined_odds:.1f}",
+                    "聯合概率": f"{joint_prob * 100:.1f}%",
+                    "建議注額": f"HK${bankroll * 0.05 * risk_multiplier:.0f}",
+                    "_ev": ev,
+                })
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            for k in range(j + 1, n):
+                h1, h2, h3 = confidence_horses[i], confidence_horses[j], confidence_horses[k]
+                prob1 = float(h1.get("probability") or 0)
+                prob2 = float(h2.get("probability") or 0)
+                prob3 = float(h3.get("probability") or 0)
+                odds1 = float(h1.get("odds") or 0)
+                odds2 = float(h2.get("odds") or 0)
+                odds3 = float(h3.get("odds") or 0)
+                joint_prob = prob1 * prob2 * prob3
+                combined_odds = odds1 * odds2 * odds3 if min(odds1, odds2, odds3) > 0 else 0
+                ev = joint_prob * combined_odds - 1 if combined_odds > 0 else -1
+                if ev > 0:
+                    results.append({
+                        "組合": "3串1",
+                        "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場 + 第{h3['race_no']}場",
+                        "馬匹": f"{h1['display_name']} + {h2['display_name']} + {h3['display_name']}",
+                        "組合賠率": f"{combined_odds:.1f}",
+                        "聯合概率": f"{joint_prob * 100:.1f}%",
+                        "建議注額": f"HK${bankroll * 0.03 * risk_multiplier:.0f}",
+                        "_ev": ev,
+                    })
+
+    results.sort(key=lambda x: x.get("_ev", 0), reverse=True)
+    for item in results:
+        item.pop("_ev", None)
+    return results
 
 # ==================== 智能投注：连赢/单T 展示辅助 ====================
 def _horse_display_label(runner: Dict) -> str:
@@ -6794,8 +6885,11 @@ def render_smart_betting(show_title: bool = True):
         races = [r for r in valid_races if r.get('race_date') == selected_date]
     
     else:
-        # ⭐ 新增：历史赛事模式
-        st.info("📅 選擇歷史日期進行測試（評分僅使用該賽日之前往績，不會洩露賽果）")
+        st.info(
+            "📅 歷史測試模式：評分僅用該賽日之前往績；ML 模型訓練亦只使用所選賽日之前數據（不含當日），避免洩露未來賽果。"
+            if lang == "zh"
+            else "Historical test mode: scoring and ML training use data strictly before the selected race day."
+        )
         historical_races = get_cached_historical_race_summaries()
         if not historical_races:
             st.warning("暂无历史赛事数据")
@@ -6814,6 +6908,8 @@ def render_smart_betting(show_title: bool = True):
         selected_date = selected_date_str.split(" ")[0]
         races = [r for r in historical_races if r.get("race_date") == selected_date]
         races.sort(key=lambda x: x.get("race_no", 0))
+
+    prediction_cutoff_date = selected_date if date_mode == "歷史賽事" else None
     #-------------
     # ==================== 单场分析 ====================
     st.markdown(f"### {t()['single_race_analysis']}")
@@ -6961,7 +7057,7 @@ def render_smart_betting(show_title: bool = True):
             # ==================== ML 模型预测（使用与回测相同的训练数据） ====================
             model_type = _resolve_ml_model_type(model_choice)
             with st.spinner(t()["calculating_ml"].format(model=model_choice)):
-                _, model = get_smart_betting_ml_model(model_choice)
+                _, model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
 
                 if model is not None:
                     try:
@@ -7107,7 +7203,7 @@ def render_smart_betting(show_title: bool = True):
         
     #------------
     # ==================== AI 投注策略建议（折叠版） ====================
-    st.markdown(f"### {t()['ai_strategy_suggestions']}")
+    st.markdown(f"### {_model_section_title(t()['ai_strategy_suggestions'], model_choice)}")
     st.caption(t()["ev_description"])
     
     # ==================== 折叠1：独赢/位置 ====================
@@ -7186,6 +7282,7 @@ def render_smart_betting(show_title: bool = True):
                                 model_choice,
                                 user_weights,
                                 weights_config,
+                                prediction_cutoff_date,
                             )
                             if len(parlay_races_data) < 2:
                                 st.warning("所选场次数据不足，请尝试选择更多场次")
@@ -7240,7 +7337,7 @@ def render_smart_betting(show_title: bool = True):
     st.markdown("---")
     
     # ==================== 全天优化投注 ====================
-    st.markdown(f"### {t()['full_day_optimization']}")
+    st.markdown(f"### {_model_section_title(t()['full_day_optimization'], model_choice)}")
     st.caption(t()["kelly_description"])
     #----------------
     if st.button(t()["generate_full_day"], key="generate_full_day", use_container_width=True, type="primary"):
@@ -7254,7 +7351,7 @@ def render_smart_betting(show_title: bool = True):
                 ml_model = None
                 ml_model_type = None
                 if model_choice != "评分系统":
-                    ml_model_type, ml_model = get_smart_betting_ml_model(model_choice)
+                    ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
                 weights_config = None
                 if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
                     weights_config = st.session_state.get("user_scoring_config", {})
@@ -7267,6 +7364,7 @@ def render_smart_betting(show_title: bool = True):
                         weights_config,
                         ml_model,
                         ml_model_type,
+                        prediction_cutoff_date,
                     )
                     if not race_runners:
                         continue
@@ -7321,7 +7419,7 @@ def render_smart_betting(show_title: bool = True):
     st.markdown("---")
     
     # ==================== 过关组合推荐 ====================
-    st.markdown(f"### {t()['parlay_generation']}")
+    st.markdown(f"### {_model_section_title(t()['parlay_generation'], model_choice)}")
     st.caption(t()["parlay_description"])
     #--------------------
     if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True):
@@ -7333,7 +7431,7 @@ def render_smart_betting(show_title: bool = True):
                 ml_model = None
                 ml_model_type = None
                 if model_choice != "评分系统":
-                    ml_model_type, ml_model = get_smart_betting_ml_model(model_choice)
+                    ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
                 weights_config = None
                 if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
                     weights_config = st.session_state.get("user_scoring_config", {})
@@ -7346,6 +7444,7 @@ def render_smart_betting(show_title: bool = True):
                         weights_config,
                         ml_model,
                         ml_model_type,
+                        prediction_cutoff_date,
                     )
                     if not race_runners:
                         continue
@@ -7361,31 +7460,17 @@ def render_smart_betting(show_title: bool = True):
                             "odds": top.get('odds_win', 0)
                         })
 
-                parlay_results = []
-                for i in range(len(confidence_horses)):
-                    for j in range(i + 1, len(confidence_horses)):
-                        h1, h2 = confidence_horses[i], confidence_horses[j]
-                        prob1 = h1.get('probability', 0) or 0
-                        prob2 = h2.get('probability', 0) or 0
-                        odds1 = h1.get('odds', 0) or 0
-                        odds2 = h2.get('odds', 0) or 0
-                        joint_prob = prob1 * prob2
-                        combined_odds = odds1 * odds2 if odds1 > 0 and odds2 > 0 else 0
-                        if joint_prob * combined_odds > 1 and combined_odds > 0:
-                            suggested_stake = bankroll * 0.05 * risk_multiplier
-                            parlay_results.append({
-                                "組合": "2串1",
-                                "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
-                                "馬匹": f"{h1['display_name']} + {h2['display_name']}",
-                                "組合賠率": f"{combined_odds:.1f}",
-                                "聯合概率": f"{joint_prob*100:.1f}%",
-                                "建議注額": f"HK${suggested_stake:.0f}"
-                            })
+                confidence_horses.sort(key=lambda x: x.get("race_no", 0))
+                parlay_results = _generate_parlay_combo_results(
+                    confidence_horses, bankroll, risk_multiplier
+                )
 
                 if parlay_results:
                     st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
+                    if len(confidence_horses) < 3:
+                        st.caption("💡 3串1 需至少 3 場勝率≥20% 的信心馬；目前僅列出 2串1。")
                 else:
-                    st.info("暫無符合條件的過關組合")
+                    st.info("暫無符合條件的過關組合（需正期望值 EV>0）")
     
     st.markdown("---")
     st.caption(t()["disclaimer"])
