@@ -6677,7 +6677,7 @@ def render_smart_betting(show_title: bool = True):
             model_choice = st.selectbox(
                 t()["ai_model"],
                 options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
-                index=0,
+                index=2,
                 key="ml_model_choice",
                 help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
             )
@@ -9428,6 +9428,176 @@ def clear_model_cache():
 def get_model_cache_keys():
     """获取当前缓存的所有键（用于调试）"""
     return list(_model_cache.keys())
+
+
+def _prepare_ml_runners_for_strategy(
+    runners_data: List[Dict],
+    race_date: str,
+    venue: str,
+    race_no: int,
+    model_type: str,
+    model,
+) -> List[Dict]:
+    """为策略回测准备带 ML 胜率与赔率的出马列表。"""
+    ml_probs = get_model_predictions(race_date, venue, race_no, runners_data, model_type, model)
+    prepared = []
+    for i, row in enumerate(runners_data):
+        item = dict(row)
+        prob = ml_probs[i] if i < len(ml_probs) else 0.34
+        item["win_probability"] = prob
+        item["overall_score"] = prob * 100
+        item["odds_win"] = row.get("odds")
+        prepared.append(item)
+    return prepared
+
+
+def run_strategy_backtest(
+    start_date: str,
+    end_date: str,
+    model_type: str,
+    strategy_kind: str,
+    min_ev_threshold: float = 0.10,
+    stake_per_bet: float = 100,
+) -> "BacktestSummary":
+    """
+    策略回测（时间滑窗 + EV 门槛）
+    model_type: lightgbm | xgboost
+    strategy_kind: win | qin
+    """
+    from backtest_strategy import (
+        BacktestDiagnostics,
+        BacktestSummary,
+        StrategyBacktester,
+        fetch_win_odds_snapshot,
+    )
+
+    model_label = "LightGBM" if model_type == "lightgbm" else "XGBoost"
+    backtester = StrategyBacktester()
+    diagnostics = BacktestDiagnostics()
+    results = []
+
+    if model_type == "lightgbm" and not LGB_AVAILABLE:
+        st.error("LightGBM 未安装，请运行 pip install lightgbm")
+        return BacktestSummary(model_name=model_label, diagnostics=diagnostics)
+    if model_type == "xgboost" and not XGB_AVAILABLE:
+        st.error("XGBoost 未安装，请运行 pip install xgboost")
+        return BacktestSummary(model_name=model_label, diagnostics=diagnostics)
+
+    all_performances = get_performances_batch(start_date, end_date)
+    if not all_performances:
+        st.error("未獲取到任何數據")
+        return BacktestSummary(model_name=model_label, diagnostics=diagnostics)
+
+    horse_cache = build_horse_performances_cache(all_performances)
+    races = get_races_from_performances(all_performances)
+    if not races:
+        st.warning("未找到任何賽事")
+        return BacktestSummary(model_name=model_label, diagnostics=diagnostics)
+
+    races_by_date: Dict[str, List[Dict]] = {}
+    for race in races:
+        races_by_date.setdefault(race["race_date"], []).append(race)
+    sorted_dates = sorted(races_by_date.keys())
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    from scoring_engine import get_cached_model, get_current_weights_hash, set_cached_model
+
+    weight_hash = get_current_weights_hash()
+
+    for idx, current_date in enumerate(sorted_dates):
+        if st.session_state.get("stop_backtest", False):
+            st.warning("⚠️ 回測已被用戶取消")
+            break
+
+        status_text.text(f"策略回測 {model_label}: {current_date} ({idx + 1}/{len(sorted_dates)})")
+        progress_bar.progress((idx + 1) / len(sorted_dates))
+
+        train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
+        if train_X is None or len(train_X) < 50:
+            continue
+
+        cache_key = f"strategy_{model_type}_{current_date}_{weight_hash}"
+        cached_model = get_cached_model(cache_key)
+        if cached_model is not None:
+            model = cached_model
+        else:
+            model = get_or_train_model(train_X, train_y, model_type, cache_key)
+            if model is not None:
+                set_cached_model(cache_key, model)
+        if model is None:
+            continue
+
+        for race in races_by_date[current_date]:
+            diagnostics.total_races += 1
+            race_date = race["race_date"]
+            venue = race["venue"]
+            race_no = race["race_no"]
+
+            runners_data = [
+                p for p in all_performances
+                if p["race_date"] == race_date and p["venue"] == venue and p["race_no"] == race_no
+            ]
+            if not runners_data:
+                diagnostics.skipped_no_runners += 1
+                continue
+
+            ml_runners = _prepare_ml_runners_for_strategy(
+                runners_data, race_date, venue, race_no, model_type, model
+            )
+            win_odds_snapshot = fetch_win_odds_snapshot(race_date, venue, race_no)
+
+            if strategy_kind == "win":
+                bet_result, reason = backtester.evaluate_win_race(
+                    race_date,
+                    venue,
+                    race_no,
+                    ml_runners,
+                    min_ev_threshold,
+                    stake_per_bet,
+                    model_label,
+                    win_odds_snapshot,
+                )
+            else:
+                bet_result, reason, estimated = backtester.evaluate_qin_race(
+                    race_date,
+                    venue,
+                    race_no,
+                    ml_runners,
+                    min_ev_threshold,
+                    stake_per_bet,
+                    model_label,
+                    win_odds_snapshot,
+                )
+
+            if reason == "no_runners":
+                diagnostics.skipped_no_runners += 1
+            elif reason == "no_odds":
+                diagnostics.skipped_no_odds += 1
+            elif reason == "ev_below":
+                diagnostics.skipped_ev_below += 1
+            elif reason == "no_result":
+                diagnostics.skipped_no_result += 1
+            elif reason == "bet" and bet_result is not None:
+                diagnostics.bet_races += 1
+                results.append(bet_result)
+
+    progress_bar.empty()
+    status_text.empty()
+
+    summary = backtester.build_summary(results, diagnostics, stake_per_bet, model_label)
+    if summary.total_bets == 0:
+        st.info(
+            f"共分析 {diagnostics.total_races} 場："
+            f"EV不足 {diagnostics.skipped_ev_below} 場，"
+            f"缺赔率 {diagnostics.skipped_no_odds} 場，"
+            f"缺赛果 {diagnostics.skipped_no_result} 場。"
+            + (" 连赢赔率部分场次为估算值。" if strategy_kind == "qin" else "")
+        )
+    return summary
+
+
 #----------
 def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refresh: bool = False) -> Dict:
     """
@@ -10494,35 +10664,53 @@ def render_backtest_page(show_title: bool = True):
     #-------------
 # ==================== 新增：策略回测选项卡 ====================
     st.markdown(f"## {t()['strategy_backtest']}")
-    st.caption("基於市場賠率的期望值(EV)模型：EV = 預測勝率 × 賠率 - 1，當 EV > 門檻時觸發投注")
-    
-    # 策略回测参数
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
+    st.caption(t()['strategy_backtest_desc'])
+
+    strat_col1, strat_col2, strat_col3, strat_col4, strat_col5 = st.columns(5)
+
+    with strat_col1:
         backtest_strategy_start = st.date_input(
-            "回測開始日期",
-            value=datetime.now() - timedelta(days=90),  # 改为90天
+            t()['start_date'],
+            value=datetime.now() - timedelta(days=90),
             key="strategy_backtest_start"
         )
-    
-    with col2:
+
+    with strat_col2:
         backtest_strategy_end = st.date_input(
-            "回測結束日期",
+            t()['end_date'],
             value=datetime.now(),
             key="strategy_backtest_end"
         )
-    
-    with col3:
+
+    strategy_model_options = []
+    if LGB_AVAILABLE:
+        strategy_model_options.append("LightGBM")
+    if XGB_AVAILABLE:
+        strategy_model_options.append("XGBoost")
+    if not strategy_model_options:
+        strategy_model_options = ["LightGBM", "XGBoost"]
+
+    default_model_idx = strategy_model_options.index("XGBoost") if "XGBoost" in strategy_model_options else 0
+
+    with strat_col3:
+        strategy_model = st.selectbox(
+            "AI 模型",
+            options=strategy_model_options,
+            index=default_model_idx,
+            key="strategy_backtest_model",
+            help="策略回测使用的 ML 模型（与智能投注相同特征与训练窗口）"
+        )
+
+    with strat_col4:
         strategy_type = st.selectbox(
             "策略類型",
-            options=["獨贏策略", "連贏策略"],
+            options=[t()['win_strategy'], t()['qin_strategy']],
             key="strategy_type"
         )
-    
-    with col4:
+
+    with strat_col5:
         min_ev_threshold = st.slider(
-            "最小期望值門檻",
+            t()['min_ev_threshold'],
             min_value=0.0,
             max_value=0.5,
             value=0.10,
@@ -10531,75 +10719,52 @@ def render_backtest_page(show_title: bool = True):
             key="min_ev_threshold",
             help="只投注期望值大於此門檻的建議"
         )
-    
-    # 运行策略回测按钮
-    run_strategy_backtest_btn = st.button("▶️ 運行策略回測", type="primary", use_container_width=True)
-    
+
+    run_strategy_backtest_btn = st.button(
+        t()['run_strategy_backtest'],
+        type="primary",
+        use_container_width=True,
+        key="run_strategy_backtest_btn",
+    )
+
     if run_strategy_backtest_btn:
+        summary = None
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()['free_trial_used'])
         else:
-            # 生成缓存键
-            cache_key = f"strategy_backtest_{strategy_type}_{backtest_strategy_start}_{backtest_strategy_end}_{min_ev_threshold}"
-            
-            # 检查是否已有缓存结果
+            start_date = backtest_strategy_start.strftime("%Y-%m-%d")
+            end_date = backtest_strategy_end.strftime("%Y-%m-%d")
+            model_type = "lightgbm" if strategy_model == "LightGBM" else "xgboost"
+            strategy_kind = "win" if strategy_type == t()['win_strategy'] else "qin"
+            cache_key = (
+                f"strategy_backtest_v2_{strategy_model}_{strategy_kind}_"
+                f"{start_date}_{end_date}_{min_ev_threshold}"
+            )
+
             if cache_key not in st.session_state:
-                with st.spinner("正在運行策略回測，請稍候..."):
-                    from backtest_strategy import StrategyBacktester, get_races_on_date, get_historical_odds, get_historical_result
-                    
-                    # 获取回测日期范围内的所有赛日
-                    start_date = backtest_strategy_start.strftime("%Y-%m-%d")
-                    end_date = backtest_strategy_end.strftime("%Y-%m-%d")
-                    
-                    # 获取该范围内的所有赛事日期
-                    all_races = []
-                    current = backtest_strategy_start
-                    while current <= backtest_strategy_end:
-                        races = get_races_on_date(current.strftime("%Y-%m-%d"))
-                        if races:
-                            all_races.append(current.strftime("%Y-%m-%d"))
-                        current += timedelta(days=1)
-                    
-                    if not all_races:
-                        st.warning("回測日期範圍內無賽事數據")
-                    else:
-                        backtester = StrategyBacktester()
-                        
-                        if strategy_type == "獨贏策略":
-                            def get_scores_func(race_date, race_no):
-                                return [75, 68, 62, 58, 55, 52, 48, 45, 42, 40, 38, 35, 32, 30]
-                            
-                            summary = backtester.backtest_win_strategy(
-                                race_dates=all_races,
-                                get_scores_func=get_scores_func,
-                                get_odds_func=get_historical_odds,
-                                get_result_func=get_historical_result,
-                                min_ev_threshold=min_ev_threshold,
-                                stake_per_bet=100
-                            )
-                        else:
-                            def get_scores_func(race_date, race_no):
-                                return [75, 68, 62, 58, 55, 52, 48, 45, 42, 40, 38, 35, 32, 30]
-                            
-                            summary = backtester.backtest_qin_strategy(
-                                race_dates=all_races,
-                                get_scores_func=get_scores_func,
-                                get_odds_func=get_historical_odds,
-                                get_result_func=get_historical_result,
-                                min_ev_threshold=min_ev_threshold,
-                                stake_per_bet=100
-                            )
-                        
-                        # 保存到缓存
-                        st.session_state[cache_key] = summary
+                with st.spinner(f"正在運行策略回測（{strategy_model}）..."):
+                    summary = run_strategy_backtest(
+                        start_date,
+                        end_date,
+                        model_type,
+                        strategy_kind,
+                        min_ev_threshold,
+                        stake_per_bet=100,
+                    )
+                    st.session_state[cache_key] = summary
             else:
                 summary = st.session_state[cache_key]
                 st.info("📋 使用缓存的回测结果")
-            
-            # 显示回测结果（与之前相同）
+
             if summary and summary.total_bets > 0:
-                st.markdown("#### 📈 策略回測結果")
-                
+                st.markdown(f"#### 📈 策略回測結果（{summary.model_name}）")
+
+                diag = summary.diagnostics
+                st.caption(
+                    f"分析 {diag.total_races} 場 · 触发投注 {diag.bet_races} 場 · "
+                    f"EV不足 {diag.skipped_ev_below} · 缺赔率 {diag.skipped_no_odds}"
+                )
+
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("總投注次數", summary.total_bets)
@@ -10614,48 +10779,49 @@ def render_backtest_page(show_title: bool = True):
                     roi_color = "🟢" if summary.roi > 0 else "🔴"
                     st.metric("ROI", f"{roi_color} {summary.roi:+.1f}%")
                     st.metric("夏普比率", f"{summary.sharpe_ratio:.2f}")
-                
-                # 显示详细投注记录
+
                 if summary.details:
                     with st.expander("📋 詳細投注記錄", expanded=False):
                         detail_df = pd.DataFrame([
                             {
                                 "日期": d.race_date,
+                                "場地": d.venue,
                                 "場次": d.race_no,
+                                "模型": d.model_name,
                                 "類型": d.recommendation_type,
                                 "內容": d.recommendation_content,
                                 "賠率": d.odds,
+                                "估算賠率": "是" if d.odds_estimated else "否",
                                 "期望值": d.ev_calculated,
                                 "命中": "✅" if d.actual_hit else "❌",
                                 "回報": f"${d.actual_return:.0f}",
-                                "盈虧": f"${d.profit:+.0f}"
+                                "盈虧": f"${d.profit:+.0f}",
                             }
                             for d in summary.details
                         ])
                         st.dataframe(detail_df, use_container_width=True, hide_index=True)
-                        
-                        # 累计盈亏曲线
+
                         cumulative = np.cumsum([d.profit for d in summary.details])
                         fig = go.Figure()
                         fig.add_trace(go.Scatter(
                             x=list(range(len(cumulative))),
                             y=cumulative,
-                            mode='lines',
-                            name='累計盈虧',
-                            fill='tozeroy',
-                            line=dict(color='#4facfe', width=2)
+                            mode="lines",
+                            name="累計盈虧",
+                            fill="tozeroy",
+                            line=dict(color="#4facfe", width=2),
                         ))
                         fig.update_layout(
                             title="策略累計盈虧曲線",
                             xaxis_title="投注次數",
                             yaxis_title="累計盈虧 (HK$)",
-                            height=300
+                            height=300,
                         )
                         st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("回測結果無效或無投注記錄")
-    
-    st.caption("📌 回測結果基於歷史數據，不構成投資建議")
+            elif summary is not None:
+                st.warning(t()['backtest_result_invalid'])
+
+    st.caption(t()['disclaimer_backtest'])
 
 
 # ==================== 第5次代码结束 ====================
