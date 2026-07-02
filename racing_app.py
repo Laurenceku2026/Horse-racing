@@ -90,6 +90,32 @@ st.markdown("""
     .signal-B { color: #ffaa00; font-weight: bold; }
     .signal-C { color: #ff8800; font-weight: bold; }
     .signal-D { color: #888888; font-weight: bold; }
+    /* 主页三大功能导航：加大字体，方便点击 */
+    div[data-testid="stRadio"] > div[role="radiogroup"] {
+        gap: 0.75rem;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+    div[data-testid="stRadio"] label {
+        background-color: #eef2ff;
+        border: 2px solid #c7d2fe;
+        border-radius: 0.75rem;
+        padding: 0.85rem 1.5rem !important;
+        min-width: 9rem;
+        justify-content: center;
+    }
+    div[data-testid="stRadio"] label p {
+        font-size: 1.35rem !important;
+        font-weight: 700 !important;
+        margin: 0 !important;
+    }
+    div[data-testid="stRadio"] label[data-checked="true"] {
+        background-color: #4f46e5;
+        border-color: #4f46e5;
+    }
+    div[data-testid="stRadio"] label[data-checked="true"] p {
+        color: #ffffff !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -4489,9 +4515,9 @@ def render_home():
     """, unsafe_allow_html=True)
 
     section_labels = (
-        ["📊 數據概覽", "🐎 全馬評分", "🎯 智能投注", "📈 回測"]
+        ["📊 數據與評分", "🎯 智能投注", "📈 回測"]
         if lang == "zh"
-        else ["📊 Overview", "🐎 Ratings", "🎯 Smart Betting", "📈 Backtest"]
+        else ["📊 Data & Ratings", "🎯 Smart Betting", "📈 Backtest"]
     )
     section = st.radio(
         "功能导航" if lang == "zh" else "Navigation",
@@ -4502,13 +4528,12 @@ def render_home():
     )
     st.markdown("---")
 
-    show_overview = section == section_labels[0]
-    show_ratings = section == section_labels[1]
-    show_smart_betting = section == section_labels[2]
-    show_backtest = section == section_labels[3]
+    show_data_and_ratings = section == section_labels[0]
+    show_smart_betting = section == section_labels[1]
+    show_backtest = section == section_labels[2]
    
-    # ==================== 模块1：数据概览 ====================
-    if show_overview:
+    # ==================== Tab1：数据概览 + 数据更新 + 全马评分 ====================
+    if show_data_and_ratings:
         st.markdown(f"## {texts.get('data_overview', '📊 數據概覽')}")
         stats = get_dashboard_stats()
         col1, col2, col3, col4, col5 = st.columns(5)
@@ -4531,12 +4556,8 @@ def render_home():
                 help="基于历史成绩数据的日期范围",
             )
         st.markdown("---")
-   
-    #--------------
-    # ==================== 数据更新区域 ====================
-    if show_overview:
-        st.markdown(f"### {texts.get('data_update', '🔄 數據更新')}")
 
+        st.markdown(f"### {texts.get('data_update', '🔄 數據更新')}")
         col1, col2, col3 = st.columns([1, 1, 1])
         with col2:
             update_btn = st.button(
@@ -4581,9 +4602,7 @@ def render_home():
                     else:
                         st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
         st.markdown("---")
-    
-    # ==================== 模块2：全马基础评分榜 ====================
-    if show_ratings:
+
         st.markdown(f"### 🐎 {texts['horse_rating_title']}")
         st.caption(texts["horse_rating_desc"])
 
@@ -10277,6 +10296,120 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             print(f"提取最优权重失败: {e}")
     return result
 #-----------
+def _display_model_backtest_results(results: List[Dict]) -> None:
+    """显示多模型回测对比表格、图表与详细场次。"""
+    if not results:
+        st.warning("請至少選擇一個模型")
+        return
+
+    cancelled_results = [r for r in results if r.get("cancelled", False)]
+    if cancelled_results:
+        st.warning(f"⚠️ 部分回測被取消: {len(cancelled_results)} 個模型未完成")
+
+    completed_results = [r for r in results if not r.get("cancelled", False)]
+    if not completed_results:
+        st.warning("所有回測均被取消或失敗")
+        return
+
+    st.markdown("#### 📈 模型對比結果")
+    st.caption("💡 獨贏 ROI：每場固定投注 $100 在「評分最高馬」的獨贏；若整段期間從未猜中第一名，ROI 會是 -100%。")
+
+    compare_df = pd.DataFrame(completed_results)
+    display_columns = [
+        "模型", "测试场次", "独赢正确率",
+        "前三名命中匹数率", "前三名命中场次率",
+        "前三名全中率", "前三名顺序正确率",
+        "总投入", "总回报", "ROI", "位置ROI", "综合ROI",
+    ]
+    available_cols = [c for c in display_columns if c in compare_df.columns]
+    compare_df = compare_df[available_cols]
+
+    st.dataframe(
+        compare_df.style.format({
+            '独赢正确率': '{:.1f}%',
+            '前三名命中匹数率': '{:.1f}%',
+            '前三名命中场次率': '{:.1f}%',
+            '前三名全中率': '{:.1f}%',
+            '前三名顺序正确率': '{:.1f}%',
+            'ROI': '{:+.1f}%',
+            '位置ROI': '{:+.1f}%',
+            '综合ROI': '{:+.1f}%',
+            '总回报': '${:.0f}',
+            '总投入': '${:.0f}',
+        }),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "模型": st.column_config.TextColumn("模型", width="small"),
+            "测试场次": st.column_config.NumberColumn("场次", width="small"),
+            "独赢正确率": st.column_config.NumberColumn("独赢正确率", width="small", format="%.1f%%"),
+            "前三名命中匹数率": st.column_config.NumberColumn("前3名匹数率", width="small", format="%.1f%%"),
+            "前三名命中场次率": st.column_config.NumberColumn("前3名场次率", width="small", format="%.1f%%"),
+            "前三名全中率": st.column_config.NumberColumn("前3名全中率", width="small", format="%.1f%%"),
+            "前三名顺序正确率": st.column_config.NumberColumn("前3名顺序率", width="small", format="%.1f%%"),
+            "总投入": st.column_config.NumberColumn("总投入", width="small", format="$%.0f"),
+            "总回报": st.column_config.NumberColumn("总回报", width="small", format="$%.0f"),
+            "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
+            "位置ROI": st.column_config.NumberColumn("位置ROI", width="small", format="%+.1f%%"),
+            "综合ROI": st.column_config.NumberColumn("综合ROI", width="small", format="%+.1f%%"),
+        },
+    )
+
+    fig = go.Figure()
+    for model in completed_results:
+        fig.add_trace(go.Bar(
+            name=model['模型'],
+            x=['獨贏正確率', '前3名匹數率', '前3名場次率', '前3名全中率', '前3名順序率', 'ROI'],
+            y=[
+                model.get('独赢正确率', 0),
+                model.get('前三名命中匹数率', 0),
+                model.get('前三名命中场次率', 0),
+                model.get('前三名全中率', 0),
+                model.get('前三名顺序正确率', 0),
+                model.get('ROI', 0),
+            ],
+            textposition='auto',
+        ))
+    fig.update_layout(title="模型性能對比", barmode='group', height=400)
+    st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("#### 🔍 回測詳細")
+    st.caption("每個模型獨立窗口，可滾動查看所有場次")
+
+    for model_result in completed_results:
+        model_name = model_result['模型']
+        debug_details = model_result.get('debug_details', [])
+        test_races = model_result.get('测试场次', 0)
+
+        if debug_details:
+            with st.expander(f"📊 {model_name}（共 {len(debug_details)} 場 / 測試場次: {test_races}）", expanded=False):
+                detail_df = pd.DataFrame(debug_details)
+                st.dataframe(
+                    detail_df,
+                    use_container_width=True,
+                    height=400,
+                    hide_index=True,
+                    column_config={
+                        "赛期": st.column_config.TextColumn("賽期", width="small"),
+                        "场次": st.column_config.NumberColumn("場次", width="small"),
+                        "预测第1名": st.column_config.TextColumn("預測1", width="small"),
+                        "预测第2名": st.column_config.TextColumn("預測2", width="small"),
+                        "预测第3名": st.column_config.TextColumn("預測3", width="small"),
+                        "实际第1名": st.column_config.TextColumn("實際1", width="small"),
+                        "实际第2名": st.column_config.TextColumn("實際2", width="small"),
+                        "实际第3名": st.column_config.TextColumn("實際3", width="small"),
+                        "独赢正确": st.column_config.TextColumn("獨贏", width="small"),
+                        "前3名命中匹数": st.column_config.NumberColumn("命中匹數", width="small"),
+                        "前3名全中": st.column_config.TextColumn("全中", width="small"),
+                        "前3名顺序正确": st.column_config.TextColumn("順序", width="small"),
+                    },
+                )
+                st.caption(f"📊 共 {len(detail_df)} 場賽事，可滾動查看所有場次")
+        else:
+            with st.expander(f"📊 {model_name}（暫無詳細數據）", expanded=False):
+                st.info("該模型暫無詳細預測數據")
+
+
 def render_backtest_page(show_title: bool = True):
     """回测页面：模型对比 + 单场回测 + 全天回测"""
     if show_title:
@@ -10329,15 +10462,15 @@ def render_backtest_page(show_title: bool = True):
     with col_m1:
         enable_rule = st.checkbox(t()["rating_system"], value=True, key="backtest_rule")
     with col_m2:
-        enable_lgb = st.checkbox("LightGBM", value=False, key="backtest_lgb",
+        enable_lgb = st.checkbox("LightGBM", value=LGB_AVAILABLE, key="backtest_lgb",
                                  disabled=not LGB_AVAILABLE,
                                  help="需要安装 lightgbm 库" if not LGB_AVAILABLE else "")
     with col_m3:
-        enable_xgb = st.checkbox("XGBoost", value=False, key="backtest_xgb",
+        enable_xgb = st.checkbox("XGBoost", value=XGB_AVAILABLE, key="backtest_xgb",
                                  disabled=not XGB_AVAILABLE,
                                  help="需要安装 xgboost 库" if not XGB_AVAILABLE else "")
     with col_m4:
-        enable_ensemble = st.checkbox("集成模型", value=False, key="backtest_ensemble",
+        enable_ensemble = st.checkbox("集成模型", value=(LGB_AVAILABLE or XGB_AVAILABLE), key="backtest_ensemble",
                                       disabled=(not LGB_AVAILABLE and not XGB_AVAILABLE),
                                       help="需要安装 lightgbm 或 xgboost 库" if (not LGB_AVAILABLE and not XGB_AVAILABLE) else "")
     
@@ -10392,226 +10525,13 @@ def render_backtest_page(show_title: bool = True):
                         )
                         results.append(result)
                     
-                    if results:
-                        st.markdown("#### 📈 模型對比結果")
-                        
-                        cancelled_results = [r for r in results if r.get("cancelled", False)]
-                        if cancelled_results:
-                            st.warning(f"⚠️ 部分回測被取消: {len(cancelled_results)} 個模型未完成")
-                        
-                        completed_results = [r for r in results if not r.get("cancelled", False)]
-                        
-                        if completed_results:
-                            # 显示对比表格（列宽调窄）
-                            compare_df = pd.DataFrame(completed_results)
-                            display_columns = ["模型", "测试场次", "独赢正确率", 
-                                              "前三名命中匹数率", "前三名命中场次率",
-                                              "前三名全中率", "前三名顺序正确率",
-                                              "总投入", "总回报", "ROI",
-                                              "位置ROI", "综合ROI"]  # ⭐ 新增]
-                            available_cols = [c for c in display_columns if c in compare_df.columns]
-                            compare_df = compare_df[available_cols]
-                            #------
-                            st.dataframe(
-                                compare_df.style.format({
-                                    '独赢正确率': '{:.1f}%',
-                                    '前三名命中匹数率': '{:.1f}%',
-                                    '前三名命中场次率': '{:.1f}%',
-                                    '前三名全中率': '{:.1f}%',
-                                    '前三名顺序正确率': '{:.1f}%',
-                                    'ROI': '{:+.1f}%',
-                                    '位置ROI': '{:+.1f}%',      # ← 添加
-                                    '综合ROI': '{:+.1f}%',      # ← 添加
-                                    '总回报': '${:.0f}',
-                                    '总投入': '${:.0f}'
-                                }),
-                                use_container_width=True,
-                                hide_index=True,
-                                column_config={
-                                    "模型": st.column_config.TextColumn("模型", width="small"),
-                                    "测试场次": st.column_config.NumberColumn("场次", width="small"),
-                                    "独赢正确率": st.column_config.NumberColumn("独赢正确率", width="small", format="%.1f%%"),
-                                    "前三名命中匹数率": st.column_config.NumberColumn("前3名匹数率", width="small", format="%.1f%%"),
-                                    "前三名命中场次率": st.column_config.NumberColumn("前3名场次率", width="small", format="%.1f%%"),
-                                    "前三名全中率": st.column_config.NumberColumn("前3名全中率", width="small", format="%.1f%%"),
-                                    "前三名顺序正确率": st.column_config.NumberColumn("前3名顺序率", width="small", format="%.1f%%"),
-                                    "总投入": st.column_config.NumberColumn("总投入", width="small", format="$%.0f"),
-                                    "总回报": st.column_config.NumberColumn("总回报", width="small", format="$%.0f"),
-                                    "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
-                                }
-                            )
-                            
-                            # 绘制对比图表
-                            fig = go.Figure()
-                            for model in completed_results:
-                                fig.add_trace(go.Bar(
-                                    name=model['模型'],
-                                    x=['獨贏正確率', '前3名匹數率', '前3名場次率', '前3名全中率', '前3名順序率', 'ROI'],
-                                    y=[model.get('独赢正确率', 0), 
-                                       model.get('前三名命中匹数率', 0), 
-                                       model.get('前三名命中场次率', 0),
-                                       model.get('前三名全中率', 0),
-                                       model.get('前三名顺序正确率', 0),
-                                       model.get('ROI', 0)],
-                                    textposition='auto'
-                                ))
-                            fig.update_layout(title="模型性能對比", barmode='group', height=400)
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # ==================== 回测详细表格 ====================
-                            st.markdown("#### 🔍 回測詳細")
-                            st.caption("每個模型獨立窗口，可滾動查看所有場次")
-                            
-                            for model_result in completed_results:
-                                model_name = model_result['模型']
-                                debug_details = model_result.get('debug_details', [])
-                                test_races = model_result.get('测试场次', 0)
-                                
-                                if debug_details:
-                                    with st.expander(f"📊 {model_name}（共 {len(debug_details)} 場 / 測試場次: {test_races}）", expanded=False):
-                                        detail_df = pd.DataFrame(debug_details)
-                                        st.dataframe(
-                                            detail_df,
-                                            use_container_width=True,
-                                            height=400,
-                                            hide_index=True,
-                                            column_config={
-                                                "赛期": st.column_config.TextColumn("賽期", width="small"),
-                                                "场次": st.column_config.NumberColumn("場次", width="small"),
-                                                "预测第1名": st.column_config.TextColumn("預測1", width="small"),
-                                                "预测第2名": st.column_config.TextColumn("預測2", width="small"),
-                                                "预测第3名": st.column_config.TextColumn("預測3", width="small"),
-                                                "实际第1名": st.column_config.TextColumn("實際1", width="small"),
-                                                "实际第2名": st.column_config.TextColumn("實際2", width="small"),
-                                                "实际第3名": st.column_config.TextColumn("實際3", width="small"),
-                                                "独赢正确": st.column_config.TextColumn("獨贏", width="small"),
-                                                "前3名命中匹数": st.column_config.NumberColumn("命中匹數", width="small"),
-                                                "前3名全中": st.column_config.TextColumn("全中", width="small"),
-                                                "前3名顺序正确": st.column_config.TextColumn("順序", width="small"),
-                                            }
-                                        )
-                                        st.caption(f"📊 共 {len(detail_df)} 場賽事，可滾動查看所有場次")
-                                else:
-                                    with st.expander(f"📊 {model_name}（暫無詳細數據）", expanded=False):
-                                        st.info("該模型暫無詳細預測數據")
-                        else:
-                            st.warning("所有回測均被取消或失敗")
-                    else:
-                        st.warning("請至少選擇一個模型")
-    
-        
+                    st.session_state.backtest_results = results
+                    st.session_state.backtest_completed = True
+                    _display_model_backtest_results(results)
+    elif st.session_state.get("backtest_completed") and st.session_state.get("backtest_results"):
+        _display_model_backtest_results(st.session_state.backtest_results)
+
     st.markdown("---")
-    #---------------------
-    # ==================== 显示缓存的回测结果（用于 SHAP/热力图后保留） ====================
-    if st.session_state.get("backtest_completed", False):
-        # 如果是刚刚运行回测，已经显示过了，跳过缓存显示并重置标记
-        if st.session_state.get("_backtest_just_run", False):
-            st.write("🔍 缓存显示块被执行了！")  # ← 添加这行
-            st.session_state._backtest_just_run = False
-        else:
-            cached_results = st.session_state.backtest_results
-            if cached_results:
-                completed_results = [r for r in cached_results if not r.get("cancelled", False)]
-                if completed_results:
-                    st.markdown("#### 📈 模型對比結果")
-                    
-                    # ---- 显示对比表格 ----
-                    compare_df = pd.DataFrame(completed_results)
-                    display_columns = ["模型", "测试场次", "独赢正确率", 
-                                      "前三名命中匹数率", "前三名命中场次率",
-                                      "前三名全中率", "前三名顺序正确率",
-                                      "总投入", "总回报", "ROI",
-                                      "位置ROI", "综合ROI"]
-                    available_cols = [c for c in display_columns if c in compare_df.columns]
-                    compare_df = compare_df[available_cols]
-                    
-                    st.dataframe(
-                        compare_df.style.format({
-                            '独赢正确率': '{:.1f}%',
-                            '前三名命中匹数率': '{:.1f}%',
-                            '前三名命中场次率': '{:.1f}%',
-                            '前三名全中率': '{:.1f}%',
-                            '前三名顺序正确率': '{:.1f}%',
-                            'ROI': '{:+.1f}%',
-                            '位置ROI': '{:+.1f}%',
-                            '综合ROI': '{:+.1f}%',
-                            '总回报': '${:.0f}',
-                            '总投入': '${:.0f}'
-                        }),
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "模型": st.column_config.TextColumn("模型", width="small"),
-                            "测试场次": st.column_config.NumberColumn("场次", width="small"),
-                            "独赢正确率": st.column_config.NumberColumn("独赢正确率", width="small", format="%.1f%%"),
-                            "前三名命中匹数率": st.column_config.NumberColumn("前3名匹数率", width="small", format="%.1f%%"),
-                            "前三名命中场次率": st.column_config.NumberColumn("前3名场次率", width="small", format="%.1f%%"),
-                            "前三名全中率": st.column_config.NumberColumn("前3名全中率", width="small", format="%.1f%%"),
-                            "前三名顺序正确率": st.column_config.NumberColumn("前3名顺序率", width="small", format="%.1f%%"),
-                            "总投入": st.column_config.NumberColumn("总投入", width="small", format="$%.0f"),
-                            "总回报": st.column_config.NumberColumn("总回报", width="small", format="$%.0f"),
-                            "ROI": st.column_config.NumberColumn("ROI", width="small", format="%+.1f%%"),
-                            "位置ROI": st.column_config.NumberColumn("位置ROI", width="small", format="%+.1f%%"),
-                            "综合ROI": st.column_config.NumberColumn("综合ROI", width="small", format="%+.1f%%"),
-                        }
-                    )
-                    
-                    # ---- 绘制对比图表 ----
-                    fig = go.Figure()
-                    for model in completed_results:
-                        fig.add_trace(go.Bar(
-                            name=model['模型'],
-                            x=['獨贏正確率', '前3名匹數率', '前3名場次率', '前3名全中率', '前3名順序率', 'ROI'],
-                            y=[model.get('独赢正确率', 0), 
-                               model.get('前三名命中匹数率', 0), 
-                               model.get('前三名命中场次率', 0),
-                               model.get('前三名全中率', 0),
-                               model.get('前三名顺序正确率', 0),
-                               model.get('ROI', 0)],
-                            textposition='auto'
-                        ))
-                    fig.update_layout(title="模型性能對比", barmode='group', height=400)
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # ---- 回测详细表格 ----
-                    st.markdown("#### 🔍 回測詳細")
-                    st.caption("每個模型獨立窗口，可滾動查看所有場次")
-                    
-                    for model_result in completed_results:
-                        model_name = model_result['模型']
-                        debug_details = model_result.get('debug_details', [])
-                        test_races = model_result.get('测试场次', 0)
-                        
-                        if debug_details:
-                            with st.expander(f"📊 {model_name}（共 {len(debug_details)} 場 / 測試場次: {test_races}）", expanded=False):
-                                detail_df = pd.DataFrame(debug_details)
-                                st.dataframe(
-                                    detail_df,
-                                    use_container_width=True,
-                                    height=400,
-                                    hide_index=True,
-                                    column_config={
-                                        "赛期": st.column_config.TextColumn("賽期", width="small"),
-                                        "场次": st.column_config.NumberColumn("場次", width="small"),
-                                        "预测第1名": st.column_config.TextColumn("預測1", width="small"),
-                                        "预测第2名": st.column_config.TextColumn("預測2", width="small"),
-                                        "预测第3名": st.column_config.TextColumn("預測3", width="small"),
-                                        "实际第1名": st.column_config.TextColumn("實際1", width="small"),
-                                        "实际第2名": st.column_config.TextColumn("實際2", width="small"),
-                                        "实际第3名": st.column_config.TextColumn("實際3", width="small"),
-                                        "独赢正确": st.column_config.TextColumn("獨贏", width="small"),
-                                        "前3名命中匹数": st.column_config.NumberColumn("命中匹數", width="small"),
-                                        "前3名全中": st.column_config.TextColumn("全中", width="small"),
-                                        "前3名顺序正确": st.column_config.TextColumn("順序", width="small"),
-                                    }
-                                )
-                                st.caption(f"📊 共 {len(detail_df)} 場賽事，可滾動查看所有場次")
-                        else:
-                            with st.expander(f"📊 {model_name}（暫無詳細數據）", expanded=False):
-                                st.info("該模型暫無詳細預測數據")
-                    
-                    st.markdown("---")
-                    st.caption("📌 回測結果基於歷史數據，不構成投資建議")
     #-------------
 # ==================== 新增：策略回测选项卡 ====================
     st.markdown(f"## {t()['strategy_backtest']}")
