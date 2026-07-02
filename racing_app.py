@@ -705,6 +705,23 @@ def get_supabase_headers(use_secret=False, access_token=None):
             "Content-Type": "application/json"
         }
 
+
+try:
+    from strategy_backtest_engine import (
+        BacktestDiagnostics,
+        BacktestSummary,
+        StrategyBacktester,
+        fetch_win_odds_snapshot,
+    )
+    STRATEGY_BACKTEST_OK = True
+except ImportError as _strategy_backtest_import_error:
+    STRATEGY_BACKTEST_OK = False
+    STRATEGY_BACKTEST_IMPORT_ERROR = str(_strategy_backtest_import_error)
+    BacktestDiagnostics = None  # type: ignore
+    BacktestSummary = None  # type: ignore
+    StrategyBacktester = None  # type: ignore
+    fetch_win_odds_snapshot = None  # type: ignore
+
 def supabase_request(method: str, table: str, data=None, params=None, access_token=None):
     """通用的Supabase REST API请求"""
     url = f"{SUPABASE_URL}/rest/v1/{table}"
@@ -9464,15 +9481,13 @@ def run_strategy_backtest(
     model_type: lightgbm | xgboost
     strategy_kind: win | qin
     """
-    from backtest_strategy import (
-        BacktestDiagnostics,
-        BacktestSummary,
-        StrategyBacktester,
-        fetch_win_odds_snapshot,
-    )
+    if not STRATEGY_BACKTEST_OK:
+        st.error(f"策略回测模块加载失败: {STRATEGY_BACKTEST_IMPORT_ERROR}")
+        return None
 
     model_label = "LightGBM" if model_type == "lightgbm" else "XGBoost"
-    backtester = StrategyBacktester()
+    supabase_headers = get_supabase_headers(use_secret=True)
+    backtester = StrategyBacktester(SUPABASE_URL, supabase_headers)
     diagnostics = BacktestDiagnostics()
     results = []
 
@@ -9546,7 +9561,9 @@ def run_strategy_backtest(
             ml_runners = _prepare_ml_runners_for_strategy(
                 runners_data, race_date, venue, race_no, model_type, model
             )
-            win_odds_snapshot = fetch_win_odds_snapshot(race_date, venue, race_no)
+            win_odds_snapshot = fetch_win_odds_snapshot(
+                race_date, venue, race_no, SUPABASE_URL, supabase_headers
+            )
 
             if strategy_kind == "win":
                 bet_result, reason = backtester.evaluate_win_race(
