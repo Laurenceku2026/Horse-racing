@@ -64,6 +64,38 @@ class ParlayRecommender:
         
         # 默认每注金额
         self.default_stake_per_bet = 10
+
+    @staticmethod
+    def parlay_type_label(parlay_type: str, lang: str = "zh") -> str:
+        """Localized parlay type description (e.g. 2x1 -> 2-leg parlay (1 bet))."""
+        labels_zh = {
+            "2x1": "2串1 (1注)",
+            "2x3": "2串3 (3注) - 包含2场单关",
+            "3x1": "3串1 (1注)",
+            "3x4": "3串4 (4注) - 包含3个2串1 + 1个3串1",
+            "3x7": "3串7 (7注) - 包含3个单关 + 3个2串1 + 1个3串1",
+            "4x1": "4串1 (1注)",
+            "4x11": "4串11 (11注) - 包含6个2串1 + 4个3串1 + 1个4串1",
+            "5x1": "5串1 (1注)",
+            "5x26": "5串26 (26注) - 包含各种组合",
+            "6x1": "6串1 (1注)",
+            "6x42": "6串42 (42注) - 包含各种组合",
+        }
+        labels_en = {
+            "2x1": "2-leg parlay (1 bet)",
+            "2x3": "2-leg box (3 bets) — includes 2 singles",
+            "3x1": "3-leg parlay (1 bet)",
+            "3x4": "3-leg box (4 bets) — 3×2-leg + 1×3-leg",
+            "3x7": "3-leg box (7 bets) — singles, 2-leg & 3-leg combos",
+            "4x1": "4-leg parlay (1 bet)",
+            "4x11": "4-leg box (11 bets) — 2-leg, 3-leg & 4-leg combos",
+            "5x1": "5-leg parlay (1 bet)",
+            "5x26": "5-leg box (26 bets) — multiple combos",
+            "6x1": "6-leg parlay (1 bet)",
+            "6x42": "6-leg box (42 bets) — multiple combos",
+        }
+        labels = labels_en if lang == "en" else labels_zh
+        return labels.get(parlay_type, parlay_type)
     
     def calculate_parlay_odds(self, odds_list: List[float]) -> float:
         """计算过关总赔率（各关赔率相乘）"""
@@ -404,3 +436,8 @@ def format_parlay_display(rec: ParlayRecommendation, lang: str = "zh") -> str:
             legs_text.append(f"第{sel.race_no}場 {horse}")
 
     return f"{' → '.join(legs_text)}"
+
+
+def describe_parlay_type(parlay_type: str, lang: str = "zh") -> str:
+    """Localized parlay type label for UI display."""
+    return ParlayRecommender.parlay_type_label(parlay_type, lang)

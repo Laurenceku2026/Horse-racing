@@ -20,7 +20,7 @@ from typing import List, Dict, Tuple, Optional
 from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db
-from parlay_recommender import ParlayRecommender, format_parlay_display
+from parlay_recommender import ParlayRecommender, describe_parlay_type, format_parlay_display
 # ==================== 从 scoring_engine 导入 ====================
 SCORING_ENGINE_OK = False
 try:
@@ -1770,6 +1770,123 @@ def consume_free_trial(user_id: str) -> bool:
         st.session_state.show_paywall = True
         return False
 
+
+def _render_paywall_content() -> None:
+    """Paywall body (used in dialog and legacy full-page view)."""
+    profile = get_user_profile(st.session_state.user_id)
+    remaining = profile.get("free_trials_remaining", 0)
+    tier = profile.get("subscription_tier", "free")
+
+    if tier == "pro":
+        st.session_state.show_paywall = False
+        st.rerun()
+        return
+
+    if remaining > 0:
+        st.info(t()["paywall_trials_remaining"].format(remaining=remaining))
+        st.warning(t()["paywall_upgrade_hint"])
+    else:
+        st.error(t()["free_trial_used"])
+
+    st.markdown(f"""
+    ### 💎 {t()['upgrade']}
+
+    | {t()['paywall_feature']} | {t()['paywall_free']} | {t()['paywall_pro']} |
+    |------|--------|--------|
+    | {t()['paywall_usage']} | {t()['paywall_usage_free']} | **{t()['unlimited']}** |
+    | {t()['paywall_horse_rating']} | ✅ | ✅ |
+    | {t()['paywall_smart_betting']} | ✅ | ✅ |
+    | {t()['paywall_full_day']} | ✅ | ✅ |
+    | {t()['paywall_backtest']} | ✅ | ✅ |
+    """)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button(t()["monthly"], key="paywall_monthly_btn", use_container_width=True):
+            url, error = create_checkout_session(
+                st.session_state.user_id,
+                st.session_state.user_email,
+                STRIPE_PRICE_MONTHLY,
+            )
+            if url:
+                st.session_state.payment_url = url
+                st.session_state.payment_type = "monthly"
+                st.rerun()
+            else:
+                st.error(f"{t()['checkout_session_failed']}: {error}")
+
+        if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "monthly":
+            st.markdown(
+                f'''
+            <a href="{st.session_state.payment_url}" target="_blank" style="
+                display: block;
+                width: 100%;
+                padding: 0.6rem;
+                background-color: #ff4b4b;
+                color: white;
+                text-align: center;
+                text-decoration: none;
+                border-radius: 0.5rem;
+                font-weight: bold;
+                margin-top: 0.5rem;">
+                {t()['checkout_go_stripe_monthly']}
+            </a>
+            ''',
+                unsafe_allow_html=True,
+            )
+
+    with col2:
+        if st.button(t()["quarterly"], key="paywall_quarterly_btn", use_container_width=True):
+            url, error = create_checkout_session(
+                st.session_state.user_id,
+                st.session_state.user_email,
+                STRIPE_PRICE_QUARTERLY,
+            )
+            if url:
+                st.session_state.payment_url = url
+                st.session_state.payment_type = "quarterly"
+                st.rerun()
+            else:
+                st.error(f"{t()['checkout_session_failed']}: {error}")
+
+        if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "quarterly":
+            st.markdown(
+                f'''
+            <a href="{st.session_state.payment_url}" target="_blank" style="
+                display: block;
+                width: 100%;
+                padding: 0.6rem;
+                background-color: #ff4b4b;
+                color: white;
+                text-align: center;
+                text-decoration: none;
+                border-radius: 0.5rem;
+                font-weight: bold;
+                margin-top: 0.5rem;">
+                {t()['checkout_go_stripe_quarterly']}
+            </a>
+            ''',
+                unsafe_allow_html=True,
+            )
+
+
+def maybe_show_paywall_dialog() -> None:
+    """Show upgrade pop-up when free trials are exhausted or user clicks upgrade."""
+    if not st.session_state.get("show_paywall", False):
+        return
+
+    @st.dialog(t()["upgrade_pro"], width="large")
+    def _paywall_dialog():
+        _render_paywall_content()
+        if st.button(t()["back"], key="paywall_dialog_close", use_container_width=True):
+            st.session_state.show_paywall = False
+            st.session_state.payment_url = None
+            st.rerun()
+
+    _paywall_dialog()
+
+
 # ==================== Stripe支付 ====================
 def create_checkout_session(user_id: str, user_email: str, price_id: str) -> Tuple[Optional[str], Optional[str]]:
     """创建Stripe Checkout Session"""
@@ -1882,104 +1999,10 @@ def handle_stripe_callback():
         st.info(t()["stripe_payment_cancelled"])
 #------------
 def show_paywall():
-    """显示付费墙（用户主动升级）"""
+    """Legacy full-page paywall wrapper."""
     st.markdown("---")
-    
-    # 获取用户当前状态
-    profile = get_user_profile(st.session_state.user_id)
-    remaining = profile.get("free_trials_remaining", 0)
-    tier = profile.get("subscription_tier", "free")
-    
-    # 如果已经是专业版，不应该显示付费墙
-    if tier == "pro":
-        st.session_state.show_paywall = False
-        st.rerun()
-        return
-    
-    # 显示当前状态
-    if remaining > 0:
-        st.info(t()["paywall_trials_remaining"].format(remaining=remaining))
-        st.warning(t()["paywall_upgrade_hint"])
-    else:
-        st.error(t()["free_trial_used"])
-    
-    st.markdown(f"""
-    ### 💎 {t()['upgrade']}
-    
-    | {t()['paywall_feature']} | {t()['paywall_free']} | {t()['paywall_pro']} |
-    |------|--------|--------|
-    | {t()['paywall_usage']} | {t()['paywall_usage_free']} | **{t()['unlimited']}** |
-    | {t()['paywall_horse_rating']} | ✅ | ✅ |
-    | {t()['paywall_smart_betting']} | ✅ | ✅ |
-    | {t()['paywall_full_day']} | ✅ | ✅ |
-    | {t()['paywall_backtest']} | ✅ | ✅ |
-    """)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button(t()["monthly"], key="monthly_btn", use_container_width=True):
-            url, error = create_checkout_session(
-                st.session_state.user_id, 
-                st.session_state.user_email, 
-                STRIPE_PRICE_MONTHLY
-            )
-            if url:
-                st.session_state.payment_url = url
-                st.session_state.payment_type = "monthly"
-                st.rerun()
-            else:
-                st.error(f"{t()['checkout_session_failed']}: {error}")
-        
-        if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "monthly":
-            st.markdown(f'''
-            <a href="{st.session_state.payment_url}" target="_blank" style="
-                display: block;
-                width: 100%;
-                padding: 0.6rem;
-                background-color: #ff4b4b;
-                color: white;
-                text-align: center;
-                text-decoration: none;
-                border-radius: 0.5rem;
-                font-weight: bold;
-                margin-top: 0.5rem;">
-                {t()['checkout_go_stripe_monthly']}
-            </a>
-            ''', unsafe_allow_html=True)
-    
-    with col2:
-        if st.button(t()["quarterly"], key="quarterly_btn", use_container_width=True):
-            url, error = create_checkout_session(
-                st.session_state.user_id, 
-                st.session_state.user_email, 
-                STRIPE_PRICE_QUARTERLY
-            )
-            if url:
-                st.session_state.payment_url = url
-                st.session_state.payment_type = "quarterly"
-                st.rerun()
-            else:
-                st.error(f"{t()['checkout_session_failed']}: {error}")
-        
-        if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "quarterly":
-            st.markdown(f'''
-            <a href="{st.session_state.payment_url}" target="_blank" style="
-                display: block;
-                width: 100%;
-                padding: 0.6rem;
-                background-color: #ff4b4b;
-                color: white;
-                text-align: center;
-                text-decoration: none;
-                border-radius: 0.5rem;
-                font-weight: bold;
-                margin-top: 0.5rem;">
-                {t()['checkout_go_stripe_quarterly']}
-            </a>
-            ''', unsafe_allow_html=True)
-    
-    if st.button(t()["back"], use_container_width=True):
+    _render_paywall_content()
+    if st.button(t()["back"], key="paywall_page_back", use_container_width=True):
         st.session_state.show_paywall = False
         st.session_state.payment_url = None
         st.rerun()
@@ -5335,7 +5358,7 @@ def render_home():
 
         if update_btn:
             if not consume_free_trial(st.session_state.user_id):
-                st.warning(texts.get('free_trial_used', '免費次數已用完，請升級到專業版'))
+                pass
             else:
                 with st.spinner(texts.get('checking_update', '正在检查并更新数据...')):
                     result = sync_all_data()
@@ -7222,8 +7245,7 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
         recommendations = results.get(parlay_type) or []
         if not recommendations:
             continue
-        config = recommender.parlay_configs.get(parlay_type, {})
-        st.markdown(f"**{config.get('description', parlay_type)}**")
+        st.markdown(f"**{describe_parlay_type(parlay_type, lang)}**")
         for rec in recommendations[:3]:
             if rec.ev > best_ev:
                 best_ev = rec.ev
@@ -7240,7 +7262,7 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
                     st.markdown(f"{texts['parlay_risk_label']}: {risk_color} {format_risk_level(rec.risk_level)}")
                     st.markdown(f"{texts['parlay_expected_roi']}: {rec.roi:+.1f}%")
             st.caption(
-                f"{texts['parlay_suggested_bet']}: {parlay_type} "
+                f"{texts['parlay_suggested_bet']}: {describe_parlay_type(parlay_type, lang)} "
                 f"({rec.num_bets} {tx('注', 'bets')}, {tx('共', 'total')} ${rec.total_stake:.0f})"
             )
 
@@ -7249,7 +7271,8 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
         st.markdown(f"#### {texts['parlay_best_title']}")
         st.success(
             f"**{texts['parlay_best_combo']}**: {format_parlay_display(best_rec, lang=lang)}\n"
-            f"- {texts['parlay_method']}: {best_rec.parlay_type} ({best_rec.num_bets} {tx('注', 'bets')})\n"
+            f"- {texts['parlay_method']}: {describe_parlay_type(best_rec.parlay_type, lang)} "
+            f"({best_rec.num_bets} {tx('注', 'bets')})\n"
             f"- {texts['parlay_total_odds']}: {best_rec.total_odds:.1f}x\n"
             f"- {texts['parlay_expected_roi']}: {best_rec.roi:+.1f}%\n"
             f"- {texts['parlay_suggest_stake']}: ${best_rec.total_stake:.0f}"
@@ -7702,7 +7725,7 @@ def render_smart_betting(show_title: bool = True):
             st.info(t()["scoring_weights_paywall_hint"])
             if st.button(t()["scoring_weights_paywall_btn"], key="btn_scoring_weights", use_container_width=True):
                 if not consume_free_trial(st.session_state.user_id):
-                    st.warning(t()["free_trial_used"])
+                    pass
                 else:
                     st.session_state.paid_scoring_weights = True
                     st.session_state.expand_scoring_weights = True
@@ -7734,7 +7757,7 @@ def render_smart_betting(show_title: bool = True):
     
     if refresh_schedule_btn:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
+            pass
         else:
             with st.spinner(t()["syncing_schedule"]):
                 api_races = get_upcoming_races_from_api()
@@ -7859,7 +7882,7 @@ def render_smart_betting(show_title: bool = True):
     # ✅ 修改：单场同步也使用 API
     if refresh_race_btn:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
+            pass
         else:
             with st.spinner(t()["updating_odds"]):
                 # 调用 API 同步单场赛事
@@ -8223,7 +8246,7 @@ def render_smart_betting(show_title: bool = True):
     #----------------
     if st.button(t()["generate_full_day"], key="generate_full_day", use_container_width=True, type="primary"):
         if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
+            pass
         else:
             progress = _UiProgressBar(t()["progress_optimizing_full_day"])
             all_bets = []
@@ -8325,7 +8348,7 @@ def render_smart_betting(show_title: bool = True):
     )
     if st.button(t()["generate_day_portfolio"], key="generate_day_portfolio", use_container_width=True, type="primary"):
         if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
+            pass
         else:
             progress = _UiProgressBar(t()["optimizing_day_portfolio"])
             weights_config = None
@@ -8368,7 +8391,7 @@ def render_smart_betting(show_title: bool = True):
     #--------------------
     if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True):
         if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
+            pass
         else:
             progress = _UiProgressBar(t()["calculating_parlay"])
             confidence_horses = []
@@ -11725,7 +11748,7 @@ def render_backtest_page(show_title: bool = True):
     # 运行回测
     if run_backtest_btn:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
+            pass
         else:
             if backtest_start > backtest_end:
                 st.error(t()["invalid_date_range"])
@@ -11857,7 +11880,7 @@ def render_backtest_page(show_title: bool = True):
     if run_strategy_backtest_btn:
         result = None
         if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()['free_trial_used'])
+            pass
         else:
             start_date = backtest_strategy_start.strftime("%Y-%m-%d")
             end_date = backtest_strategy_end.strftime("%Y-%m-%d")
@@ -11921,13 +11944,9 @@ def main():
             render_login_form()
         return
     
-    # 付费墙
-    if st.session_state.get("show_paywall", False):
-        show_paywall()
-        return
-    
     # 已登录，直接显示主页（包含所有模块：数据概览 + 智能投注 + 回测）
     render_home()
+    maybe_show_paywall_dialog()
 
 # ============================================================
 # 第2次代码：评分引擎 + 数据模型
