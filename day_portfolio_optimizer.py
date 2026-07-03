@@ -15,6 +15,15 @@ from typing import Dict, List, Optional, Tuple
 from betting_strategy_engine import BettingStrategyEngine, format_horse_display
 
 
+def _session_lang() -> str:
+    try:
+        import streamlit as st
+
+        return st.session_state.get("lang", "zh")
+    except Exception:
+        return "zh"
+
+
 def _safe_float(value, default: float = 0.0) -> float:
     try:
         if value in (None, ""):
@@ -34,12 +43,7 @@ def _runner_display_name(row: Dict) -> str:
     """Localized horse name (reads Streamlit lang if available)."""
     from betting_strategy_engine import pick_horse_name
 
-    lang = "zh"
-    try:
-        import streamlit as st
-        lang = st.session_state.get("lang", "zh")
-    except Exception:
-        pass
+    lang = _session_lang()
     lookup = None
     if lang == "en":
         try:
@@ -124,13 +128,18 @@ class DayPortfolioOptimizer:
         min_stake: float = 10.0,
         min_ev: float = 0.0,
         max_candidates: int = 50,
-        lang: str = "zh",
+        lang: Optional[str] = None,
     ):
         self.min_stake = min_stake
         self.min_ev = min_ev
         self.max_candidates = max_candidates
-        self.lang = lang
-        self.engine = BettingStrategyEngine(lang=lang)
+        self.lang = lang or _session_lang()
+        try:
+            self.engine = BettingStrategyEngine(lang=self.lang)
+        except TypeError:
+            self.engine = BettingStrategyEngine()
+            if lang is None:
+                self.lang = _session_lang()
 
     def _race_prefix(self, race_no: int) -> str:
         if self.lang == "en":

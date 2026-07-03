@@ -1065,6 +1065,13 @@ def get_lang() -> str:
     return st.session_state.get("lang", "zh")
 
 
+def _make_betting_strategy_engine() -> "BettingStrategyEngine":
+    try:
+        return BettingStrategyEngine(lang=get_lang())
+    except TypeError:
+        return BettingStrategyEngine()
+
+
 def tx(zh: str, en: str) -> str:
     return zh if get_lang() == "zh" else en
 
@@ -7969,7 +7976,7 @@ def render_smart_betting(show_title: bool = True):
         )
         
         # 生成建议
-        engine = BettingStrategyEngine(lang=get_lang())
+        engine = _make_betting_strategy_engine()
         recommendations = engine.generate_all_recommendations(
             scores=scores,
             horse_names=horse_names,
@@ -10296,7 +10303,6 @@ def run_day_portfolio_backtest(
         min_stake=10.0,
         min_ev=min_ev,
         max_candidates=50,
-        lang=get_lang(),
     )
 
     from scoring_engine import get_cached_model, get_current_weights_hash, set_cached_model
@@ -10412,7 +10418,6 @@ def build_live_day_portfolio(
         min_stake=10.0,
         min_ev=min_ev,
         max_candidates=50,
-        lang=get_lang(),
     )
     scored_by_race: Dict[int, List[Dict]] = {}
 
