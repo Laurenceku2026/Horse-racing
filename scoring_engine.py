@@ -952,16 +952,20 @@ def calculate_weight_change_score(current_weight: Optional[int], past_weights: L
         return 20.0       # 大幅变化
 
 
-def calculate_incident_score(incident_text: str) -> float:
+def calculate_incident_score(incident_text: str, llm_overlay: float = 0.0) -> float:
     """
     计算事件报告影响评分（基于关键词匹配）
     参数：
         incident_text: 事件报告文本
+        llm_overlay: 可选 LLM 缓存分（叠加，权重 0.5）
     返回：
         -20 到 +20 的影响值（负数表示不利影响）
     """
     if not incident_text or incident_text in ['无特别报告。', '無特別報告。', '']:
-        return 0.0
+        rule_score = 0.0
+        if llm_overlay:
+            return max(-20.0, min(20.0, 0.5 * float(llm_overlay)))
+        return rule_score
     
     # 不利影响关键词及扣分
     negative_keywords = [
@@ -1003,8 +1007,11 @@ def calculate_incident_score(incident_text: str) -> float:
             score += impact
             break  # 只取一个正面事件
     
-    # 限制在 -20 到 +20 范围内
-    return max(-20.0, min(20.0, float(score)))
+    # 规则分 + LLM 缓存叠加（规则为主）
+    rule_score = max(-20.0, min(20.0, float(score)))
+    if llm_overlay:
+        return max(-20.0, min(20.0, rule_score + 0.5 * float(llm_overlay)))
+    return rule_score
 
 
 def calculate_burst_score(running_position: str, finishing_position: int = None) -> float:
@@ -1088,6 +1095,7 @@ def calculate_status_score(
     finishing_position: int = None,
     status_weights: Dict = None,
     reference_year: Optional[int] = None,
+    llm_incident_overlay: float = 0.0,
 ) -> float:
     """
     计算状态因子综合评分（0-100分）
@@ -1110,7 +1118,7 @@ def calculate_status_score(
     # 计算各因子得分（回测/历史赛事用赛年，避免用当前年算马龄）
     age_score = calculate_age_score(birth_year, current_year=reference_year)
     weight_change_score = calculate_weight_change_score(current_weight, past_weights)
-    incident_adjustment = calculate_incident_score(incident_text)
+    incident_adjustment = calculate_incident_score(incident_text, llm_overlay=llm_incident_overlay)
     burst_score = calculate_burst_score(running_position, finishing_position)
     
     # 事件报告是调整分（-20到+20），需要转换为0-100分
@@ -1593,6 +1601,7 @@ def score_runners_for_prediction(
     horse_birth_years: Dict[str, int],
     weights_config: Optional[Dict] = None,
     temperature: float = 0.8,
+    incident_llm_map: Optional[Dict[str, float]] = None,
 ) -> List[Dict]:
     """
     与回测一致的评分逻辑：仅使用 race_date 之前的往绩，按 combined_score 排序。
@@ -1654,15 +1663,20 @@ def score_runners_for_prediction(
         )
         odds_score = calculate_odds_score(odds_win, 50.0, odds_w)
         birth_year = horse_birth_years.get(horse_id)
+        incident_text = runner.get("incident", "") or ""
+        llm_overlay = 0.0
+        if incident_llm_map and incident_text:
+            llm_overlay = incident_llm_map.get(incident_text, 0.0)
         status_score = calculate_status_score(
             birth_year,
             runner.get("body_weight"),
             [p.get("body_weight") for p in past_before if p.get("body_weight")],
-            runner.get("incident", ""),
+            incident_text,
             runner.get("running_position", ""),
             None,
             status_w,
             reference_year=reference_year,
+            llm_incident_overlay=llm_overlay,
         )
         combined_score = calculate_overall_score(
             basic_score, race_score, odds_score, status_score, level1

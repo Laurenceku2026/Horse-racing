@@ -722,6 +722,27 @@ except ImportError as _strategy_backtest_import_error:
     StrategyBacktester = None  # type: ignore
     fetch_win_odds_snapshot = None  # type: ignore
 
+try:
+    from day_portfolio_optimizer import (
+        DayPortfolioOptimizer,
+        DayPortfolioResult,
+        build_race_day_races_from_performances,
+    )
+    DAY_PORTFOLIO_OK = True
+except ImportError as _day_portfolio_import_error:
+    DAY_PORTFOLIO_OK = False
+    DAY_PORTFOLIO_IMPORT_ERROR = str(_day_portfolio_import_error)
+
+try:
+    from incident_llm_service import (
+        get_combined_incident_adjustment,
+        get_llm_impact_from_cache,
+        batch_cache_missing_incidents,
+    )
+    INCIDENT_LLM_OK = True
+except ImportError:
+    INCIDENT_LLM_OK = False
+
 def supabase_request(method: str, table: str, data=None, params=None, access_token=None):
     """通用的Supabase REST API请求"""
     url = f"{SUPABASE_URL}/rest/v1/{table}"
@@ -5792,28 +5813,33 @@ def build_ml_features_for_prediction(runner: Dict, past_before: List[Dict],
     else:
         features['weight_change'] = 50
     
-    # ✅ 事件报告
+    # ✅ 事件报告（规则 + LLM 缓存叠加，热路径不调 API）
     incident_text = runner.get('incident', '')
-    incident_score = 0
-    if incident_text and incident_text not in ['无特别报告。', '無特別報告。', '']:
-        negative_keywords = [
-            ('流鼻血', -20), ('不良於行', -18), ('喘鳴症', -15),
-            ('心律不正', -15), ('勒避', -8), ('受阻', -8),
-            ('收慢', -6), ('外疊', -6), ('搶口', -5),
-            ('出閘笨拙', -5), ('內閃', -4), ('外閃', -4)
-        ]
-        positive_keywords = [('順利', 5), ('望空', 4), ('節省腳程', 3)]
-        
-        for keyword, impact in negative_keywords:
-            if keyword in incident_text:
-                incident_score = impact
-                break
-        if incident_score == 0:
-            for keyword, impact in positive_keywords:
+    if INCIDENT_LLM_OK and SUPABASE_URL:
+        combined, _, _ = get_combined_incident_adjustment(
+            incident_text, SUPABASE_URL, get_supabase_headers(use_secret=True)
+        )
+        features['incident'] = combined
+    else:
+        incident_score = 0
+        if incident_text and incident_text not in ['无特别报告。', '無特別報告。', '']:
+            negative_keywords = [
+                ('流鼻血', -20), ('不良於行', -18), ('喘鳴症', -15),
+                ('心律不正', -15), ('勒避', -8), ('受阻', -8),
+                ('收慢', -6), ('外疊', -6), ('搶口', -5),
+                ('出閘笨拙', -5), ('內閃', -4), ('外閃', -4)
+            ]
+            positive_keywords = [('順利', 5), ('望空', 4), ('節省腳程', 3)]
+            for keyword, impact in negative_keywords:
                 if keyword in incident_text:
                     incident_score = impact
                     break
-    features['incident'] = max(-20, min(20, incident_score))
+            if incident_score == 0:
+                for keyword, impact in positive_keywords:
+                    if keyword in incident_text:
+                        incident_score = impact
+                        break
+        features['incident'] = max(-20, min(20, incident_score))
     
     # ✅ 冲刺能力
     running_pos = runner.get('running_position', '')
@@ -6232,6 +6258,7 @@ def _score_runners_for_parlay_race(
     ml_model=None,
     ml_model_type: Optional[str] = None,
     prediction_cutoff_date: Optional[str] = None,
+    incident_llm_map: Optional[Dict[str, float]] = None,
 ) -> List[Dict]:
     """为过关/全天分析计算单场胜率（使用缓存出马表）。"""
     runners_data = get_cached_race_runners(
@@ -6261,6 +6288,7 @@ def _score_runners_for_parlay_race(
                 horse_birth_years,
                 cfg,
                 temperature=0.8,
+                incident_llm_map=incident_llm_map,
             )
 
         scores, _ = calculate_all_horses_scores_v2(runners_data, user_weights)
@@ -6694,7 +6722,7 @@ def render_smart_betting(show_title: bool = True):
             model_choice = st.selectbox(
                 t()["ai_model"],
                 options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
-                index=2,
+                index=1,
                 key="ml_model_choice",
                 help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
             )
@@ -7495,6 +7523,56 @@ def render_smart_betting(show_title: bool = True):
                         st.metric("📊 預期ROI", f"{roi:+.1f}%")
                 else:
                     st.warning("未找到符合條件的投注機會")
+
+    st.markdown("---")
+    st.markdown(f"### 💰 {_model_section_title('赛日最优组合', model_choice)}")
+    st.caption("约 HK$1,000 预算 · 独赢/位置/连赢/单T/三重彩/孖宝 · EV 比例分配（最低 HK$10/注）")
+    portfolio_budget = st.number_input(
+        "赛日预算 (HK$)",
+        min_value=100,
+        max_value=10000,
+        value=1000,
+        step=100,
+        key="day_portfolio_budget",
+    )
+    portfolio_min_ev = st.slider(
+        "最低 EV 门槛",
+        min_value=0.0,
+        max_value=0.5,
+        value=0.0,
+        step=0.05,
+        format="%.2f",
+        key="day_portfolio_min_ev",
+    )
+    if st.button("🎯 生成赛日最优组合", key="generate_day_portfolio", use_container_width=True, type="primary"):
+        if not consume_free_trial(st.session_state.user_id):
+            st.warning("免費次數已用完，請升級到專業版")
+        else:
+            with st.spinner("正在优化赛日组合..."):
+                weights_config = None
+                if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
+                    weights_config = st.session_state.get("user_scoring_config", {})
+                incident_texts = []
+                for race in races:
+                    for runner in get_cached_race_runners(
+                        race.get("race_date"), race.get("venue"), race.get("race_no")
+                    ) or []:
+                        txt = runner.get("incident", "")
+                        if txt:
+                            incident_texts.append(txt)
+                incident_llm_map = _build_incident_llm_map(incident_texts)
+                portfolio_result = build_live_day_portfolio(
+                    races,
+                    model_choice,
+                    portfolio_budget,
+                    min_ev=portfolio_min_ev,
+                    prediction_cutoff_date=prediction_cutoff_date,
+                    user_weights=user_weights,
+                    weights_config=weights_config,
+                    incident_llm_map=incident_llm_map,
+                )
+                if portfolio_result:
+                    _display_live_day_portfolio(portfolio_result, portfolio_budget)
     
     st.markdown("---")
     
@@ -9615,6 +9693,289 @@ def run_strategy_backtest(
     return summary
 
 
+def _build_incident_llm_map(incident_texts: List[str]) -> Dict[str, float]:
+    """预读 incident LLM 缓存（不调用 API）。"""
+    if not INCIDENT_LLM_OK or not SUPABASE_URL:
+        return {}
+    headers = get_supabase_headers(use_secret=True)
+    mapping: Dict[str, float] = {}
+    for text in set(t for t in incident_texts if t):
+        mapping[text] = get_llm_impact_from_cache(text, SUPABASE_URL, headers)
+    return mapping
+
+
+def _group_race_days(races: List[Dict]) -> Dict[Tuple[str, str], List[Dict]]:
+    days: Dict[Tuple[str, str], List[Dict]] = {}
+    for race in races:
+        key = (race["race_date"], race.get("venue", "ST"))
+        days.setdefault(key, []).append(race)
+    return days
+
+
+def _score_races_for_day_ml(
+    day_races: List[Dict],
+    all_performances: List[Dict],
+    model_type: str,
+    model,
+) -> Dict[int, List[Dict]]:
+    scored: Dict[int, List[Dict]] = {}
+    for race in day_races:
+        race_date = race["race_date"]
+        venue = race["venue"]
+        race_no = race["race_no"]
+        runners_data = [
+            p for p in all_performances
+            if p["race_date"] == race_date and p["venue"] == venue and p["race_no"] == race_no
+        ]
+        if not runners_data:
+            continue
+        ml_runners = _prepare_ml_runners_for_strategy(
+            runners_data, race_date, venue, race_no, model_type, model
+        )
+        scored[race_no] = ml_runners
+    return scored
+
+
+def run_day_portfolio_backtest(
+    start_date: str,
+    end_date: str,
+    model_type: str = "lightgbm",
+    budget_per_day: float = 1000.0,
+    min_ev: float = 0.0,
+    fast_mode: bool = False,
+) -> Dict:
+    """
+    赛日组合策略回测：每日 ~$1000 在 WIN/PLA/QIN/TRI/TCE/孖宝 间优化分配。
+    fast_mode=True 时每周重训一次模型（快速模式）。
+    """
+    if not DAY_PORTFOLIO_OK:
+        st.error(f"赛日组合优化模块加载失败: {DAY_PORTFOLIO_IMPORT_ERROR}")
+        return {}
+
+    model_label = "LightGBM" if model_type == "lightgbm" else "XGBoost"
+    if model_type == "lightgbm" and not LGB_AVAILABLE:
+        st.error("LightGBM 未安装")
+        return {}
+    if model_type == "xgboost" and not XGB_AVAILABLE:
+        st.error("XGBoost 未安装")
+        return {}
+
+    all_performances = get_performances_batch(start_date, end_date)
+    if not all_performances:
+        st.error("未獲取到任何數據")
+        return {}
+
+    incident_texts = [p.get("incident", "") for p in all_performances if p.get("incident")]
+    _build_incident_llm_map(incident_texts)
+
+    horse_cache = build_horse_performances_cache(all_performances)
+    races = get_races_from_performances(all_performances)
+    if not races:
+        st.warning("未找到任何賽事")
+        return {}
+
+    race_days = _group_race_days(races)
+    sorted_day_keys = sorted(race_days.keys())
+    optimizer = DayPortfolioOptimizer(min_stake=10.0, min_ev=min_ev, max_candidates=50)
+
+    from scoring_engine import get_cached_model, get_current_weights_hash, set_cached_model
+
+    weight_hash = get_current_weights_hash()
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    day_results: List[DayPortfolioResult] = []
+    total_stake = 0.0
+    total_return = 0.0
+    total_bets = 0
+    total_hits = 0
+    model = None
+    last_train_key = None
+
+    for idx, (race_date, venue) in enumerate(sorted_day_keys):
+        if st.session_state.get("stop_backtest", False):
+            st.warning("⚠️ 回測已被用戶取消")
+            break
+
+        status_text.text(f"赛日组合回测 {model_label}: {race_date} {venue} ({idx + 1}/{len(sorted_day_keys)})")
+        progress_bar.progress((idx + 1) / len(sorted_day_keys))
+
+        train_key = race_date
+        if fast_mode:
+            train_key = race_date[:7]
+
+        if model is None or train_key != last_train_key:
+            train_X, train_y = prepare_training_data_by_date(race_date, all_performances, horse_cache)
+            if train_X is None or len(train_X) < 50:
+                continue
+            cache_key = f"portfolio_{model_type}_{train_key}_{weight_hash}"
+            cached = get_cached_model(cache_key)
+            if cached is not None:
+                model = cached
+            else:
+                model = get_or_train_model(train_X, train_y, model_type, cache_key)
+                if model is not None:
+                    set_cached_model(cache_key, model)
+            last_train_key = train_key
+
+        if model is None:
+            continue
+
+        day_races = race_days[(race_date, venue)]
+        scored_by_race = _score_races_for_day_ml(day_races, all_performances, model_type, model)
+        day_performances = [
+            p for p in all_performances if p.get("race_date") == race_date and p.get("venue") == venue
+        ]
+        portfolio_races = build_race_day_races_from_performances(
+            race_date, venue, day_performances, scored_by_race
+        )
+        if not portfolio_races:
+            continue
+
+        day_result = optimizer.optimize_day(race_date, venue, portfolio_races, budget_per_day)
+        optimizer.settle_day(day_result, portfolio_races)
+        day_results.append(day_result)
+        total_stake += day_result.total_stake
+        total_return += day_result.total_return
+        total_bets += day_result.bet_count
+        total_hits += day_result.hit_count
+
+    progress_bar.empty()
+    status_text.empty()
+
+    roi = (total_return - total_stake) / total_stake * 100 if total_stake > 0 else 0.0
+    hit_rate = total_hits / total_bets * 100 if total_bets > 0 else 0.0
+
+    return {
+        "model": model_label,
+        "day_count": len(day_results),
+        "total_stake": round(total_stake, 2),
+        "total_return": round(total_return, 2),
+        "roi": round(roi, 2),
+        "hit_rate": round(hit_rate, 2),
+        "total_bets": total_bets,
+        "total_hits": total_hits,
+        "day_results": day_results,
+        "fast_mode": fast_mode,
+    }
+
+
+def build_live_day_portfolio(
+    races: List[Dict],
+    model_choice: str,
+    budget: float,
+    min_ev: float = 0.0,
+    prediction_cutoff_date: Optional[str] = None,
+    user_weights: Optional[Dict] = None,
+    weights_config: Optional[Dict] = None,
+    incident_llm_map: Optional[Dict[str, float]] = None,
+) -> Optional[DayPortfolioResult]:
+    """智能投注：生成当日最优组合（约 budget）。"""
+    if not DAY_PORTFOLIO_OK or not races:
+        return None
+
+    ml_model = None
+    ml_model_type = None
+    if model_choice != "评分系统":
+        ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
+        if ml_model is None:
+            return None
+
+    optimizer = DayPortfolioOptimizer(min_stake=10.0, min_ev=min_ev, max_candidates=50)
+    scored_by_race: Dict[int, List[Dict]] = {}
+
+    for race in races:
+        race_runners = _score_runners_for_parlay_race(
+            race,
+            model_choice,
+            user_weights or {},
+            weights_config,
+            ml_model,
+            ml_model_type,
+            prediction_cutoff_date,
+            incident_llm_map=incident_llm_map,
+        )
+        if race_runners:
+            scored_by_race[race.get("race_no")] = race_runners
+
+    if not scored_by_race:
+        return None
+
+    race_date = races[0].get("race_date", "")
+    venue = races[0].get("venue", "ST")
+    portfolio_races = build_race_day_races_from_performances(
+        race_date, venue, [], scored_by_race
+    )
+    for pr in portfolio_races:
+        pr.actual_top3 = None
+
+    return optimizer.optimize_day(race_date, venue, portfolio_races, budget)
+
+
+def _display_day_portfolio_backtest_summary(result: Dict) -> None:
+    if not result:
+        return
+    st.markdown(f"#### 📈 赛日组合策略回测（{result.get('model', '')}）")
+    mode_label = "快速（每周重训）" if result.get("fast_mode") else "标准 walk-forward"
+    st.caption(f"模式：{mode_label} · 赛日数 {result.get('day_count', 0)} · 彩池：独赢/位置/连赢/单T/三重彩/孖宝")
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("赛日数", result.get("day_count", 0))
+        st.metric("总注数", result.get("total_bets", 0))
+    with c2:
+        st.metric("命中注数", result.get("total_hits", 0))
+        st.metric("命中率", f"{result.get('hit_rate', 0):.1f}%")
+    with c3:
+        st.metric("总投入", f"${result.get('total_stake', 0):,.0f}")
+        st.metric("总回报", f"${result.get('total_return', 0):,.0f}")
+    with c4:
+        roi = result.get("roi", 0)
+        st.metric("ROI", f"{'🟢' if roi > 0 else '🔴'} {roi:+.1f}%")
+
+    rows = []
+    for day in result.get("day_results", []):
+        for bet in day.bets:
+            c = bet.candidate
+            rows.append({
+                "赛日": day.race_date,
+                "场地": day.venue,
+                "彩池": c.pool,
+                "内容": c.description,
+                "赔率": f"{c.odds:.1f}",
+                "估算": "是" if c.odds_estimated else "否",
+                "EV": f"{c.ev:+.2f}",
+                "金额": f"${bet.stake:.0f}",
+                "命中": "✅" if bet.actual_hit else "❌",
+                "回报": f"${bet.actual_return or 0:.0f}",
+                "盈亏": f"${bet.profit or 0:+.0f}",
+            })
+    if rows:
+        with st.expander("📋 逐注明细", expanded=False):
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _display_live_day_portfolio(result: DayPortfolioResult, budget: float) -> None:
+    if not result or not result.bets:
+        st.warning("未找到符合条件的赛日组合（无正 EV 注项）")
+        return
+    st.markdown("#### 💰 赛日最优组合推荐")
+    st.caption(f"目标预算约 HK${budget:,.0f} · 实际分配 HK${result.total_stake:,.0f} · 含独赢/位置/连赢/单T/三重彩/孖宝")
+    rows = []
+    for bet in result.bets:
+        c = bet.candidate
+        rows.append({
+            "彩池": c.pool,
+            "推荐": c.description,
+            "赔率": f"{c.odds:.1f}{'*' if c.odds_estimated else ''}",
+            "概率": f"{c.probability * 100:.1f}%",
+            "EV": f"{c.ev:+.2f}",
+            "建议金额": f"HK${bet.stake:.0f}",
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("* 星号表示估算赔率")
+
+
 #----------
 def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refresh: bool = False) -> Dict:
     """
@@ -10679,16 +11040,16 @@ def render_backtest_page(show_title: bool = True):
 
     st.markdown("---")
     #-------------
-# ==================== 新增：策略回测选项卡 ====================
+# ==================== 赛日组合策略回测 ====================
     st.markdown(f"## {t()['strategy_backtest']}")
-    st.caption(t()['strategy_backtest_desc'])
+    st.caption("每日约 HK$1,000 在独赢/位置/连赢/单T/三重彩/孖宝间 EV 优化分配 · 与智能投注共用同一优化器")
 
-    strat_col1, strat_col2, strat_col3, strat_col4, strat_col5 = st.columns(5)
+    strat_col1, strat_col2, strat_col3, strat_col4, strat_col5, strat_col6 = st.columns(6)
 
     with strat_col1:
         backtest_strategy_start = st.date_input(
             t()['start_date'],
-            value=datetime.now() - timedelta(days=90),
+            value=datetime.now() - timedelta(days=14),
             key="strategy_backtest_start"
         )
 
@@ -10707,7 +11068,7 @@ def render_backtest_page(show_title: bool = True):
     if not strategy_model_options:
         strategy_model_options = ["LightGBM", "XGBoost"]
 
-    default_model_idx = strategy_model_options.index("XGBoost") if "XGBoost" in strategy_model_options else 0
+    default_model_idx = strategy_model_options.index("LightGBM") if "LightGBM" in strategy_model_options else 0
 
     with strat_col3:
         strategy_model = st.selectbox(
@@ -10715,14 +11076,17 @@ def render_backtest_page(show_title: bool = True):
             options=strategy_model_options,
             index=default_model_idx,
             key="strategy_backtest_model",
-            help="策略回测使用的 ML 模型（与智能投注相同特征与训练窗口）"
+            help="策略回测使用的 ML 模型（默认 LightGBM）"
         )
 
     with strat_col4:
-        strategy_type = st.selectbox(
-            "策略類型",
-            options=[t()['win_strategy'], t()['qin_strategy']],
-            key="strategy_type"
+        portfolio_budget = st.number_input(
+            "赛日预算 (HK$)",
+            min_value=100,
+            max_value=5000,
+            value=1000,
+            step=100,
+            key="strategy_portfolio_budget",
         )
 
     with strat_col5:
@@ -10730,11 +11094,19 @@ def render_backtest_page(show_title: bool = True):
             t()['min_ev_threshold'],
             min_value=0.0,
             max_value=0.5,
-            value=0.10,
+            value=0.0,
             step=0.05,
             format="%.2f",
             key="min_ev_threshold",
             help="只投注期望值大於此門檻的建議"
+        )
+
+    with strat_col6:
+        fast_mode = st.checkbox(
+            "快速模式（每周重训）",
+            value=False,
+            key="strategy_fast_mode",
+            help="标准模式：每个赛日 walk-forward 重训；快速模式：每周重训一次以加快回测"
         )
 
     run_strategy_backtest_btn = st.button(
@@ -10745,98 +11117,37 @@ def render_backtest_page(show_title: bool = True):
     )
 
     if run_strategy_backtest_btn:
-        summary = None
+        result = None
         if not consume_free_trial(st.session_state.user_id):
             st.warning(t()['free_trial_used'])
         else:
             start_date = backtest_strategy_start.strftime("%Y-%m-%d")
             end_date = backtest_strategy_end.strftime("%Y-%m-%d")
             model_type = "lightgbm" if strategy_model == "LightGBM" else "xgboost"
-            strategy_kind = "win" if strategy_type == t()['win_strategy'] else "qin"
             cache_key = (
-                f"strategy_backtest_v2_{strategy_model}_{strategy_kind}_"
-                f"{start_date}_{end_date}_{min_ev_threshold}"
+                f"day_portfolio_backtest_v1_{strategy_model}_"
+                f"{start_date}_{end_date}_{portfolio_budget}_{min_ev_threshold}_{fast_mode}"
             )
 
             if cache_key not in st.session_state:
-                with st.spinner(f"正在運行策略回測（{strategy_model}）..."):
-                    summary = run_strategy_backtest(
+                with st.spinner(f"正在运行赛日组合策略回测（{strategy_model}）..."):
+                    result = run_day_portfolio_backtest(
                         start_date,
                         end_date,
-                        model_type,
-                        strategy_kind,
-                        min_ev_threshold,
-                        stake_per_bet=100,
+                        model_type=model_type,
+                        budget_per_day=portfolio_budget,
+                        min_ev=min_ev_threshold,
+                        fast_mode=fast_mode,
                     )
-                    st.session_state[cache_key] = summary
+                    st.session_state[cache_key] = result
             else:
-                summary = st.session_state[cache_key]
+                result = st.session_state[cache_key]
                 st.info("📋 使用缓存的回测结果")
 
-            if summary and summary.total_bets > 0:
-                st.markdown(f"#### 📈 策略回測結果（{summary.model_name}）")
-
-                diag = summary.diagnostics
-                st.caption(
-                    f"分析 {diag.total_races} 場 · 触发投注 {diag.bet_races} 場 · "
-                    f"EV不足 {diag.skipped_ev_below} · 缺赔率 {diag.skipped_no_odds}"
-                )
-
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("總投注次數", summary.total_bets)
-                    st.metric("命中次數", summary.hit_count)
-                with col2:
-                    st.metric("勝率", f"{summary.win_rate:.1f}%")
-                    st.metric("平均賠率", f"{summary.avg_odds:.1f}倍")
-                with col3:
-                    st.metric("總投入", f"${summary.total_stake:,.0f}")
-                    st.metric("總回報", f"${summary.total_return:,.0f}")
-                with col4:
-                    roi_color = "🟢" if summary.roi > 0 else "🔴"
-                    st.metric("ROI", f"{roi_color} {summary.roi:+.1f}%")
-                    st.metric("夏普比率", f"{summary.sharpe_ratio:.2f}")
-
-                if summary.details:
-                    with st.expander("📋 詳細投注記錄", expanded=False):
-                        detail_df = pd.DataFrame([
-                            {
-                                "日期": d.race_date,
-                                "場地": d.venue,
-                                "場次": d.race_no,
-                                "模型": d.model_name,
-                                "類型": d.recommendation_type,
-                                "內容": d.recommendation_content,
-                                "賠率": d.odds,
-                                "估算賠率": "是" if d.odds_estimated else "否",
-                                "期望值": d.ev_calculated,
-                                "命中": "✅" if d.actual_hit else "❌",
-                                "回報": f"${d.actual_return:.0f}",
-                                "盈虧": f"${d.profit:+.0f}",
-                            }
-                            for d in summary.details
-                        ])
-                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
-
-                        cumulative = np.cumsum([d.profit for d in summary.details])
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(
-                            x=list(range(len(cumulative))),
-                            y=cumulative,
-                            mode="lines",
-                            name="累計盈虧",
-                            fill="tozeroy",
-                            line=dict(color="#4facfe", width=2),
-                        ))
-                        fig.update_layout(
-                            title="策略累計盈虧曲線",
-                            xaxis_title="投注次數",
-                            yaxis_title="累計盈虧 (HK$)",
-                            height=300,
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-            elif summary is not None:
-                st.warning(t()['backtest_result_invalid'])
+            if result and result.get("total_bets", 0) > 0:
+                _display_day_portfolio_backtest_summary(result)
+            elif result:
+                st.warning("回测完成但未产生任何投注（请尝试扩大日期范围或降低 EV 门槛）")
 
     st.caption(t()['disclaimer_backtest'])
 
