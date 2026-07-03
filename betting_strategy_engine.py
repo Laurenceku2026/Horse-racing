@@ -25,6 +25,7 @@ def pick_horse_name(
     record: Dict,
     lang: str = "zh",
     name_lookup: Optional[Dict[str, Dict[str, str]]] = None,
+    name_by_zh: Optional[Dict[str, str]] = None,
 ) -> str:
     """按语言选择马名（英文模式优先英文名）。"""
     prefer_en = lang == "en"
@@ -56,6 +57,9 @@ def pick_horse_name(
             name_en = (info.get("name_en") or "").strip()
         if not name_zh:
             name_zh = (info.get("name_zh") or "").strip()
+
+    if not name_en and name_by_zh and name_zh:
+        name_en = (name_by_zh.get(name_zh) or "").strip()
 
     if prefer_en and name_en:
         return name_en

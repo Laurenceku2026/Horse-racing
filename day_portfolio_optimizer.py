@@ -45,13 +45,17 @@ def _runner_display_name(row: Dict) -> str:
 
     lang = _session_lang()
     lookup = None
+    by_zh = None
     if lang == "en":
         try:
-            from racing_app import get_horses_name_lookup
+            from racing_app import get_horses_name_by_zh_lookup, get_horses_name_lookup
+
             lookup = get_horses_name_lookup()
+            by_zh = get_horses_name_by_zh_lookup()
         except Exception:
             lookup = None
-    return pick_horse_name(row, lang, lookup)
+            by_zh = None
+    return pick_horse_name(row, lang, lookup, by_zh)
 
 
 @dataclass

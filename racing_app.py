@@ -1135,13 +1135,49 @@ def get_horses_name_lookup() -> Dict[str, Dict[str, str]]:
     return lookup
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_horses_name_by_zh_lookup() -> Dict[str, str]:
+    """Chinese horse name -> English name."""
+    by_zh: Dict[str, str] = {}
+    for info in get_horses_name_lookup().values():
+        zh = (info.get("name_zh") or "").strip()
+        en = (info.get("name_en") or "").strip()
+        if zh and en:
+            by_zh[zh] = en
+    return by_zh
+
+
 def resolve_horse_name(record: Dict) -> str:
     """当前语言下的马名。"""
     from betting_strategy_engine import pick_horse_name
 
     lang = get_lang()
-    lookup = get_horses_name_lookup() if lang == "en" else None
-    return pick_horse_name(record, lang, lookup)
+    if lang == "en":
+        return pick_horse_name(
+            record,
+            lang,
+            get_horses_name_lookup(),
+            get_horses_name_by_zh_lookup(),
+        )
+    return pick_horse_name(record, lang)
+
+
+def _enrich_runner_horse_names(runners: List[Dict]) -> List[Dict]:
+    """Fill missing English names from horses_v2 (language-neutral, safe to cache)."""
+    if not runners:
+        return runners
+    by_id = get_horses_name_lookup()
+    by_zh = get_horses_name_by_zh_lookup()
+    for runner in runners:
+        if (runner.get("horse_name_en") or "").strip():
+            continue
+        hid = str(runner.get("horse_id") or "")
+        if hid and hid in by_id:
+            runner["horse_name_en"] = by_id[hid].get("name_en") or ""
+        zh = (runner.get("horse_name_zh") or runner.get("horse_name") or "").strip()
+        if not (runner.get("horse_name_en") or "").strip() and zh and zh in by_zh:
+            runner["horse_name_en"] = by_zh[zh]
+    return runners
 
 
 def localize_runner_names(runners: List[Dict]) -> List[Dict]:
@@ -5423,7 +5459,8 @@ def get_cached_historical_race_summaries() -> List[Dict]:
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_cached_race_runners(race_date: str, venue: str, race_no: int) -> List[Dict]:
     """缓存出赛马匹数据"""
-    return get_race_runners_with_details(race_date, venue, race_no)
+    runners = get_race_runners_with_details(race_date, venue, race_no)
+    return _enrich_runner_horse_names([dict(r) for r in runners]) if runners else []
 #-----------
 def get_upcoming_races_from_api() -> List[Dict]:
     """
@@ -5939,7 +5976,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     })
                 
                 print(f"从 race_runners_clean 获取到 {len(result)} 匹马 (未来赛事)")
-                return localize_runner_names(result)
+                return _enrich_runner_horse_names(result)
             else:
                 print(f"race_runners_clean 中无数据: {race_date} {venue} 第{race_no}场")
                 return []
@@ -5993,7 +6030,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     })
                 
                 print(f"从 past_performances_v2 获取到 {len(result)} 匹马 (历史赛事)")
-                return localize_runner_names(result)
+                return _enrich_runner_horse_names(result)
             else:
                 return []
         
@@ -7218,7 +7255,10 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
 # ==================== 智能投注：连赢/单T 展示辅助 ====================
 def _horse_display_label(runner: Dict) -> str:
     from betting_strategy_engine import format_horse_display
-    return format_horse_display(resolve_horse_name(runner), runner.get("horse_no"))
+    return format_horse_display(
+        resolve_horse_name(_runner_record(runner)),
+        runner.get("horse_no"),
+    )
 
 
 def _backtest_horse_label(name: str, horse_no=None, record: Optional[Dict] = None) -> str:
@@ -7955,7 +7995,7 @@ def render_smart_betting(show_title: bool = True):
     if sorted_runners:
         # 准备策略引擎所需数据
         scores = [runner.get("combined_score", runner.get("overall_score", 50)) for runner in sorted_runners]
-        horse_names = [resolve_horse_name(runner) for runner in sorted_runners]
+        horse_names = [resolve_horse_name(_runner_record(runner)) for runner in sorted_runners]
         horse_nos = [runner.get("horse_no") for runner in sorted_runners]
         
         # 获取赔率
@@ -8000,7 +8040,6 @@ def render_smart_betting(show_title: bool = True):
     race_data = []
     for runner in sorted_runners:
         horse_name = _horse_display_label(runner)
-        
         # 安全处理赔率
         odds_win_raw = runner.get('odds_win')
         odds_place_raw = runner.get('odds_place')
