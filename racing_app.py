@@ -1500,7 +1500,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                     "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
                 }
                 headers_secret = get_supabase_headers(use_secret=True)
-                insert_url = f"{SUPABASE_URL}/rest/v1/user_settings"
+                insert_url = f"{SUPABASE_URL}/rest/v1/user_settings_racing"
                 insert_response = requests.post(insert_url, headers=headers_secret, json=settings_data)
                 
                 if insert_response.status_code in [200, 201]:
@@ -1525,7 +1525,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                         if user.get("email") == email:
                             user_id = user.get("id")
                             # 检查是否已有 racing.user_settings 记录
-                            check_url = f"{SUPABASE_URL}/rest/v1/user_settings?user_id=eq.{user_id}"
+                            check_url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
                             check_response = requests.get(check_url, headers=admin_headers)
                             
                             if check_response.status_code == 200 and not check_response.json():
@@ -1541,7 +1541,7 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                                     "temperature": DEFAULT_WEIGHTS["temperature"],
                                     "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"]
                                 }
-                                insert_url = f"{SUPABASE_URL}/rest/v1/user_settings"
+                                insert_url = f"{SUPABASE_URL}/rest/v1/user_settings_racing"
                                 requests.post(insert_url, headers=admin_headers, json=settings_data)
                             
                             return True, t()["email_exists_login"], user_id
@@ -1668,53 +1668,18 @@ def refresh_auth_token() -> Optional[str]:
         print(f"❌ 刷新令牌异常: {e}")
         return None
 #---------
-def get_user_profile(user_id: str) -> Dict:
-    """获取用户资料"""
-    if not user_id or user_id == "admin":
-        return {
-            "subscription_tier": "free",
-            "free_trials_remaining": FREE_TRIAL_LIMIT,
-            "subscription_expires_at": None,
-            "weights_basic": DEFAULT_WEIGHTS["basic"],
-            "weights_race": DEFAULT_WEIGHTS["race"],
-            "weights_odds": DEFAULT_WEIGHTS["odds"],
-            "temperature": DEFAULT_WEIGHTS["temperature"],
-            "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"],
-            "risk_preference": "standard",
-            "default_bankroll": 1000
-        }
-    
-    try:
-        # 使用用户的 access_token
-        access_token = st.session_state.get("access_token", "")
-        headers = {
-            "apikey": SUPABASE_ANON_KEY,
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json"
-        }
-        url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200 and response.json():
-            data = response.json()[0]
-            return {
-                "subscription_tier": data.get("subscription_tier", "free"),
-                "free_trials_remaining": data.get("free_trials_remaining", FREE_TRIAL_LIMIT),
-                "subscription_expires_at": data.get("subscription_expires_at"),
-                "weights_basic": data.get("weights_basic", DEFAULT_WEIGHTS["basic"]),
-                "weights_race": data.get("weights_race", DEFAULT_WEIGHTS["race"]),
-                "weights_odds": data.get("weights_odds", DEFAULT_WEIGHTS["odds"]),
-                "temperature": data.get("temperature", DEFAULT_WEIGHTS["temperature"]),
-                "odds_mix_ratio": data.get("odds_mix_ratio", DEFAULT_WEIGHTS["odds_mix_ratio"]),
-                "risk_preference": data.get("risk_preference", "standard"),
-                "default_bankroll": data.get("default_bankroll", 1000)
-            }
-    except Exception as e:
-        print(f"获取用户资料失败: {e}")
-    
+def _profile_cache_key(user_id: str) -> str:
+    return f"user_profile_cache_{user_id}"
+
+
+def _cache_user_profile(user_id: str, profile: Dict) -> None:
+    st.session_state[_profile_cache_key(user_id)] = profile
+
+
+def _default_user_profile(free_trials_remaining: int = 0) -> Dict:
     return {
         "subscription_tier": "free",
-        "free_trials_remaining": FREE_TRIAL_LIMIT,
+        "free_trials_remaining": free_trials_remaining,
         "subscription_expires_at": None,
         "weights_basic": DEFAULT_WEIGHTS["basic"],
         "weights_race": DEFAULT_WEIGHTS["race"],
@@ -1722,8 +1687,62 @@ def get_user_profile(user_id: str) -> Dict:
         "temperature": DEFAULT_WEIGHTS["temperature"],
         "odds_mix_ratio": DEFAULT_WEIGHTS["odds_mix_ratio"],
         "risk_preference": "standard",
-        "default_bankroll": 1000
+        "default_bankroll": 1000,
     }
+
+
+def get_user_profile(user_id: str, *, force_refresh: bool = False) -> Dict:
+    """获取用户资料（会话内缓存；读失败时不回退为 30 次）"""
+    if not user_id or user_id == "admin":
+        profile = _default_user_profile(free_trials_remaining=FREE_TRIAL_LIMIT)
+        profile["subscription_tier"] = "pro"
+        return profile
+
+    cache_key = _profile_cache_key(user_id)
+    if not force_refresh and cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    try:
+        access_token = st.session_state.get("access_token", "")
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        }
+        url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
+        response = requests.get(url, headers=headers)
+
+        if response.status_code == 401:
+            if refresh_auth_token():
+                return get_user_profile(user_id, force_refresh=True)
+
+        if response.status_code == 200 and response.json():
+            data = response.json()[0]
+            remaining_raw = data.get("free_trials_remaining")
+            try:
+                remaining = int(remaining_raw) if remaining_raw is not None else 0
+            except (TypeError, ValueError):
+                remaining = 0
+            profile = {
+                "subscription_tier": data.get("subscription_tier", "free"),
+                "free_trials_remaining": remaining,
+                "subscription_expires_at": data.get("subscription_expires_at"),
+                "weights_basic": data.get("weights_basic", DEFAULT_WEIGHTS["basic"]),
+                "weights_race": data.get("weights_race", DEFAULT_WEIGHTS["race"]),
+                "weights_odds": data.get("weights_odds", DEFAULT_WEIGHTS["odds"]),
+                "temperature": data.get("temperature", DEFAULT_WEIGHTS["temperature"]),
+                "odds_mix_ratio": data.get("odds_mix_ratio", DEFAULT_WEIGHTS["odds_mix_ratio"]),
+                "risk_preference": data.get("risk_preference", "standard"),
+                "default_bankroll": data.get("default_bankroll", 1000),
+            }
+            _cache_user_profile(user_id, profile)
+            return profile
+    except Exception as e:
+        print(f"获取用户资料失败: {e}")
+
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+    return _default_user_profile(free_trials_remaining=0)
 #-------------
 def update_user_profile(user_id: str, data: Dict) -> bool:
     """更新用户资料（支持令牌过期后自动刷新重试）"""
@@ -1770,13 +1789,11 @@ def get_remaining_trials(user_id: str) -> int:
         return -1  # -1表示无限
     return profile.get("free_trials_remaining", 0)
 #----------------
-def consume_free_trial(user_id: str) -> bool:
-    print(f"consume_free_trial 收到的 user_id: {user_id}")
+def consume_free_trial(user_id: str, silent: bool = True) -> bool:
+    """扣减 1 次免费试用；silent=True 时不提示，用尽时仅触发升级弹窗。"""
     if user_id == "admin":
-        print("✅ 管理员特权：不消耗免费次数")
         return True
     profile = get_user_profile(user_id)
-    print(f"获取到的 profile: {profile}")
     if profile.get("subscription_tier") == "pro":
         return True
     remaining = profile.get("free_trials_remaining", 0)
@@ -1784,17 +1801,49 @@ def consume_free_trial(user_id: str) -> bool:
         remaining = int(remaining)
     except (ValueError, TypeError):
         remaining = 0
-    print(f"剩余次数: {remaining}")
     if remaining > 0:
         new_remaining = remaining - 1
         success = update_user_profile(user_id, {"free_trials_remaining": new_remaining})
-        print(f"更新结果: {success}")
-        if not success:
+        if success:
+            updated = dict(profile)
+            updated["free_trials_remaining"] = new_remaining
+            _cache_user_profile(user_id, updated)
+        elif not silent:
             st.error(t()["trial_update_failed"])
         return success
-    else:
-        st.session_state.show_paywall = True
+    st.session_state.show_paywall = True
+    return False
+
+
+def require_trial(action_key: str, *, dedupe: bool = True, user_id: Optional[str] = None) -> bool:
+    """检查并扣减试用次数；dedupe=True 时同一会话同一 action_key 只扣一次。"""
+    uid = user_id or st.session_state.get("user_id")
+    if not uid or uid == "admin":
+        return True
+    profile = get_user_profile(uid)
+    if profile.get("subscription_tier") == "pro":
+        return True
+    charged = st.session_state.setdefault("trial_charged_actions", set())
+    if dedupe and action_key in charged:
+        return True
+    if not consume_free_trial(uid, silent=True):
         return False
+    if dedupe:
+        charged.add(action_key)
+    return True
+
+
+def trial_gated_checkbox(label: str, checkbox_key: str, trial_key: str) -> bool:
+    """勾选时静默扣次；次数用尽则取消勾选并弹出升级。"""
+    def _on_toggle() -> None:
+        if st.session_state.get(checkbox_key):
+            if not require_trial(trial_key):
+                st.session_state[checkbox_key] = False
+
+    st.checkbox(label, key=checkbox_key, on_change=_on_toggle)
+    if not st.session_state.get(checkbox_key):
+        return False
+    return require_trial(trial_key)
 
 
 def _render_paywall_content() -> None:
@@ -5552,40 +5601,37 @@ def render_home():
             )
 
         if update_btn:
-            if not consume_free_trial(st.session_state.user_id):
-                pass
-            else:
-                with st.spinner(texts.get('checking_update', '正在检查并更新数据...')):
-                    result = sync_all_data()
-                    new_races = result.get('new_races', 0)
-                    new_records = result.get('new_records', 0)
+            with st.spinner(texts.get('checking_update', '正在检查并更新数据...')):
+                result = sync_all_data()
+                new_races = result.get('new_races', 0)
+                new_records = result.get('new_records', 0)
 
-                    if result.get("success") and (new_races > 0 or new_records > 0):
-                        try:
-                            with st.spinner("正在更新评分缓存..."):
-                                headers = get_supabase_headers(use_secret=True)
-                                delete_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
-                                requests.delete(delete_url, headers=headers)
+                if result.get("success") and (new_races > 0 or new_records > 0):
+                    try:
+                        with st.spinner("正在更新评分缓存..."):
+                            headers = get_supabase_headers(use_secret=True)
+                            delete_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache"
+                            requests.delete(delete_url, headers=headers)
 
-                                df = get_all_horses_base_score(limit=500, recent_games=10)
-                                if not df.empty:
-                                    save_horse_scores_to_cache(df)
+                            df = get_all_horses_base_score(limit=500, recent_games=10)
+                            if not df.empty:
+                                save_horse_scores_to_cache(df)
 
-                                st.success(
-                                    texts.get(
-                                        'update_complete',
-                                        '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录，評分緩存已刷新',
-                                    ).format(new_races=new_races, new_records=new_records)
-                                )
-                                st.cache_data.clear()
-                                st.rerun()
-                        except Exception as e:
-                            st.warning(f"数据同步成功，但缓存刷新失败: {e}")
+                            st.success(
+                                texts.get(
+                                    'update_complete',
+                                    '✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录，評分緩存已刷新',
+                                ).format(new_races=new_races, new_records=new_records)
+                            )
+                            st.cache_data.clear()
                             st.rerun()
-                    elif result.get("success"):
-                        st.info("✅ 数据已是最新，无需更新评分缓存")
-                    else:
-                        st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
+                    except Exception as e:
+                        st.warning(f"数据同步成功，但缓存刷新失败: {e}")
+                        st.rerun()
+                elif result.get("success"):
+                    st.info("✅ 数据已是最新，无需更新评分缓存")
+                else:
+                    st.error(f"{texts.get('update_failed', '更新失败')}: {result.get('error', '未知错误')}")
         st.markdown("---")
 
         st.markdown(f"### 🐎 {texts['horse_rating_title']}")
@@ -7701,54 +7747,70 @@ def _render_realtime_odds_analysis(
     selected_race: Dict,
     sorted_runners: List[Dict],
     selected_date: str,
+    race_ui_key: str,
 ) -> None:
     """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
     texts = t()
     st.markdown(f"#### {_odds_analysis_heading(selected_race, selected_date)}")
-    with st.expander(texts["realtime_odds_expand"], expanded=False):
-        race_date = selected_race.get("race_date") or selected_date
-        venue = selected_race.get("venue", "ST")
-        race_no = selected_race.get("race_no")
-        rows = fetch_race_odds_history(race_date, venue, int(race_no))
-        if not rows:
+    show_odds = trial_gated_checkbox(
+        texts["realtime_odds_expand"],
+        f"show_odds_analysis_{race_ui_key}",
+        f"odds_analysis:{race_ui_key}",
+    )
+    if not show_odds:
+        return
+
+    race_date = selected_race.get("race_date") or selected_date
+    venue = selected_race.get("venue", "ST")
+    race_no = selected_race.get("race_no")
+    rows = fetch_race_odds_history(race_date, venue, int(race_no))
+    if not rows:
+        st.info(texts["realtime_odds_no_data"])
+        return
+
+    win_rows = _odds_rows_for_pool(rows, "WIN")
+    pla_rows = _odds_rows_for_pool(rows, "PLA")
+    unique_mins = len(
+        {
+            r.get("minutes_before_race")
+            for r in _dedupe_odds_snapshots(rows)
+            if r.get("minutes_before_race") is not None
+        }
+    )
+    st.caption(texts["realtime_odds_points"].format(count=unique_mins))
+
+    tab_win, tab_pla = st.tabs([texts["win_odds"], texts["place_odds"]])
+    with tab_win:
+        if not win_rows:
             st.info(texts["realtime_odds_no_data"])
-            return
+        else:
+            st.markdown(f"**{texts['realtime_odds_latest']}**")
+            summary = _build_odds_summary_table(win_rows, sorted_runners)
+            if not summary.empty:
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+            st.plotly_chart(_build_odds_trend_figure(win_rows, sorted_runners, "WIN"), use_container_width=True)
+            if trial_gated_checkbox(
+                texts["realtime_odds_detail"],
+                f"show_odds_win_detail_{race_ui_key}",
+                f"odds_win_detail:{race_ui_key}",
+            ):
+                _render_odds_detail_table(win_rows, sorted_runners, "WIN", "win_odds")
 
-        win_rows = _odds_rows_for_pool(rows, "WIN")
-        pla_rows = _odds_rows_for_pool(rows, "PLA")
-        unique_mins = len(
-            {
-                r.get("minutes_before_race")
-                for r in _dedupe_odds_snapshots(rows)
-                if r.get("minutes_before_race") is not None
-            }
-        )
-        st.caption(texts["realtime_odds_points"].format(count=unique_mins))
-
-        tab_win, tab_pla = st.tabs([texts["win_odds"], texts["place_odds"]])
-        with tab_win:
-            if not win_rows:
-                st.info(texts["realtime_odds_no_data"])
-            else:
-                st.markdown(f"**{texts['realtime_odds_latest']}**")
-                summary = _build_odds_summary_table(win_rows, sorted_runners)
-                if not summary.empty:
-                    st.dataframe(summary, use_container_width=True, hide_index=True)
-                st.plotly_chart(_build_odds_trend_figure(win_rows, sorted_runners, "WIN"), use_container_width=True)
-                with st.expander(texts["realtime_odds_detail"], expanded=False):
-                    _render_odds_detail_table(win_rows, sorted_runners, "WIN", "win_odds")
-
-        with tab_pla:
-            if not pla_rows:
-                st.info(texts["realtime_odds_no_data"])
-            else:
-                st.markdown(f"**{texts['realtime_odds_latest']}**")
-                summary = _build_odds_summary_table(pla_rows, sorted_runners)
-                if not summary.empty:
-                    st.dataframe(summary, use_container_width=True, hide_index=True)
-                st.plotly_chart(_build_odds_trend_figure(pla_rows, sorted_runners, "PLA"), use_container_width=True)
-                with st.expander(texts["realtime_odds_detail"], expanded=False):
-                    _render_odds_detail_table(pla_rows, sorted_runners, "PLA", "pla_odds")
+    with tab_pla:
+        if not pla_rows:
+            st.info(texts["realtime_odds_no_data"])
+        else:
+            st.markdown(f"**{texts['realtime_odds_latest']}**")
+            summary = _build_odds_summary_table(pla_rows, sorted_runners)
+            if not summary.empty:
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+            st.plotly_chart(_build_odds_trend_figure(pla_rows, sorted_runners, "PLA"), use_container_width=True)
+            if trial_gated_checkbox(
+                texts["realtime_odds_detail"],
+                f"show_odds_pla_detail_{race_ui_key}",
+                f"odds_pla_detail:{race_ui_key}",
+            ):
+                _render_odds_detail_table(pla_rows, sorted_runners, "PLA", "pla_odds")
 
 
 def _backtest_horse_label(name: str, horse_no=None, record: Optional[Dict] = None) -> str:
@@ -7964,39 +8026,209 @@ def render_smart_betting(show_title: bool = True):
     lang = st.session_state.get("lang", "zh")
     # ==================== 评分权重设置（用户临时调整） ====================
     with st.expander("⚙️ 评分权重设置" if lang == "zh" else "⚙️ Rating Weights", expanded=st.session_state.get("expand_scoring_weights", False)):
-        if st.session_state.get("paid_scoring_weights", False):
-            # 已付费，显示权重设置内容
-            st.caption("调整评分因子权重，仅对当前会话有效，退出后恢复默认值" if lang == "zh" else "Adjust rating weights, only valid for current session")
-            
-            # 从数据库加载默认配置
-            @st.cache_data(ttl=300, show_spinner=False)
-            def load_scoring_config_user():
-                try:
-                    headers = get_supabase_headers(use_secret=True)
-                    url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
-                    response = requests.get(url, headers=headers)
-                    if response.status_code == 200 and response.json():
-                        return response.json()[0]
-                    return None
-                except Exception:
-                    return None
-            
-            config = load_scoring_config_user()
-            
-            if config is None:
-                default_level1 = {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15}
-                default_basic = {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15}
-                default_race = {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10}
-                default_odds = {"win_odds": 0.60, "odds_trend": 0.40}
-                default_status = {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20}
+        st.caption("调整评分因子权重，仅对当前会话有效，退出后恢复默认值" if lang == "zh" else "Adjust rating weights, only valid for current session")
+        
+        # 从数据库加载默认配置
+        @st.cache_data(ttl=300, show_spinner=False)
+        def load_scoring_config_user():
+            try:
+                headers = get_supabase_headers(use_secret=True)
+                url = f"{SUPABASE_URL}/rest/v1/scoring_config?id=eq.1"
+                response = requests.get(url, headers=headers)
+                if response.status_code == 200 and response.json():
+                    return response.json()[0]
+                return None
+            except Exception:
+                return None
+        
+        config = load_scoring_config_user()
+        
+        if config is None:
+            default_level1 = {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15}
+            default_basic = {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15}
+            default_race = {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10}
+            default_odds = {"win_odds": 0.60, "odds_trend": 0.40}
+            default_status = {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20}
+        else:
+            default_level1 = config.get("level1_weights", {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15})
+            default_basic = config.get("basic_weights", {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15})
+            default_race = config.get("race_weights", {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10})
+            default_odds = config.get("odds_weights", {"win_odds": 0.60, "odds_trend": 0.40})
+            default_status = config.get("status_weights", {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20})
+        
+        if "user_scoring_config" not in st.session_state:
+            st.session_state.user_scoring_config = {
+                "level1_weights": default_level1.copy(),
+                "basic_weights": default_basic.copy(),
+                "race_weights": default_race.copy(),
+                "odds_weights": default_odds.copy(),
+                "status_weights": default_status.copy()
+            }
+        
+        if "scoring_weights_applied" not in st.session_state:
+            st.session_state.scoring_weights_applied = False
+        
+        user_level1 = st.session_state.user_scoring_config["level1_weights"].copy()
+        user_basic = st.session_state.user_scoring_config["basic_weights"].copy()
+        user_race = st.session_state.user_scoring_config["race_weights"].copy()
+        user_odds = st.session_state.user_scoring_config["odds_weights"].copy()
+        user_status = st.session_state.user_scoring_config["status_weights"].copy()
+        
+        if lang == "zh":
+            st.markdown("**一级因子权重**")
+        else:
+            st.markdown("**Level 1 Weights**")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            basic_val = st.number_input(
+                "基础往绩" if lang == "zh" else "Basic",
+                min_value=0, max_value=100, value=int(user_level1.get("basic", 0.30) * 100),
+                step=1, key="user_basic_weight"
+            )
+            user_level1["basic"] = basic_val / 100
+        
+        with col2:
+            race_val = st.number_input(
+                "场次因素" if lang == "zh" else "Race",
+                min_value=0, max_value=100, value=int(user_level1.get("race", 0.35) * 100),
+                step=1, key="user_race_weight"
+            )
+            user_level1["race"] = race_val / 100
+        
+        with col3:
+            odds_val = st.number_input(
+                "赔率因素" if lang == "zh" else "Odds",
+                min_value=0, max_value=100, value=int(user_level1.get("odds", 0.20) * 100),
+                step=1, key="user_odds_weight"
+            )
+            user_level1["odds"] = odds_val / 100
+        
+        with col4:
+            status_val = st.number_input(
+                "状态因素" if lang == "zh" else "Status",
+                min_value=0, max_value=100, value=int(user_level1.get("status", 0.15) * 100),
+                step=1, key="user_level1_status"
+            )
+            user_level1["status"] = status_val / 100
+        
+        total_level1 = sum(user_level1.values()) * 100
+        if abs(total_level1 - 100) < 0.1:
+            st.success(f"✅ 总和: {total_level1:.0f}%" if lang == "zh" else f"✅ Total: {total_level1:.0f}%")
+        else:
+            st.error(f"❌ 总和: {total_level1:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1:.0f}%, must be 100%")
+        
+        # 二级因子（省略详细代码，保持与之前相同）
+        with st.expander("📈 基础往绩二级因子" if lang == "zh" else "📈 Basic Performance Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                win3 = st.number_input("近3场胜率" if lang == "zh" else "Win Rate (L3)", min_value=0, max_value=100, value=int(user_basic.get("win_rate_3", 0.20)*100), step=1, key="user_win3")
+                win10 = st.number_input("近10场胜率" if lang == "zh" else "Win Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("win_rate_10", 0.20)*100), step=1, key="user_win10")
+                place10 = st.number_input("近10场入Q率" if lang == "zh" else "Place Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("place_rate_10", 0.15)*100), step=1, key="user_place10")
+            with col2:
+                show10 = st.number_input("近10场入T率" if lang == "zh" else "Show Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("show_rate_10", 0.15)*100), step=1, key="user_show10")
+                distance_rating = st.number_input("同程表现评分" if lang == "zh" else "Distance Rating", min_value=0, max_value=100, value=int(user_basic.get("distance_rating", 0.15)*100), step=1, key="user_distance")
+                trend = st.number_input("名次趋势" if lang == "zh" else "Ranking Trend", min_value=0, max_value=100, value=int(user_basic.get("trend", 0.15)*100), step=1, key="user_trend")
+            user_basic["win_rate_3"] = win3/100
+            user_basic["win_rate_10"] = win10/100
+            user_basic["place_rate_10"] = place10/100
+            user_basic["show_rate_10"] = show10/100
+            user_basic["distance_rating"] = distance_rating/100
+            user_basic["trend"] = trend/100
+            total_basic = sum(user_basic.values())*100
+            if abs(total_basic - 100) < 0.1:
+                st.success(f"✅ 总和: {total_basic:.0f}%" if lang == "zh" else f"✅ Total: {total_basic:.0f}%")
             else:
-                default_level1 = config.get("level1_weights", {"basic": 0.30, "race": 0.35, "odds": 0.20, "status": 0.15})
-                default_basic = config.get("basic_weights", {"win_rate_3": 0.20, "win_rate_10": 0.20, "place_rate_10": 0.15, "show_rate_10": 0.15, "distance_rating": 0.15, "trend": 0.15})
-                default_race = config.get("race_weights", {"same_course": 0.25, "same_distance": 0.25, "draw": 0.15, "weight": 0.10, "jockey": 0.15, "trainer": 0.10})
-                default_odds = config.get("odds_weights", {"win_odds": 0.60, "odds_trend": 0.40})
-                default_status = config.get("status_weights", {"age": 0.30, "weight_change": 0.25, "incident": 0.25, "burst": 0.20})
-            
-            if "user_scoring_config" not in st.session_state:
+                st.error(f"❌ 总和: {total_basic:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_basic:.0f}%, must be 100%")
+        
+        with st.expander("🏟️ 场次因素二级因子" if lang == "zh" else "🏟️ Race Factors Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                same_course = st.number_input("同场地胜率" if lang == "zh" else "Same Course", min_value=0, max_value=100, value=int(user_race.get("same_course", 0.25)*100), step=1, key="user_same_course")
+                same_distance = st.number_input("同路程胜率" if lang == "zh" else "Same Distance", min_value=0, max_value=100, value=int(user_race.get("same_distance", 0.25)*100), step=1, key="user_same_distance")
+                draw = st.number_input("档位优势" if lang == "zh" else "Draw", min_value=0, max_value=100, value=int(user_race.get("draw", 0.15)*100), step=1, key="user_draw")
+            with col2:
+                weight = st.number_input("负磅变化" if lang == "zh" else "Weight", min_value=0, max_value=100, value=int(user_race.get("weight", 0.10)*100), step=1, key="user_weight")
+                jockey = st.number_input("骑师配合" if lang == "zh" else "Jockey", min_value=0, max_value=100, value=int(user_race.get("jockey", 0.15)*100), step=1, key="user_jockey")
+                trainer = st.number_input("练马师状态" if lang == "zh" else "Trainer", min_value=0, max_value=100, value=int(user_race.get("trainer", 0.10)*100), step=1, key="user_trainer")
+            user_race["same_course"] = same_course/100
+            user_race["same_distance"] = same_distance/100
+            user_race["draw"] = draw/100
+            user_race["weight"] = weight/100
+            user_race["jockey"] = jockey/100
+            user_race["trainer"] = trainer/100
+            total_race = sum(user_race.values())*100
+            if abs(total_race - 100) < 0.1:
+                st.success(f"✅ 总和: {total_race:.0f}%" if lang == "zh" else f"✅ Total: {total_race:.0f}%")
+            else:
+                st.error(f"❌ 总和: {total_race:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_race:.0f}%, must be 100%")
+        
+        with st.expander("💰 赔率因素二级因子" if lang == "zh" else "💰 Odds Factors Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                win_odds = st.number_input("独赢赔率" if lang == "zh" else "Win Odds", min_value=0, max_value=100, value=int(user_odds.get("win_odds", 0.60)*100), step=1, key="user_win_odds")
+            with col2:
+                odds_trend = st.number_input("赔率变动趋势" if lang == "zh" else "Odds Trend", min_value=0, max_value=100, value=int(user_odds.get("odds_trend", 0.40)*100), step=1, key="user_odds_trend")
+            user_odds["win_odds"] = win_odds/100
+            user_odds["odds_trend"] = odds_trend/100
+            total_odds = sum(user_odds.values())*100
+            if abs(total_odds - 100) < 0.1:
+                st.success(f"✅ 总和: {total_odds:.0f}%" if lang == "zh" else f"✅ Total: {total_odds:.0f}%")
+            else:
+                st.error(f"❌ 总和: {total_odds:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_odds:.0f}%, must be 100%")
+        
+        with st.expander("🩺 状态因素二级因子" if lang == "zh" else "🩺 Status Factors Sub-factors", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                age = st.number_input("马龄因子" if lang == "zh" else "Age", min_value=0, max_value=100, value=int(user_status.get("age", 0.30)*100), step=1, key="user_age")
+                weight_change = st.number_input("体重变化" if lang == "zh" else "Weight Change", min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25)*100), step=1, key="user_status_weight_change")
+            with col2:
+                incident = st.number_input("事件报告" if lang == "zh" else "Incident", min_value=0, max_value=100, value=int(user_status.get("incident", 0.25)*100), step=1, key="user_incident")
+                burst = st.number_input("冲刺能力" if lang == "zh" else "Burst", min_value=0, max_value=100, value=int(user_status.get("burst", 0.20)*100), step=1, key="user_burst")
+            user_status["age"] = age/100
+            user_status["weight_change"] = weight_change/100
+            user_status["incident"] = incident/100
+            user_status["burst"] = burst/100
+            total_status = sum(user_status.values())*100
+            if abs(total_status - 100) < 0.1:
+                st.success(f"✅ 总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
+            else:
+                st.error(f"❌ 总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
+        
+        col1, col2, col3 = st.columns([1, 1, 2])
+        
+        with col1:
+            if st.button("✅ 应用权重并刷新" if lang == "zh" else "✅ Apply & Refresh", type="primary", use_container_width=True):
+                if abs(sum(user_level1.values()) - 1) > 0.01:
+                    st.error("一级因子总和必须为100%，请调整后重试" if lang == "zh" else "Level 1 weights must sum to 100%")
+                elif abs(sum(user_basic.values()) - 1) > 0.01:
+                    st.error("基础往绩二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Basic weights must sum to 100%")
+                elif abs(sum(user_race.values()) - 1) > 0.01:
+                    st.error("场次因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Race weights must sum to 100%")
+                elif abs(sum(user_odds.values()) - 1) > 0.01:
+                    st.error("赔率因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Odds weights must sum to 100%")
+                elif abs(sum(user_status.values()) - 1) > 0.01:
+                    st.error("状态因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Status weights must sum to 100%")
+                elif not require_trial("weights_apply", dedupe=False):
+                    pass
+                else:
+                    st.session_state.user_scoring_config = {
+                        "level1_weights": user_level1,
+                        "basic_weights": user_basic,
+                        "race_weights": user_race,
+                        "odds_weights": user_odds,
+                        "status_weights": user_status
+                    }
+                    st.session_state.scoring_weights_applied = True
+                    st.success("权重已应用，正在刷新数据..." if lang == "zh" else "Weights applied, refreshing...")
+                    _clear_smart_betting_runners_cache()
+                    se_get_horses_performances_batch.clear()
+                    get_cached_race_runners.clear()
+                    st.rerun()
+        
+        with col2:
+            if st.button("🔄 恢复默认值" if lang == "zh" else "🔄 Reset to Default", use_container_width=True):
                 st.session_state.user_scoring_config = {
                     "level1_weights": default_level1.copy(),
                     "basic_weights": default_basic.copy(),
@@ -8004,196 +8236,16 @@ def render_smart_betting(show_title: bool = True):
                     "odds_weights": default_odds.copy(),
                     "status_weights": default_status.copy()
                 }
-            
-            if "scoring_weights_applied" not in st.session_state:
                 st.session_state.scoring_weights_applied = False
-            
-            user_level1 = st.session_state.user_scoring_config["level1_weights"].copy()
-            user_basic = st.session_state.user_scoring_config["basic_weights"].copy()
-            user_race = st.session_state.user_scoring_config["race_weights"].copy()
-            user_odds = st.session_state.user_scoring_config["odds_weights"].copy()
-            user_status = st.session_state.user_scoring_config["status_weights"].copy()
-            
-            if lang == "zh":
-                st.markdown("**一级因子权重**")
-            else:
-                st.markdown("**Level 1 Weights**")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                basic_val = st.number_input(
-                    "基础往绩" if lang == "zh" else "Basic",
-                    min_value=0, max_value=100, value=int(user_level1.get("basic", 0.30) * 100),
-                    step=1, key="user_basic_weight"
-                )
-                user_level1["basic"] = basic_val / 100
-            
-            with col2:
-                race_val = st.number_input(
-                    "场次因素" if lang == "zh" else "Race",
-                    min_value=0, max_value=100, value=int(user_level1.get("race", 0.35) * 100),
-                    step=1, key="user_race_weight"
-                )
-                user_level1["race"] = race_val / 100
-            
-            with col3:
-                odds_val = st.number_input(
-                    "赔率因素" if lang == "zh" else "Odds",
-                    min_value=0, max_value=100, value=int(user_level1.get("odds", 0.20) * 100),
-                    step=1, key="user_odds_weight"
-                )
-                user_level1["odds"] = odds_val / 100
-            
-            with col4:
-                status_val = st.number_input(
-                    "状态因素" if lang == "zh" else "Status",
-                    min_value=0, max_value=100, value=int(user_level1.get("status", 0.15) * 100),
-                    step=1, key="user_level1_status"
-                )
-                user_level1["status"] = status_val / 100
-            
-            total_level1 = sum(user_level1.values()) * 100
-            if abs(total_level1 - 100) < 0.1:
-                st.success(f"✅ 总和: {total_level1:.0f}%" if lang == "zh" else f"✅ Total: {total_level1:.0f}%")
-            else:
-                st.error(f"❌ 总和: {total_level1:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_level1:.0f}%, must be 100%")
-            
-            # 二级因子（省略详细代码，保持与之前相同）
-            with st.expander("📈 基础往绩二级因子" if lang == "zh" else "📈 Basic Performance Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    win3 = st.number_input("近3场胜率" if lang == "zh" else "Win Rate (L3)", min_value=0, max_value=100, value=int(user_basic.get("win_rate_3", 0.20)*100), step=1, key="user_win3")
-                    win10 = st.number_input("近10场胜率" if lang == "zh" else "Win Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("win_rate_10", 0.20)*100), step=1, key="user_win10")
-                    place10 = st.number_input("近10场入Q率" if lang == "zh" else "Place Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("place_rate_10", 0.15)*100), step=1, key="user_place10")
-                with col2:
-                    show10 = st.number_input("近10场入T率" if lang == "zh" else "Show Rate (L10)", min_value=0, max_value=100, value=int(user_basic.get("show_rate_10", 0.15)*100), step=1, key="user_show10")
-                    distance_rating = st.number_input("同程表现评分" if lang == "zh" else "Distance Rating", min_value=0, max_value=100, value=int(user_basic.get("distance_rating", 0.15)*100), step=1, key="user_distance")
-                    trend = st.number_input("名次趋势" if lang == "zh" else "Ranking Trend", min_value=0, max_value=100, value=int(user_basic.get("trend", 0.15)*100), step=1, key="user_trend")
-                user_basic["win_rate_3"] = win3/100
-                user_basic["win_rate_10"] = win10/100
-                user_basic["place_rate_10"] = place10/100
-                user_basic["show_rate_10"] = show10/100
-                user_basic["distance_rating"] = distance_rating/100
-                user_basic["trend"] = trend/100
-                total_basic = sum(user_basic.values())*100
-                if abs(total_basic - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_basic:.0f}%" if lang == "zh" else f"✅ Total: {total_basic:.0f}%")
-                else:
-                    st.error(f"❌ 总和: {total_basic:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_basic:.0f}%, must be 100%")
-            
-            with st.expander("🏟️ 场次因素二级因子" if lang == "zh" else "🏟️ Race Factors Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    same_course = st.number_input("同场地胜率" if lang == "zh" else "Same Course", min_value=0, max_value=100, value=int(user_race.get("same_course", 0.25)*100), step=1, key="user_same_course")
-                    same_distance = st.number_input("同路程胜率" if lang == "zh" else "Same Distance", min_value=0, max_value=100, value=int(user_race.get("same_distance", 0.25)*100), step=1, key="user_same_distance")
-                    draw = st.number_input("档位优势" if lang == "zh" else "Draw", min_value=0, max_value=100, value=int(user_race.get("draw", 0.15)*100), step=1, key="user_draw")
-                with col2:
-                    weight = st.number_input("负磅变化" if lang == "zh" else "Weight", min_value=0, max_value=100, value=int(user_race.get("weight", 0.10)*100), step=1, key="user_weight")
-                    jockey = st.number_input("骑师配合" if lang == "zh" else "Jockey", min_value=0, max_value=100, value=int(user_race.get("jockey", 0.15)*100), step=1, key="user_jockey")
-                    trainer = st.number_input("练马师状态" if lang == "zh" else "Trainer", min_value=0, max_value=100, value=int(user_race.get("trainer", 0.10)*100), step=1, key="user_trainer")
-                user_race["same_course"] = same_course/100
-                user_race["same_distance"] = same_distance/100
-                user_race["draw"] = draw/100
-                user_race["weight"] = weight/100
-                user_race["jockey"] = jockey/100
-                user_race["trainer"] = trainer/100
-                total_race = sum(user_race.values())*100
-                if abs(total_race - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_race:.0f}%" if lang == "zh" else f"✅ Total: {total_race:.0f}%")
-                else:
-                    st.error(f"❌ 总和: {total_race:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_race:.0f}%, must be 100%")
-            
-            with st.expander("💰 赔率因素二级因子" if lang == "zh" else "💰 Odds Factors Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    win_odds = st.number_input("独赢赔率" if lang == "zh" else "Win Odds", min_value=0, max_value=100, value=int(user_odds.get("win_odds", 0.60)*100), step=1, key="user_win_odds")
-                with col2:
-                    odds_trend = st.number_input("赔率变动趋势" if lang == "zh" else "Odds Trend", min_value=0, max_value=100, value=int(user_odds.get("odds_trend", 0.40)*100), step=1, key="user_odds_trend")
-                user_odds["win_odds"] = win_odds/100
-                user_odds["odds_trend"] = odds_trend/100
-                total_odds = sum(user_odds.values())*100
-                if abs(total_odds - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_odds:.0f}%" if lang == "zh" else f"✅ Total: {total_odds:.0f}%")
-                else:
-                    st.error(f"❌ 总和: {total_odds:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_odds:.0f}%, must be 100%")
-            
-            with st.expander("🩺 状态因素二级因子" if lang == "zh" else "🩺 Status Factors Sub-factors", expanded=False):
-                col1, col2 = st.columns(2)
-                with col1:
-                    age = st.number_input("马龄因子" if lang == "zh" else "Age", min_value=0, max_value=100, value=int(user_status.get("age", 0.30)*100), step=1, key="user_age")
-                    weight_change = st.number_input("体重变化" if lang == "zh" else "Weight Change", min_value=0, max_value=100, value=int(user_status.get("weight_change", 0.25)*100), step=1, key="user_status_weight_change")
-                with col2:
-                    incident = st.number_input("事件报告" if lang == "zh" else "Incident", min_value=0, max_value=100, value=int(user_status.get("incident", 0.25)*100), step=1, key="user_incident")
-                    burst = st.number_input("冲刺能力" if lang == "zh" else "Burst", min_value=0, max_value=100, value=int(user_status.get("burst", 0.20)*100), step=1, key="user_burst")
-                user_status["age"] = age/100
-                user_status["weight_change"] = weight_change/100
-                user_status["incident"] = incident/100
-                user_status["burst"] = burst/100
-                total_status = sum(user_status.values())*100
-                if abs(total_status - 100) < 0.1:
-                    st.success(f"✅ 总和: {total_status:.0f}%" if lang == "zh" else f"✅ Total: {total_status:.0f}%")
-                else:
-                    st.error(f"❌ 总和: {total_status:.0f}%，必须为100%" if lang == "zh" else f"❌ Total: {total_status:.0f}%, must be 100%")
-            
-            col1, col2, col3 = st.columns([1, 1, 2])
-            
-            with col1:
-                if st.button("✅ 应用权重并刷新" if lang == "zh" else "✅ Apply & Refresh", type="primary", use_container_width=True):
-                    if abs(sum(user_level1.values()) - 1) > 0.01:
-                        st.error("一级因子总和必须为100%，请调整后重试" if lang == "zh" else "Level 1 weights must sum to 100%")
-                    elif abs(sum(user_basic.values()) - 1) > 0.01:
-                        st.error("基础往绩二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Basic weights must sum to 100%")
-                    elif abs(sum(user_race.values()) - 1) > 0.01:
-                        st.error("场次因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Race weights must sum to 100%")
-                    elif abs(sum(user_odds.values()) - 1) > 0.01:
-                        st.error("赔率因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Odds weights must sum to 100%")
-                    elif abs(sum(user_status.values()) - 1) > 0.01:
-                        st.error("状态因素二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Status weights must sum to 100%")
-                    else:
-                        st.session_state.user_scoring_config = {
-                            "level1_weights": user_level1,
-                            "basic_weights": user_basic,
-                            "race_weights": user_race,
-                            "odds_weights": user_odds,
-                            "status_weights": user_status
-                        }
-                        st.session_state.scoring_weights_applied = True
-                        st.success("权重已应用，正在刷新数据..." if lang == "zh" else "Weights applied, refreshing...")
-                        _clear_smart_betting_runners_cache()
-                        se_get_horses_performances_batch.clear()
-                        get_cached_race_runners.clear()
-                        st.rerun()
-            
-            with col2:
-                if st.button("🔄 恢复默认值" if lang == "zh" else "🔄 Reset to Default", use_container_width=True):
-                    st.session_state.user_scoring_config = {
-                        "level1_weights": default_level1.copy(),
-                        "basic_weights": default_basic.copy(),
-                        "race_weights": default_race.copy(),
-                        "odds_weights": default_odds.copy(),
-                        "status_weights": default_status.copy()
-                    }
-                    st.session_state.scoring_weights_applied = False
-                    st.success("已恢复到默认权重" if lang == "zh" else "Reset to default weights")
-                    st.rerun()
-            
-            if st.session_state.scoring_weights_applied:
-                st.info("✅ 当前使用自定义权重" if lang == "zh" else "✅ Currently using custom weights")
-            else:
-                st.info("📌 当前使用管理员默认权重" if lang == "zh" else "📌 Currently using admin default weights")
-            
-            st.caption("💡 修改后需点击「应用权重并刷新」才会生效" if lang == "zh" else "💡 Click 'Apply & Refresh' after modification to take effect")
+                st.success("已恢复到默认权重" if lang == "zh" else "Reset to default weights")
+                st.rerun()
+        
+        if st.session_state.scoring_weights_applied:
+            st.info("✅ 当前使用自定义权重" if lang == "zh" else "✅ Currently using custom weights")
         else:
-            # 未付费，显示按钮
-            st.info(t()["scoring_weights_paywall_hint"])
-            if st.button(t()["scoring_weights_paywall_btn"], key="btn_scoring_weights", use_container_width=True):
-                if not consume_free_trial(st.session_state.user_id):
-                    pass
-                else:
-                    st.session_state.paid_scoring_weights = True
-                    st.session_state.expand_scoring_weights = True
-                    st.rerun()
+            st.info("📌 当前使用管理员默认权重" if lang == "zh" else "📌 Currently using admin default weights")
+        
+            st.caption("💡 修改后需点击「应用权重并刷新」才会生效" if lang == "zh" else "💡 Click 'Apply & Refresh' after modification to take effect")
     #------------------
     st.markdown("---")
     
@@ -8220,18 +8272,15 @@ def render_smart_betting(show_title: bool = True):
         refresh_schedule_btn = st.button(t()["refresh_schedule"], use_container_width=True)
     
     if refresh_schedule_btn:
-        if not consume_free_trial(st.session_state.user_id):
-            pass
-        else:
-            with st.spinner(t()["syncing_schedule"]):
-                api_races = get_upcoming_races_from_api()
-                if api_races:
-                    sync_races_to_db(api_races)
-                    st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
-                    st.cache_data.clear()
-                    st.rerun()
-                else:
-                    st.warning(t()["no_races"])
+        with st.spinner(t()["syncing_schedule"]):
+            api_races = get_upcoming_races_from_api()
+            if api_races:
+                sync_races_to_db(api_races)
+                st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.warning(t()["no_races"])
     
     # ==================== 根据模式获取赛事列表 ====================
     if date_mode == DATE_MODE_FUTURE:
@@ -8345,36 +8394,31 @@ def render_smart_betting(show_title: bool = True):
     
     # ✅ 修改：单场同步也使用 API
     if refresh_race_btn:
-        if not consume_free_trial(st.session_state.user_id):
-            pass
-        else:
-            with st.spinner(t()["updating_odds"]):
-                # 调用 API 同步单场赛事
-                api_url = st.secrets.get("HKJC_API_URL", "")
-                if api_url:
-                    try:
-                        sync_url = f"{api_url}/sync/race"
-                        response = requests.post(sync_url, json={
-                            "date": selected_race.get('race_date'),
-                            "venue": selected_race.get('venue'),
-                            "raceNo": selected_race.get('race_no')
-                        }, timeout=60)
-                        if response.status_code == 200:
-                            st.success(t()["data_updated"])
-                            _clear_smart_betting_runners_cache()
-                            get_cached_race_runners.clear()
-                            st.rerun()
-                        else:
-                            st.warning(t()["update_failed"])
-                    except Exception as e:
-                        st.error(f"{t()['sync_failed']}: {e}")
-                else:
-                    # 回退到原有方法
-                    if sync_single_race(selected_race):
+        with st.spinner(t()["updating_odds"]):
+            api_url = st.secrets.get("HKJC_API_URL", "")
+            if api_url:
+                try:
+                    sync_url = f"{api_url}/sync/race"
+                    response = requests.post(sync_url, json={
+                        "date": selected_race.get('race_date'),
+                        "venue": selected_race.get('venue'),
+                        "raceNo": selected_race.get('race_no')
+                    }, timeout=60)
+                    if response.status_code == 200:
                         st.success(t()["data_updated"])
+                        _clear_smart_betting_runners_cache()
+                        get_cached_race_runners.clear()
                         st.rerun()
                     else:
                         st.warning(t()["update_failed"])
+                except Exception as e:
+                    st.error(f"{t()['sync_failed']}: {e}")
+            else:
+                if sync_single_race(selected_race):
+                    st.success(t()["data_updated"])
+                    st.rerun()
+                else:
+                    st.warning(t()["update_failed"])
     
     runners = get_cached_race_runners(
         selected_race.get('race_date'),
@@ -8405,6 +8449,8 @@ def render_smart_betting(show_title: bool = True):
         runners = localize_runner_names(list(st.session_state["sb_scored_runners"]))
         perf_log["计算胜率"] = 0
     else:
+        if not require_trial(f"score:{runners_cache_key}"):
+            return
         # ==================== 计算胜率 ====================
         analysis_progress = st.progress(0, text=t()["sb_loading_runners"])
         analysis_progress.progress(0.15, text=t()["sb_scoring_runners"])
@@ -8587,15 +8633,14 @@ def render_smart_betting(show_title: bool = True):
     t5 = time.time()
     perf_log["显示表格"] = t5 - t4
 
-    _render_realtime_odds_analysis(selected_race, sorted_runners, selected_date)
+    _render_realtime_odds_analysis(selected_race, sorted_runners, selected_date, current_race_key)
         
     #------------
     # ==================== AI 投注策略建议（折叠版） ====================
     st.markdown(f"### {_model_section_title(t()['ai_strategy_suggestions'], model_choice)}")
     st.caption(t()["ev_description"])
     
-    # ==================== 折叠1：独赢/位置 ====================
-    with st.expander(t()["win_place_recommend"], expanded=False):
+    if trial_gated_checkbox(t()["win_place_recommend"], f"show_win_rec_{current_race_key}", f"rec_win:{current_race_key}"):
         if recommendations.get('win') and recommendations['win']:
             rec = recommendations['win'][0]
             st.info(f"**{rec.description}**")
@@ -8611,10 +8656,10 @@ def render_smart_betting(show_title: bool = True):
         else:
             st.write(t()["no_suggestions"])
     
-    with st.expander(t()["qin_recommend_expander"], expanded=False):
+    if trial_gated_checkbox(t()["qin_recommend_expander"], f"show_qin_rec_{current_race_key}", f"rec_qin:{current_race_key}"):
         _render_qin_suggestions(sorted_runners, key_prefix="qin_fold")
 
-    with st.expander(t()["tri_recommend_expander"], expanded=False):
+    if trial_gated_checkbox(t()["tri_recommend_expander"], f"show_tri_rec_{current_race_key}", f"rec_tri:{current_race_key}"):
         _render_tri_suggestions(sorted_runners)
 
     st.markdown("---")
@@ -8654,47 +8699,50 @@ def render_smart_betting(show_title: bool = True):
             )
 
             if st.button(t()["generate_parlay"], key="generate_parlay_schedule", use_container_width=True):
-                progress = _UiProgressBar(t()["calculating_parlay_schedule"])
-                weights_config = None
-                if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
-                    weights_config = st.session_state.get("user_scoring_config", {})
-                sorted_indices = sorted(
-                    selected_parlay_indices,
-                    key=lambda i: current_races_for_parlay[i].get("race_no", 0),
-                )
-                parlay_races_data = []
-                total = max(len(sorted_indices), 1)
-                for step_i, idx in enumerate(sorted_indices):
-                    progress.step(
-                        (step_i + 0.5) / total,
-                        t()["progress_race_analysis"].format(current=step_i + 1, total=total),
-                    )
-                    race = current_races_for_parlay[idx]
-                    runners_data = _score_runners_for_parlay_race(
-                        race,
-                        model_choice,
-                        user_weights,
-                        weights_config,
-                        None,
-                        None,
-                        prediction_cutoff_date,
-                    )
-                    if runners_data:
-                        parlay_races_data.append(_pack_parlay_race_entry(race, runners_data))
-                progress.step(0.9, t()["progress_building_parlay"])
-                if len(parlay_races_data) < 2:
-                    st.session_state.pop("parlay_schedule_results", None)
-                    st.session_state.pop("parlay_schedule_cache_key", None)
-                    progress.finish()
-                    st.warning(t()["parlay_insufficient_data"])
+                if not require_trial(f"parlay_schedule:{parlay_cache_key}", dedupe=False):
+                    pass
                 else:
-                    max_legs = min(len(parlay_races_data), 6)
-                    results, recommender = _compute_parlay_schedule_results(
-                        parlay_races_data, max_legs
+                    progress = _UiProgressBar(t()["calculating_parlay_schedule"])
+                    weights_config = None
+                    if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
+                        weights_config = st.session_state.get("user_scoring_config", {})
+                    sorted_indices = sorted(
+                        selected_parlay_indices,
+                        key=lambda i: current_races_for_parlay[i].get("race_no", 0),
                     )
-                    st.session_state["parlay_schedule_results"] = results
-                    st.session_state["parlay_schedule_cache_key"] = parlay_cache_key
-                    progress.finish()
+                    parlay_races_data = []
+                    total = max(len(sorted_indices), 1)
+                    for step_i, idx in enumerate(sorted_indices):
+                        progress.step(
+                            (step_i + 0.5) / total,
+                            t()["progress_race_analysis"].format(current=step_i + 1, total=total),
+                        )
+                        race = current_races_for_parlay[idx]
+                        runners_data = _score_runners_for_parlay_race(
+                            race,
+                            model_choice,
+                            user_weights,
+                            weights_config,
+                            None,
+                            None,
+                            prediction_cutoff_date,
+                        )
+                        if runners_data:
+                            parlay_races_data.append(_pack_parlay_race_entry(race, runners_data))
+                    progress.step(0.9, t()["progress_building_parlay"])
+                    if len(parlay_races_data) < 2:
+                        st.session_state.pop("parlay_schedule_results", None)
+                        st.session_state.pop("parlay_schedule_cache_key", None)
+                        progress.finish()
+                        st.warning(t()["parlay_insufficient_data"])
+                    else:
+                        max_legs = min(len(parlay_races_data), 6)
+                        results, recommender = _compute_parlay_schedule_results(
+                            parlay_races_data, max_legs
+                        )
+                        st.session_state["parlay_schedule_results"] = results
+                        st.session_state["parlay_schedule_cache_key"] = parlay_cache_key
+                        progress.finish()
 
             cached_key = st.session_state.get("parlay_schedule_cache_key")
             cached_results = st.session_state.get("parlay_schedule_results")
@@ -8711,7 +8759,7 @@ def render_smart_betting(show_title: bool = True):
     st.caption(t()["kelly_description"])
     #----------------
     if st.button(t()["generate_full_day"], key="generate_full_day", use_container_width=True, type="primary"):
-        if not consume_free_trial(st.session_state.user_id):
+        if not require_trial(f"full_day:{selected_date}:{model_choice}", dedupe=False):
             pass
         else:
             progress = _UiProgressBar(t()["progress_optimizing_full_day"])
@@ -8813,7 +8861,7 @@ def render_smart_betting(show_title: bool = True):
         key="day_portfolio_min_ev",
     )
     if st.button(t()["generate_day_portfolio"], key="generate_day_portfolio", use_container_width=True, type="primary"):
-        if not consume_free_trial(st.session_state.user_id):
+        if not require_trial(f"day_portfolio:{selected_date}:{model_choice}", dedupe=False):
             pass
         else:
             progress = _UiProgressBar(t()["optimizing_day_portfolio"])
@@ -8856,7 +8904,7 @@ def render_smart_betting(show_title: bool = True):
     st.caption(t()["parlay_description"])
     #--------------------
     if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True):
-        if not consume_free_trial(st.session_state.user_id):
+        if not require_trial(f"parlay_combo:{selected_date}:{model_choice}", dedupe=False):
             pass
         else:
             progress = _UiProgressBar(t()["calculating_parlay"])
@@ -12213,7 +12261,7 @@ def render_backtest_page(show_title: bool = True):
     
     # 运行回测
     if run_backtest_btn:
-        if not consume_free_trial(st.session_state.user_id):
+        if not require_trial(f"model_backtest:{backtest_start}:{backtest_end}", dedupe=False):
             pass
         else:
             if backtest_start > backtest_end:
@@ -12345,7 +12393,10 @@ def render_backtest_page(show_title: bool = True):
 
     if run_strategy_backtest_btn:
         result = None
-        if not consume_free_trial(st.session_state.user_id):
+        if not require_trial(
+            f"strategy_backtest:{backtest_strategy_start}:{backtest_strategy_end}:{strategy_model}",
+            dedupe=False,
+        ):
             pass
         else:
             start_date = backtest_strategy_start.strftime("%Y-%m-%d")
