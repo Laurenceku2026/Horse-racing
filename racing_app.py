@@ -3327,13 +3327,214 @@ def render_admin_backtest():
                     
                     st.markdown("---")
                     st.caption("📌 回測結果基於歷史數據，不構成投資建議")
+# ==================== 管理员：赔率采集监控 ====================
+ODDS_KEY_MINUTES_ADMIN = [
+    90, 80, 70, 60, 50, 45, 40, 35, 30, 27, 24, 21,
+    18, 15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+]
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_odds_collection_logs(limit: int = 15) -> Tuple[List[Dict], Optional[str]]:
+    if not SUPABASE_URL:
+        return [], "Supabase 未配置"
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/odds_collection_log?select=*&order=run_at.desc&limit={limit}"
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code == 404:
+            return [], "请先执行 scripts/odds_collection_log.sql 创建 odds_collection_log 表"
+        if response.status_code != 200:
+            return [], f"查询失败 HTTP {response.status_code}"
+        return response.json() or [], None
+    except Exception as exc:
+        return [], str(exc)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_future_odds_snapshot_coverage() -> pd.DataFrame:
+    """未来赛日每场已采集的关键分钟数（WIN）。"""
+    if not SUPABASE_URL:
+        return pd.DataFrame()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        headers = get_supabase_headers(use_secret=True)
+        url = (
+            f"{SUPABASE_URL}/rest/v1/odds_history"
+            f"?select=race_date,venue,race_no,odds_type,minutes_before_race,horse_no"
+            f"&race_date=gte.{today}"
+            f"&odds_type=in.(WIN,PLA)"
+            f"&limit=50000"
+        )
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            return pd.DataFrame()
+        rows = response.json() or []
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        df = df[df["horse_no"].notna()]
+        df = df[df["horse_no"] != 0]
+        if df.empty:
+            return pd.DataFrame()
+
+        grouped = (
+            df.groupby(["race_date", "venue", "race_no", "odds_type"])["minutes_before_race"]
+            .nunique()
+            .reset_index(name="time_points")
+        )
+        pivot = grouped.pivot_table(
+            index=["race_date", "venue", "race_no"],
+            columns="odds_type",
+            values="time_points",
+            fill_value=0,
+        ).reset_index()
+        pivot.columns.name = None
+        if "WIN" not in pivot.columns:
+            pivot["WIN"] = 0
+        if "PLA" not in pivot.columns:
+            pivot["PLA"] = 0
+        pivot["target_points"] = len(ODDS_KEY_MINUTES_ADMIN)
+        pivot = pivot.sort_values(["race_date", "venue", "race_no"])
+        return pivot
+    except Exception as exc:
+        print(f"get_future_odds_snapshot_coverage failed: {exc}")
+        return pd.DataFrame()
+
+
+def render_admin_odds_collection() -> None:
+    lang = get_lang()
+    st.markdown("### 📡 赔率采集状态" if lang == "zh" else "### 📡 Odds Collection Status")
+    st.caption(
+        "开赛前 90→0 分钟共 26 个关键时间点，Node 服务每 15 分钟采集 WIN/PLA"
+        if lang == "zh"
+        else "26 key minutes (90→0 before post); Node server collects WIN/PLA every 15 minutes"
+    )
+
+    api_base = st.secrets.get("HKJC_API_URL", "").rstrip("/")
+    collect_url = (
+        f"{api_base}/collect/auto"
+        if api_base.endswith("/api")
+        else f"{api_base}/api/collect/auto"
+    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🔄 立即触发采集" if lang == "zh" else "🔄 Run collection now", use_container_width=True):
+            if not api_base:
+                st.error("HKJC_API_URL 未配置")
+            else:
+                with st.spinner("Calling Node API..."):
+                    try:
+                        resp = requests.post(collect_url, timeout=120)
+                        if resp.status_code == 200:
+                            summary = resp.json().get("summary", {})
+                            st.success(
+                                tx(
+                                    f"完成：检查 {summary.get('racesChecked', 0)} 场，"
+                                    f"写入 {summary.get('rowsSaved', 0)} 条，"
+                                    f"跳过 {summary.get('rowsSkipped', 0)} 条",
+                                    f"Done: checked {summary.get('racesChecked', 0)} races, "
+                                    f"saved {summary.get('rowsSaved', 0)} rows, "
+                                    f"skipped {summary.get('rowsSkipped', 0)} rows",
+                                )
+                            )
+                            get_odds_collection_logs.clear()
+                            get_future_odds_snapshot_coverage.clear()
+                            fetch_race_odds_history.clear()
+                        else:
+                            st.error(f"HTTP {resp.status_code}: {resp.text[:200]}")
+                    except Exception as exc:
+                        st.error(str(exc))
+    with col_b:
+        if st.button("♻️ 刷新状态" if lang == "zh" else "♻️ Refresh", use_container_width=True):
+            get_odds_collection_logs.clear()
+            get_future_odds_snapshot_coverage.clear()
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("**最近一次采集**" if lang == "zh" else "**Latest collection run**")
+    logs, log_err = get_odds_collection_logs(limit=1)
+    if log_err:
+        st.warning(log_err)
+    elif logs:
+        last = logs[0]
+        run_at = (last.get("run_at") or "")[:19].replace("T", " ")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("时间" if lang == "zh" else "Time", run_at or "-")
+        with c2:
+            st.metric("来源" if lang == "zh" else "Source", last.get("source", "-"))
+        with c3:
+            st.metric("写入行数" if lang == "zh" else "Rows saved", last.get("rows_saved", 0))
+        with c4:
+            st.metric("检查场次" if lang == "zh" else "Races checked", last.get("races_checked", 0))
+        if last.get("error_message"):
+            st.error(last.get("error_message"))
+    else:
+        st.info("尚无采集日志（部署新 Node 服务并执行 SQL 迁移后会出现）" if lang == "zh" else "No collection logs yet")
+
+    st.markdown("---")
+    st.markdown("**未来赛日快照覆盖（目标 26 点）**" if lang == "zh" else "**Upcoming race snapshot coverage (target 26)**")
+    coverage = get_future_odds_snapshot_coverage()
+    if coverage.empty:
+        st.warning("暂无未来赛日 WIN/PLA 快照" if lang == "zh" else "No upcoming WIN/PLA snapshots")
+    else:
+        st.dataframe(coverage, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("**最近采集记录**" if lang == "zh" else "**Recent collection runs**")
+    all_logs, _ = get_odds_collection_logs(limit=15)
+    if all_logs:
+        log_df = pd.DataFrame(all_logs)
+        show_cols = [
+            c for c in [
+                "run_at", "source", "races_checked", "races_collected",
+                "rows_saved", "rows_skipped", "duration_ms", "error_message",
+            ]
+            if c in log_df.columns
+        ]
+        st.dataframe(log_df[show_cols], use_container_width=True, hide_index=True)
+    else:
+        st.caption("—")
+
+    st.markdown("---")
+    st.markdown("**最近 7 天 odds_history 写入量**" if lang == "zh" else "**odds_history writes (last 7 days)**")
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        since = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        url = (
+            f"{SUPABASE_URL}/rest/v1/odds_history"
+            f"?select=recorded_at,odds_type,race_date"
+            f"&recorded_at=gte.{since}T00:00:00"
+            f"&odds_type=in.(WIN,PLA)&limit=10000"
+        )
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code == 200 and response.json():
+            df_stats = pd.DataFrame(response.json())
+            df_stats["recorded_at"] = pd.to_datetime(df_stats["recorded_at"])
+            df_stats["collect_date"] = df_stats["recorded_at"].dt.date
+            pivot_stats = df_stats.groupby(["collect_date", "odds_type"]).size().unstack(fill_value=0)
+            st.dataframe(pivot_stats, use_container_width=True)
+        else:
+            st.warning("最近 7 天无 WIN/PLA 写入" if lang == "zh" else "No WIN/PLA writes in last 7 days")
+    except Exception as exc:
+        st.error(str(exc))
+
+
 # ==================== 管理员面板 ====================
 def render_admin_panel():
     """管理员面板 - 数据编辑器 + 回测 + 用户管理 + 马名映射"""
     st.markdown(f"## ⚙️ {t()['admin_panel']}")
     
     # 创建选项卡
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 数据编辑器", "📈 回测", "👥 用户管理", "⚙️ 评分权重设置"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 数据编辑器",
+        "📈 回测",
+        "👥 用户管理",
+        "⚙️ 评分权重设置",
+        "📡 赔率采集",
+    ])
     
     # ==================== Tab1: 数据编辑器 ====================
     with tab1:
@@ -4022,77 +4223,45 @@ def render_admin_panel():
                 st.rerun()
         
         st.caption("💡 提示：修改权重后需要点击「保存配置」才会生效，所有用户将使用新配置" if lang == "zh" else "💡 Hint: Click 'Save Config' after modification, all users will use the new configuration")
-    #-----------------
-    # ==================== 预计算评分 ====================
-    st.markdown("---")
-    with st.expander("⚡ 预计算评分（加速智能投注）", expanded=False):
-        st.markdown("预计算未来赛事的评分，保存到缓存，大幅提升智能投注页面加载速度")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            precompute_date = st.date_input(
-                "选择日期",
-                value=datetime.now(),
-                key="precompute_date"
-            )
-        with col2:
-            precompute_venue = st.selectbox(
-                "选择场地",
-                options=["全部", "ST", "HV"],
-                key="precompute_venue"
-            )
-        
-        if st.button("🚀 开始预计算", type="primary", use_container_width=True):
-            with st.spinner(f"正在预计算 {precompute_date} 的赛事评分..."):
-                venue = None if precompute_venue == "全部" else precompute_venue
-                user_weights = {"basic": 0.30, "race": 0.40, "odds": 0.30}
-                result = precompute_all_races_for_date(
-                    precompute_date.strftime("%Y-%m-%d"),
-                    venue,
-                    user_weights
-                )
-                st.success(f"预计算完成：成功 {result['success']} 场，失败 {result['failed']} 场，共 {result['total']} 场")
-    #----------
-    # 清除评分缓存
-    with st.expander("🗑️ 清除缓存", expanded=False):
-        if st.button("清除评分缓存", use_container_width=True):
-            get_cached_race_scores.clear()
-            st.success("缓存已清除")
-            st.rerun()
-    # ==================== 赔率采集状态监控 ====================
-    st.markdown("---")
-    with st.expander("📊 赔率采集状态监控", expanded=False):
-        st.markdown("**最近7天赔率采集统计**")
-        
-        try:
-            headers = get_supabase_headers(use_secret=True)
-            url = f"{SUPABASE_URL}/rest/v1/odds_history?select=recorded_at,odds_type&recorded_at=gt.{datetime.now() - timedelta(days=7)}&limit=10000"
-            response = requests.get(url, headers=headers)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data:
-                    df_stats = pd.DataFrame(data)
-                    df_stats['recorded_at'] = pd.to_datetime(df_stats['recorded_at'])
-                    df_stats['collect_date'] = df_stats['recorded_at'].dt.date
-                    
-                    pivot_stats = df_stats.groupby(['collect_date', 'odds_type']).size().unstack(fill_value=0)
-                    st.dataframe(pivot_stats, use_container_width=True)
-                    
-                    latest = df_stats['recorded_at'].max()
-                    st.success(f"✅ 最近采集时间: {latest.strftime('%Y-%m-%d %H:%M:%S')}")
-                else:
-                    st.warning("⚠️ 最近7天无赔率采集数据")
-            else:
-                st.error(f"查询失败: {response.status_code}")
-        except Exception as e:
-            st.error(f"获取统计失败: {e}")
-        
+
         st.markdown("---")
-        st.markdown("**📋 各彩池说明**")
-        st.caption("WIN=独赢 | PLA=位置 | QIN=连赢 | QPL=位置Q | TRI=单T | TCE=三重彩 | F4=四连环")
-    
-    # ==================== 退出按钮 ====================
+        with st.expander("⚡ 预计算评分（加速智能投注）", expanded=False):
+            st.markdown("预计算未来赛事的评分，保存到缓存，大幅提升智能投注页面加载速度")
+
+            col1, col2 = st.columns(2)
+            with col1:
+                precompute_date = st.date_input(
+                    "选择日期",
+                    value=datetime.now(),
+                    key="precompute_date"
+                )
+            with col2:
+                precompute_venue = st.selectbox(
+                    "选择场地",
+                    options=["全部", "ST", "HV"],
+                    key="precompute_venue"
+                )
+
+            if st.button("🚀 开始预计算", type="primary", use_container_width=True):
+                with st.spinner(f"正在预计算 {precompute_date} 的赛事评分..."):
+                    venue = None if precompute_venue == "全部" else precompute_venue
+                    user_weights = {"basic": 0.30, "race": 0.40, "odds": 0.30}
+                    result = precompute_all_races_for_date(
+                        precompute_date.strftime("%Y-%m-%d"),
+                        venue,
+                        user_weights
+                    )
+                    st.success(f"预计算完成：成功 {result['success']} 场，失败 {result['failed']} 场，共 {result['total']} 场")
+
+        with st.expander("🗑️ 清除缓存", expanded=False):
+            if st.button("清除评分缓存", use_container_width=True):
+                get_cached_race_scores.clear()
+                st.success("缓存已清除")
+                st.rerun()
+
+    with tab5:
+        render_admin_odds_collection()
+
     st.markdown("---")
     if st.button("退出管理员模式", use_container_width=True):
         admin_sign_out()
