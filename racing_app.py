@@ -54,7 +54,7 @@ except ImportError as e:
     print(f"scoring_engine import failed: {e}")
 # ==================== 页面配置 ====================
 st.set_page_config(
-    page_title="香港赛马AI分析系统",
+    page_title="HK Horse Racing AI System",
     page_icon="🐎",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -374,7 +374,169 @@ TEXTS = {
         "calculating_ml": "正在計算馬匹勝率（{model}）...",
         "betting_records": "📋 我的投注記錄",
         "disclaimer": "⚠️ 本建議基於AI模型預測，不保證實際收益。請理性投注，切勿超出預算。",
-        "data_source": "📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新"
+        "data_source": "📅 數據來源：香港賽馬會 | 更新頻率：賽日自動更新",
+        # ==================== 补充 i18n ====================
+        "fill_email_password": "請填寫電郵和密碼",
+        "logging_in": "登入中...",
+        "password_mismatch": "兩次輸入的密碼不一致",
+        "password_min_length": "密碼長度至少6位",
+        "registering": "註冊中...",
+        "register_failed": "註冊失敗",
+        "email_exists_login": "該郵箱已在系統中，請直接登入",
+        "login_success": "登入成功",
+        "wrong_email_password": "電郵或密碼錯誤",
+        "create_settings_failed": "創建用戶設置失敗",
+        "session_expired": "登錄已過期，請重新登錄",
+        "trial_update_failed": "更新次數失敗，可能是網絡或認證問題，請刷新頁面重試",
+        "contact_admin_reset_password": "請聯絡管理員重置密碼",
+        "stripe_session_detected": "🔔 檢測到支付會話，請點擊按鈕完成驗證",
+        "stripe_session_id": "會話ID",
+        "stripe_verify_button": "✅ 手動驗證支付並升級",
+        "stripe_verifying": "正在驗證...",
+        "stripe_verify_success": "✅ 支付驗證成功！您已是專業版用戶",
+        "stripe_user_not_found": "無法識別用戶，請重新登錄後重試",
+        "stripe_payment_incomplete": "支付狀態未完成，請完成支付",
+        "stripe_api_failed": "API請求失敗",
+        "stripe_verify_failed": "驗證失敗",
+        "stripe_payment_cancelled": "支付已取消",
+        "stripe_not_configured": "Stripe密鑰未配置",
+        "checkout_session_failed": "創建支付會話失敗",
+        "checkout_go_stripe_monthly": "💳 前往Stripe支付（月付HK$380）",
+        "checkout_go_stripe_quarterly": "💳 前往Stripe支付（季付HK$988）",
+        "back": "返回",
+        "paywall_trials_remaining": "🔓 您當前還有 {remaining} 次免費試用機會",
+        "paywall_upgrade_hint": "💎 升級專業版後，可無限次使用所有功能",
+        "paywall_feature": "功能",
+        "paywall_free": "免費版",
+        "paywall_pro": "專業版",
+        "paywall_usage": "使用次數",
+        "paywall_usage_free": "30次",
+        "paywall_horse_rating": "馬匹評分榜",
+        "paywall_smart_betting": "智能投注",
+        "paywall_full_day": "全天優化",
+        "paywall_backtest": "歷史回測",
+        "admin_login_title": "管理員登入",
+        "admin_username": "用戶名",
+        "admin_login_btn": "登入",
+        "admin_login_failed": "用戶名或密碼錯誤",
+        "back_to_user_login": "返回用戶登入",
+        "admin_login_help": "管理員登入",
+        "back_to_user": "👤 返回",
+        "exit_admin_mode": "退出管理員模式",
+        "logout_help": "退出登入",
+        "tier_pro": "💎 專業版",
+        "tier_free": "🔒 免費版",
+        "day_portfolio_title": "赛日最优组合",
+        "day_portfolio_desc": "约 HK$1,000 预算 · 独赢/位置/连赢/单T/三重彩/孖宝 · EV 比例分配（最低 HK$10/注）",
+        "day_portfolio_budget_label": "赛日预算 (HK$)",
+        "generate_day_portfolio": "🎯 生成赛日最优组合",
+        "optimizing_day_portfolio": "正在优化赛日组合...",
+        "day_portfolio_import_failed": "赛日组合优化模块加载失败",
+        "lightgbm_not_installed": "LightGBM 未安装",
+        "xgboost_not_installed": "XGBoost 未安装",
+        "no_data_fetched": "未獲取到任何數據",
+        "no_races_found": "未找到任何賽事",
+        "backtest_cancelled": "⚠️ 回測已被用戶取消",
+        "day_portfolio_backtest_progress": "赛日组合回测 {model}: {date} {venue} ({current}/{total})",
+        "day_portfolio_backtest_title": "📈 赛日组合策略回测（{model}）",
+        "day_portfolio_mode_fast": "快速（每周重训）",
+        "day_portfolio_mode_std": "标准 walk-forward",
+        "day_portfolio_backtest_caption": "模式：{mode} · 赛日数 {days} · 彩池：独赢/位置/连赢/单T/三重彩/孖宝",
+        "metric_day_count": "赛日数",
+        "metric_total_bets": "总注数",
+        "metric_hit_bets": "命中注数",
+        "metric_hit_rate": "命中率",
+        "metric_total_stake": "总投入",
+        "metric_total_return": "总回报",
+        "portfolio_bet_details": "📋 逐注明细",
+        "col_race_day": "赛日",
+        "col_venue": "场地",
+        "col_pool": "彩池",
+        "col_content": "内容",
+        "col_odds": "赔率",
+        "col_estimated": "估算",
+        "col_yes": "是",
+        "col_no": "否",
+        "col_stake": "金额",
+        "col_hit": "命中",
+        "col_return": "回报",
+        "col_profit": "盈亏",
+        "no_day_portfolio_bets": "未找到符合条件的赛日组合（无正 EV 注项）",
+        "day_portfolio_live_title": "💰 赛日最优组合推荐",
+        "day_portfolio_live_caption": "目标预算约 HK${budget:,.0f} · 实际分配 HK${stake:,.0f} · 含独赢/位置/连赢/单T/三重彩/孖宝",
+        "col_recommendation": "推荐",
+        "col_probability": "概率",
+        "col_suggested_stake": "建议金额",
+        "estimated_odds_footnote": "* 星号表示估算赔率",
+        "fast_mode_label": "快速模式（每周重训）",
+        "fast_mode_help": "标准模式：每个赛日 walk-forward 重训；快速模式：每周重训一次以加快回测",
+        "strategy_backtest_caption": "每日约 HK$1,000 在独赢/位置/连赢/单T/三重彩/孖宝间 EV 优化分配 · 与智能投注共用同一优化器",
+        "strategy_model_help": "策略回测使用的 ML 模型（默认 LightGBM）",
+        "min_ev_help": "只投注期望值大於此門檻的建議",
+        "running_day_portfolio_backtest": "正在运行赛日组合策略回测（{model}）...",
+        "using_cached_backtest": "📋 使用缓存的回测结果",
+        "backtest_no_bets": "回测完成但未产生任何投注（请尝试扩大日期范围或降低 EV 门槛）",
+        "invalid_date_range": "開始日期不能晚於結束日期",
+        "backtest_period_info": "📊 回測期間: {start} 至 {end} (共 {days} 天)",
+        "running_model_backtest": "正在運行模型對比回測...",
+        "calculating_full_day": "正在計算全天投注策略...",
+        "no_betting_opportunities": "未找到符合條件的投注機會",
+        "calculating_parlay": "正在計算過關組合...",
+        "parlay_3leg_hint": "💡 3串1 需至少 3 場勝率≥20% 的信心馬；目前僅列出 2串1。",
+        "no_parlay_combos": "暫無符合條件的過關組合（需正期望值 EV>0）",
+        "col_race_no": "場次",
+        "col_horse": "馬匹",
+        "col_win_rate": "勝率",
+        "col_suggested_amount": "建議注額",
+        "col_expected_value": "期望值",
+        "total_stake_metric": "💰 總投注額",
+        "total_ev_metric": "📈 總期望值",
+        "expected_roi_metric": "📊 預期ROI",
+        "install_lightgbm_help": "需要安装 lightgbm 库",
+        "install_xgboost_help": "需要安装 xgboost 库",
+        "ml_install_hint": "请先安装 LightGBM 和/或 XGBoost 库后再运行 ML 回测",
+        "model_select_help": "选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型",
+        "date_mode_label": "選擇日期模式",
+        "date_mode_future": "未來賽事",
+        "date_mode_history": "歷史賽事",
+        "select_history_race_day": "選擇歷史賽日",
+        "no_race_detail_data": "暂无详细赛事数据，请先刷新赛程",
+        "no_races_available": "暂无赛事",
+        "no_history_race_data": "暂无历史赛事数据",
+        "no_race_detail_for_date": "该日期暂无详细赛事数据",
+        "sync_failed": "同步失败",
+        "prediction_error": "🔍 预测异常",
+        "scoring_weights_paywall_hint": "点击下方按钮扣费后可查看和调整评分权重",
+        "scoring_weights_paywall_btn": "💎 扣费查看评分权重设置",
+        "nav_data_ratings": "📊 數據與評分",
+        "nav_smart_betting": "🎯 智能投注",
+        "nav_backtest": "📈 回測",
+        "nav_label": "功能导航",
+        "no_model_detail": "該模型暫無詳細預測數據",
+        "no_detail_data": "暫無詳細數據",
+        "update_failed_msg": "更新失败",
+        "historical_mode_info": "📅 歷史測試模式：評分僅用該賽日之前往績；ML 模型訓練亦只使用所選賽日之前數據（不含當日），避免洩露未來賽果。",
+        "calculating_parlay_schedule": "正在計算過關推薦...",
+        "parlay_insufficient_data": "所选场次数据不足，请尝试选择更多场次",
+        "parlay_select_hint": "選好場次後，點擊「🎲 生成過關推薦」查看最優 2串1 / 3串1 等組合",
+        "no_qin_combos": "暫無連贏組合數據",
+        "missing_win_odds_hint": "⚠️ 缺少獨贏賠率，以下 EV 僅供參考（估算連贏賠率）",
+        "odds_label": "賠率",
+        "odds_estimated_label": "估算",
+        "select_label": "選擇",
+        "qin_selected_summary": "✅ 已選擇 {count} 組，建議總投注額: HK${stake:.0f}",
+        "select_combos_hint": "請勾選您感興趣的組合",
+        "tri_insufficient_horses": "馬匹數量不足，無法推薦單T",
+        "no_parlay_combo_found": "未找到合适的过关组合，请尝试选择更多场次或更换 AI 模型",
+        "weekdays": "星期一,星期二,星期三,星期四,星期五,星期六,星期日",
+        "win_place_recommend": "🎯 獨贏/位置 推薦",
+        "qin_recommend_expander": "🔗 連贏 推薦",
+        "tri_recommend_expander": "🎲 單T 推薦",
+        "win_odds_label": "獨贏賠率",
+        "place_odds_label": "位置賠率",
+        "expected_roi_label": "預期ROI",
+        "parlay_select_races_title": "選擇要過關的場次",
+        "selected_races_caption": "已选择 {count} 场比赛",
     },
     "en": {
         # ==================== Basic ====================
@@ -601,7 +763,169 @@ Let AI be your racing assistant.
         "calculating_ml": "Calculating win rate ({model})...",
         "betting_records": "📋 My Betting Records",
         "disclaimer": "⚠️ Predictions are for reference only. Bet responsibly.",
-        "data_source": "📅 Data Source: HKJC | Update Frequency: Race day auto-update"
+        "data_source": "📅 Data Source: HKJC | Update Frequency: Race day auto-update",
+        # ==================== Extended i18n ====================
+        "fill_email_password": "Please enter email and password",
+        "logging_in": "Logging in...",
+        "password_mismatch": "Passwords do not match",
+        "password_min_length": "Password must be at least 6 characters",
+        "registering": "Registering...",
+        "register_failed": "Registration failed",
+        "email_exists_login": "Email already registered. Please login.",
+        "login_success": "Login successful",
+        "wrong_email_password": "Incorrect email or password",
+        "create_settings_failed": "Failed to create user settings",
+        "session_expired": "Session expired. Please login again.",
+        "trial_update_failed": "Failed to update trial count. Please refresh and try again.",
+        "contact_admin_reset_password": "Contact admin to reset password",
+        "stripe_session_detected": "🔔 Payment session detected. Click the button to verify.",
+        "stripe_session_id": "Session ID",
+        "stripe_verify_button": "✅ Verify Payment & Upgrade",
+        "stripe_verifying": "Verifying...",
+        "stripe_verify_success": "✅ Payment verified! You are now a Pro user.",
+        "stripe_user_not_found": "User not found. Please login and try again.",
+        "stripe_payment_incomplete": "Payment not completed. Please finish checkout.",
+        "stripe_api_failed": "API request failed",
+        "stripe_verify_failed": "Verification failed",
+        "stripe_payment_cancelled": "Payment cancelled",
+        "stripe_not_configured": "Stripe secret key not configured",
+        "checkout_session_failed": "Failed to create checkout session",
+        "checkout_go_stripe_monthly": "💳 Go to Stripe (Monthly HK$380)",
+        "checkout_go_stripe_quarterly": "💳 Go to Stripe (Quarterly HK$988)",
+        "back": "Back",
+        "paywall_trials_remaining": "🔓 You have {remaining} free trials remaining",
+        "paywall_upgrade_hint": "💎 Upgrade to Pro for unlimited access to all features",
+        "paywall_feature": "Feature",
+        "paywall_free": "Free",
+        "paywall_pro": "Pro",
+        "paywall_usage": "Usage",
+        "paywall_usage_free": "30 trials",
+        "paywall_horse_rating": "Horse Ratings",
+        "paywall_smart_betting": "Smart Betting",
+        "paywall_full_day": "Full-day Optimization",
+        "paywall_backtest": "Historical Backtest",
+        "admin_login_title": "Admin Login",
+        "admin_username": "Username",
+        "admin_login_btn": "Login",
+        "admin_login_failed": "Incorrect username or password",
+        "back_to_user_login": "Back to User Login",
+        "admin_login_help": "Admin login",
+        "back_to_user": "👤 Back",
+        "exit_admin_mode": "Exit admin mode",
+        "logout_help": "Logout",
+        "tier_pro": "💎 Pro",
+        "tier_free": "🔒 Free",
+        "day_portfolio_title": "Best Race-day Portfolio",
+        "day_portfolio_desc": "~HK$1,000 budget · Win/Place/Quinella/Trio/Tierce/Double · EV-weighted (min HK$10/bet)",
+        "day_portfolio_budget_label": "Race-day Budget (HK$)",
+        "generate_day_portfolio": "🎯 Generate Best Race-day Portfolio",
+        "optimizing_day_portfolio": "Optimizing race-day portfolio...",
+        "day_portfolio_import_failed": "Day portfolio optimizer failed to load",
+        "lightgbm_not_installed": "LightGBM is not installed",
+        "xgboost_not_installed": "XGBoost is not installed",
+        "no_data_fetched": "No data retrieved",
+        "no_races_found": "No races found",
+        "backtest_cancelled": "⚠️ Backtest cancelled by user",
+        "day_portfolio_backtest_progress": "Day portfolio backtest {model}: {date} {venue} ({current}/{total})",
+        "day_portfolio_backtest_title": "📈 Day Portfolio Strategy Backtest ({model})",
+        "day_portfolio_mode_fast": "Fast (weekly retrain)",
+        "day_portfolio_mode_std": "Standard walk-forward",
+        "day_portfolio_backtest_caption": "Mode: {mode} · Race days: {days} · Pools: Win/Place/Quinella/Trio/Tierce/Double",
+        "metric_day_count": "Race Days",
+        "metric_total_bets": "Total Bets",
+        "metric_hit_bets": "Winning Bets",
+        "metric_hit_rate": "Hit Rate",
+        "metric_total_stake": "Total Stake",
+        "metric_total_return": "Total Return",
+        "portfolio_bet_details": "📋 Bet Details",
+        "col_race_day": "Date",
+        "col_venue": "Venue",
+        "col_pool": "Pool",
+        "col_content": "Selection",
+        "col_odds": "Odds",
+        "col_estimated": "Est.",
+        "col_yes": "Yes",
+        "col_no": "No",
+        "col_stake": "Stake",
+        "col_hit": "Hit",
+        "col_return": "Return",
+        "col_profit": "P/L",
+        "no_day_portfolio_bets": "No qualifying race-day portfolio (no positive EV bets)",
+        "day_portfolio_live_title": "💰 Best Race-day Portfolio",
+        "day_portfolio_live_caption": "Target budget ~HK${budget:,.0f} · Allocated HK${stake:,.0f} · Win/Place/Quinella/Trio/Tierce/Double",
+        "col_recommendation": "Pick",
+        "col_probability": "Probability",
+        "col_suggested_stake": "Suggested Stake",
+        "estimated_odds_footnote": "* Asterisk indicates estimated odds",
+        "fast_mode_label": "Fast mode (weekly retrain)",
+        "fast_mode_help": "Standard: walk-forward retrain each race day. Fast: retrain weekly for speed.",
+        "strategy_backtest_caption": "~HK$1,000/day EV allocation across Win/Place/Quinella/Trio/Tierce/Double · Same optimizer as Smart Betting",
+        "strategy_model_help": "ML model for strategy backtest (default LightGBM)",
+        "min_ev_help": "Only bet when expected value exceeds this threshold",
+        "running_day_portfolio_backtest": "Running day portfolio backtest ({model})...",
+        "using_cached_backtest": "📋 Using cached backtest result",
+        "backtest_no_bets": "Backtest completed with no bets (try a wider date range or lower EV threshold)",
+        "invalid_date_range": "Start date cannot be after end date",
+        "backtest_period_info": "📊 Backtest period: {start} to {end} ({days} days)",
+        "running_model_backtest": "Running model comparison backtest...",
+        "calculating_full_day": "Calculating full-day betting strategy...",
+        "no_betting_opportunities": "No qualifying betting opportunities found",
+        "calculating_parlay": "Calculating parlay combinations...",
+        "parlay_3leg_hint": "💡 3-leg parlay needs at least 3 races with ≥20% win probability; showing 2-leg only.",
+        "no_parlay_combos": "No qualifying parlay combinations (requires positive EV)",
+        "col_race_no": "Race",
+        "col_horse": "Horse",
+        "col_win_rate": "Win Rate",
+        "col_suggested_amount": "Suggested Stake",
+        "col_expected_value": "Expected Value",
+        "total_stake_metric": "💰 Total Stake",
+        "total_ev_metric": "📈 Total Expected Value",
+        "expected_roi_metric": "📊 Expected ROI",
+        "install_lightgbm_help": "Requires lightgbm library",
+        "install_xgboost_help": "Requires xgboost library",
+        "ml_install_hint": "Install LightGBM and/or XGBoost before running ML backtest",
+        "model_select_help": "Choose prediction model: Rating System, LightGBM, XGBoost, or Ensemble",
+        "date_mode_label": "Date Mode",
+        "date_mode_future": "Upcoming Races",
+        "date_mode_history": "Historical Races",
+        "select_history_race_day": "Select Historical Race Day",
+        "no_race_detail_data": "No detailed race data. Please refresh schedule.",
+        "no_races_available": "No races available",
+        "no_history_race_data": "No historical race data",
+        "no_race_detail_for_date": "No detailed race data for this date",
+        "sync_failed": "Sync failed",
+        "prediction_error": "🔍 Prediction error",
+        "scoring_weights_paywall_hint": "Click below to unlock scoring weight settings",
+        "scoring_weights_paywall_btn": "💎 Unlock Scoring Weight Settings",
+        "nav_data_ratings": "📊 Data & Ratings",
+        "nav_smart_betting": "🎯 Smart Betting",
+        "nav_backtest": "📈 Backtest",
+        "nav_label": "Navigation",
+        "no_model_detail": "No detailed prediction data for this model",
+        "no_detail_data": "No detailed data",
+        "update_failed_msg": "Update failed",
+        "historical_mode_info": "📅 Historical test mode: scoring and ML training use data strictly before the selected race day.",
+        "calculating_parlay_schedule": "Calculating parlay recommendations...",
+        "parlay_insufficient_data": "Insufficient data for selected races. Try selecting more races.",
+        "parlay_select_hint": "Select races, then click Generate Parlay for best 2-leg / 3-leg combos.",
+        "no_qin_combos": "No quinella combination data",
+        "missing_win_odds_hint": "⚠️ Missing win odds; EV below uses estimated quinella odds",
+        "odds_label": "Odds",
+        "odds_estimated_label": "Est.",
+        "select_label": "Select",
+        "qin_selected_summary": "✅ Selected {count} combos, suggested total stake: HK${stake:.0f}",
+        "select_combos_hint": "Check the combinations you are interested in",
+        "tri_insufficient_horses": "Insufficient horses for trio recommendation",
+        "no_parlay_combo_found": "No suitable parlay found. Try more races or a different AI model.",
+        "weekdays": "Mon,Tue,Wed,Thu,Fri,Sat,Sun",
+        "win_place_recommend": "🎯 Win/Place Recommendation",
+        "qin_recommend_expander": "🔗 Quinella Recommendation",
+        "tri_recommend_expander": "🎲 Trio Recommendation",
+        "win_odds_label": "Win Odds",
+        "place_odds_label": "Place Odds",
+        "expected_roi_label": "Expected ROI",
+        "parlay_select_races_title": "Select races for parlay",
+        "selected_races_caption": "Selected {count} races",
     }
 }
 #---------
@@ -617,6 +941,52 @@ def t():
     except Exception as e:
         print(f"t() 函数错误: {e}")
         return TEXTS["zh"]
+
+
+def get_lang() -> str:
+    return st.session_state.get("lang", "zh")
+
+
+def tx(zh: str, en: str) -> str:
+    return zh if get_lang() == "zh" else en
+
+
+MODEL_CHOICE_OPTIONS = ["评分系统", "LightGBM", "XGBoost", "集成模型"]
+
+
+def display_model_choice(model_choice: str) -> str:
+    mapping = {
+        "评分系统": t()["rating_system"],
+        "LightGBM": t()["lightgbm"],
+        "XGBoost": t()["xgboost"],
+        "集成模型": t()["ensemble"],
+    }
+    return mapping.get(model_choice, model_choice)
+
+
+def _model_section_title(title: str, model_choice: str) -> str:
+    label = display_model_choice(model_choice)
+    if get_lang() == "zh":
+        return f"{title}（{label}）"
+    return f"{title} ({label})"
+
+
+def _weekday_label(date_str: str) -> str:
+    weekdays = t()["weekdays"].split(",")
+    wd = datetime.strptime(date_str, "%Y-%m-%d").weekday()
+    return weekdays[wd] if wd < len(weekdays) else ""
+
+
+DATE_MODE_FUTURE = "未來賽事"
+DATE_MODE_HISTORY = "歷史賽事"
+
+
+def _date_mode_label(mode: str) -> str:
+    if mode == DATE_MODE_FUTURE:
+        return t()["date_mode_future"]
+    if mode == DATE_MODE_HISTORY:
+        return t()["date_mode_history"]
+    return mode
 #-------------------------
 #-------------
 @st.cache_data(ttl=300)
@@ -798,12 +1168,12 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                 insert_response = requests.post(insert_url, headers=headers_secret, json=settings_data)
                 
                 if insert_response.status_code in [200, 201]:
-                    return True, "註冊成功！請登入", user_id
+                    return True, t()["register_success"], user_id
                 else:
                     # 即使 user_settings 创建失败，也允许登录（后续会自动创建）
                     print(f"创建user_settings失败: {insert_response.text}")
-                    return True, "註冊成功！請登入", user_id
-            return True, "註冊成功！請登入", user_id
+                    return True, t()["register_success"], user_id
+            return True, t()["register_success"], user_id
         else:
             error = response.json()
             if "User already registered" in str(error):
@@ -838,11 +1208,11 @@ def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
                                 insert_url = f"{SUPABASE_URL}/rest/v1/user_settings"
                                 requests.post(insert_url, headers=admin_headers, json=settings_data)
                             
-                            return True, "該郵箱已在系統中，請直接登入", user_id
-                return False, "該電郵已註冊，請直接登入", None
-            return False, f"註冊失敗: {error.get('msg', '未知錯誤')}", None
+                            return True, t()["email_exists_login"], user_id
+                return False, t()["email_exists"], None
+            return False, f"{t()['register_failed']}: {error.get('msg', 'unknown')}", None
     except Exception as e:
-        return False, f"註冊失敗: {str(e)}", None
+        return False, f"{t()['register_failed']}: {str(e)}", None
 #--------------
 def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Optional[str], Optional[str], Optional[str]]:
     """用户登录 - 最终修正版"""
@@ -859,7 +1229,7 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
         print(f"Auth 状态码: {response.status_code}")
         
         if response.status_code != 200:
-            return False, "電郵或密碼錯誤", None, None, None, None
+            return False, t()["wrong_email_password"], None, None, None, None
         
         resp_data = response.json()
         user_id = resp_data.get("user", {}).get("id")
@@ -883,7 +1253,7 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
         print(f"查询结果: {check_response.text}")
         
         if check_response.status_code == 200 and check_response.json():
-            return True, "登入成功", user_id, user_email, access_token, refresh_token
+            return True, t()["login_success"], user_id, user_email, access_token, refresh_token
         else:
             # 没有记录，尝试自动创建
             # 注意：POST 请求需要添加 Prefer 头
@@ -913,13 +1283,13 @@ def sign_in(email: str, password: str) -> Tuple[bool, str, Optional[str], Option
             print(f"创建结果: {insert_response.text}")
             
             if insert_response.status_code in [200, 201]:
-                return True, "登入成功", user_id, user_email, access_token, refresh_token
+                return True, t()["login_success"], user_id, user_email, access_token, refresh_token
             else:
-                return False, f"創建用戶設置失敗: {insert_response.text}", None, None, None, None
+                return False, f"{t()['create_settings_failed']}: {insert_response.text}", None, None, None, None
                 
     except Exception as e:
         print(f"登录异常: {e}")
-        return False, f"登入失敗: {str(e)}", None, None, None, None
+        return False, f"{t()['login_failed']}: {str(e)}", None, None, None, None
 
 def sign_out():
     """退出登录"""
@@ -1048,7 +1418,7 @@ def update_user_profile(user_id: str, data: Dict) -> bool:
                 # 清除失效的认证状态
                 st.session_state.authenticated = False
                 st.session_state.access_token = None
-                st.warning("登录已过期，请重新登录")
+                st.warning(t()["session_expired"])
                 return False
         
         return response.status_code in [200, 204]
@@ -1084,7 +1454,7 @@ def consume_free_trial(user_id: str) -> bool:
         success = update_user_profile(user_id, {"free_trials_remaining": new_remaining})
         print(f"更新结果: {success}")
         if not success:
-            st.error("更新次数失败，可能是网络或认证问题，请刷新页面重试")  # ← 添加错误提示
+            st.error(t()["trial_update_failed"])
         return success
     else:
         st.session_state.show_paywall = True
@@ -1094,7 +1464,7 @@ def consume_free_trial(user_id: str) -> bool:
 def create_checkout_session(user_id: str, user_email: str, price_id: str) -> Tuple[Optional[str], Optional[str]]:
     """创建Stripe Checkout Session"""
     if not STRIPE_SECRET_KEY:
-        return None, "Stripe密钥未配置"
+        return None, t()["stripe_not_configured"]
     
     try:
         import stripe
@@ -1131,11 +1501,11 @@ def handle_stripe_callback():
         session_id = query_params["session_id"]
         
         # 显示手动验证按钮
-        st.warning("🔔 检测到支付会话，请点击按钮完成验证")
-        st.info(f"会话ID: {session_id[:30]}...")
+        st.warning(t()["stripe_session_detected"])
+        st.info(f"{t()['stripe_session_id']}: {session_id[:30]}...")
         
-        if st.button("✅ 手动验证支付并升级", type="primary"):
-            with st.spinner("正在验证..."):
+        if st.button(t()["stripe_verify_button"], type="primary"):
+            with st.spinner(t()["stripe_verifying"]):
                 try:
                     # 使用 Basic 认证调用 Stripe API
                     auth_str = f"{STRIPE_SECRET_KEY}:"
@@ -1177,7 +1547,7 @@ def handle_stripe_callback():
                                 )
                                 
                                 if patch_response.status_code in [200, 204]:
-                                    st.success("✅ 支付验证成功！您已是专业版用户")
+                                    st.success(t()["stripe_verify_success"])
                                     st.balloons()
                                     # 更新 session state
                                     if st.session_state.get("user_id") == user_id:
@@ -1188,18 +1558,18 @@ def handle_stripe_callback():
                                     time.sleep(2)
                                     st.rerun()
                                 else:
-                                    st.error(f"更新失败: {patch_response.text}")
+                                    st.error(f"{t()['update_failed_msg']}: {patch_response.text}")
                             else:
-                                st.error("无法识别用户，请重新登录后重试")
+                                st.error(t()["stripe_user_not_found"])
                         else:
-                            st.warning(f"支付状态: {data.get('payment_status')}，请完成支付")
+                            st.warning(f"{t()['stripe_payment_incomplete']}: {data.get('payment_status')}")
                     else:
-                        st.error(f"API请求失败: {response.status_code}")
+                        st.error(f"{t()['stripe_api_failed']}: {response.status_code}")
                         
                 except Exception as e:
-                    st.error(f"验证失败: {e}")
+                    st.error(f"{t()['stripe_verify_failed']}: {e}")
     elif "canceled" in query_params:
-        st.info("支付已取消")
+        st.info(t()["stripe_payment_cancelled"])
 #------------
 def show_paywall():
     """显示付费墙（用户主动升级）"""
@@ -1218,27 +1588,27 @@ def show_paywall():
     
     # 显示当前状态
     if remaining > 0:
-        st.info(f"🔓 您当前还有 {remaining} 次免费试用机会")
-        st.warning("💎 升级专业版后，可无限次使用所有功能")
+        st.info(t()["paywall_trials_remaining"].format(remaining=remaining))
+        st.warning(t()["paywall_upgrade_hint"])
     else:
-        st.error("🔒 您的免費使用次數已用完")
+        st.error(t()["free_trial_used"])
     
     st.markdown(f"""
     ### 💎 {t()['upgrade']}
     
-    | 功能 | 免費版 | 專業版 |
+    | {t()['paywall_feature']} | {t()['paywall_free']} | {t()['paywall_pro']} |
     |------|--------|--------|
-    | 使用次數 | 30次 | **無限** |
-    | 馬匹評分榜 | ✅ | ✅ |
-    | 智能投注 | ✅ | ✅ |
-    | 全天優化 | ✅ | ✅ |
-    | 歷史回測 | ✅ | ✅ |
+    | {t()['paywall_usage']} | {t()['paywall_usage_free']} | **{t()['unlimited']}** |
+    | {t()['paywall_horse_rating']} | ✅ | ✅ |
+    | {t()['paywall_smart_betting']} | ✅ | ✅ |
+    | {t()['paywall_full_day']} | ✅ | ✅ |
+    | {t()['paywall_backtest']} | ✅ | ✅ |
     """)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("💎 月付 HK$380/月", key="monthly_btn", use_container_width=True):
+        if st.button(t()["monthly"], key="monthly_btn", use_container_width=True):
             url, error = create_checkout_session(
                 st.session_state.user_id, 
                 st.session_state.user_email, 
@@ -1249,7 +1619,7 @@ def show_paywall():
                 st.session_state.payment_type = "monthly"
                 st.rerun()
             else:
-                st.error(f"創建支付會話失敗: {error}")
+                st.error(f"{t()['checkout_session_failed']}: {error}")
         
         if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "monthly":
             st.markdown(f'''
@@ -1264,12 +1634,12 @@ def show_paywall():
                 border-radius: 0.5rem;
                 font-weight: bold;
                 margin-top: 0.5rem;">
-                💳 前往Stripe支付（月付HK$380）
+                {t()['checkout_go_stripe_monthly']}
             </a>
             ''', unsafe_allow_html=True)
     
     with col2:
-        if st.button("💎 季付 HK$988/季", key="quarterly_btn", use_container_width=True):
+        if st.button(t()["quarterly"], key="quarterly_btn", use_container_width=True):
             url, error = create_checkout_session(
                 st.session_state.user_id, 
                 st.session_state.user_email, 
@@ -1280,7 +1650,7 @@ def show_paywall():
                 st.session_state.payment_type = "quarterly"
                 st.rerun()
             else:
-                st.error(f"創建支付會話失敗: {error}")
+                st.error(f"{t()['checkout_session_failed']}: {error}")
         
         if st.session_state.get("payment_url") and st.session_state.get("payment_type") == "quarterly":
             st.markdown(f'''
@@ -1295,11 +1665,11 @@ def show_paywall():
                 border-radius: 0.5rem;
                 font-weight: bold;
                 margin-top: 0.5rem;">
-                💳 前往Stripe支付（季付HK$988）
+                {t()['checkout_go_stripe_quarterly']}
             </a>
             ''', unsafe_allow_html=True)
     
-    if st.button("返回", use_container_width=True):
+    if st.button(t()["back"], use_container_width=True):
         st.session_state.show_paywall = False
         st.session_state.payment_url = None
         st.rerun()
@@ -1373,9 +1743,9 @@ def render_login_form():
             
             if submitted:
                 if not email or not password:
-                    st.warning("請填寫電郵和密碼")
+                    st.warning(t()["fill_email_password"])
                 else:
-                    with st.spinner("登入中..."):
+                    with st.spinner(t()["logging_in"]):
                         success, msg, user_id, user_email, access_token, refresh_token = sign_in(email, password)
                         if success:
                             st.session_state.authenticated = True
@@ -1395,8 +1765,8 @@ def render_login_form():
                 st.session_state.show_register = True
                 st.rerun()
         with col2:
-            if st.button(t().get("forgot_password", "忘記密碼？"), use_container_width=True):
-                st.info(f"請聯絡管理員重置密碼：{ADMIN_EMAIL}")
+            if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True):
+                st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
 
 def render_register_form():
     """显示注册表单"""
@@ -1412,13 +1782,13 @@ def render_register_form():
             
             if submitted:
                 if not email or not password:
-                    st.warning("請填寫電郵和密碼")
+                    st.warning(t()["fill_email_password"])
                 elif password != confirm:
-                    st.warning("兩次輸入的密碼不一致")
+                    st.warning(t()["password_mismatch"])
                 elif len(password) < 6:
-                    st.warning("密碼長度至少6位")
+                    st.warning(t()["password_min_length"])
                 else:
-                    with st.spinner("註冊中..."):
+                    with st.spinner(t()["registering"]):
                         success, msg, user_id = sign_up(email, password)
                         if success:
                             st.success(msg)
@@ -1435,12 +1805,12 @@ def render_admin_login_form():
     """显示管理员登录表单"""
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("<h2 style='text-align: center;'>管理員登入</h2>", unsafe_allow_html=True)
+        st.markdown(f"<h2 style='text-align: center;'>{t()['admin_login_title']}</h2>", unsafe_allow_html=True)
         
         with st.form("admin_login_form", border=True):
-            username = st.text_input("用戶名", key="admin_username")
-            password = st.text_input("密碼", type="password", key="admin_password")
-            submitted = st.form_submit_button("登入", type="primary", use_container_width=True)
+            username = st.text_input(t()["admin_username"], key="admin_username")
+            password = st.text_input(t()["password"], type="password", key="admin_password")
+            submitted = st.form_submit_button(t()["admin_login_btn"], type="primary", use_container_width=True)
             
             if submitted:
                 if check_admin_login(username, password):
@@ -1456,9 +1826,9 @@ def render_admin_login_form():
                     st.session_state.user_email = ADMIN_EMAIL
                     st.rerun()
                 else:
-                    st.error("用戶名或密碼錯誤")
+                    st.error(t()["admin_login_failed"])
         
-        if st.button("返回用戶登入", use_container_width=True):
+        if st.button(t()["back_to_user_login"], use_container_width=True):
             st.session_state.show_admin_login = False
             st.rerun()
 
@@ -3756,7 +4126,7 @@ def render_sidebar():
             tier = profile.get("subscription_tier", "free")
             remaining = profile.get("free_trials_remaining", 0)
             
-            tier_display = "💎 專業版" if tier == "pro" else "🔒 免費版"
+            tier_display = t()["tier_pro"] if tier == "pro" else t()["tier_free"]
             
             # 专业版显示无限，免费版显示剩余次数
             if tier == "pro":
@@ -3933,18 +4303,18 @@ def render_top_buttons():
                 st.rerun()
     
     with col4:
-        if st.button("⚙️", key="gear_btn", help="管理員登入", use_container_width=True):
+        if st.button("⚙️", key="gear_btn", help=t()["admin_login_help"], use_container_width=True):
             st.session_state.show_admin_login = True
             st.rerun()
     
     with col5:
         if st.session_state.authenticated:
             if st.session_state.admin_mode:
-                if st.button("👤 返回", key="back_to_user_btn", help="退出管理員模式", use_container_width=True):
+                if st.button(t()["back_to_user"], key="back_to_user_btn", help=t()["exit_admin_mode"], use_container_width=True):
                     admin_sign_out()
                     st.rerun()
             else:
-                if st.button("🚪", key="logout_btn", help="退出登入", use_container_width=True):
+                if st.button("🚪", key="logout_btn", help=t()["logout_help"], use_container_width=True):
                     sign_out()
                     st.rerun()
 
@@ -4576,12 +4946,10 @@ def render_home():
     """, unsafe_allow_html=True)
 
     section_labels = (
-        ["📊 數據與評分", "🎯 智能投注", "📈 回測"]
-        if lang == "zh"
-        else ["📊 Data & Ratings", "🎯 Smart Betting", "📈 Backtest"]
+        [t()["nav_data_ratings"], t()["nav_smart_betting"], t()["nav_backtest"]]
     )
     section = st.radio(
-        "功能导航" if lang == "zh" else "Navigation",
+        t()["nav_label"],
         section_labels,
         horizontal=True,
         key="home_section_nav",
@@ -6190,10 +6558,6 @@ def _get_smart_betting_training_window(prediction_cutoff_date: Optional[str] = N
     return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
 
 
-def _model_section_title(title: str, model_choice: str) -> str:
-    return f"{title}（{model_choice}）"
-
-
 def get_smart_betting_ml_model(model_choice: str, prediction_cutoff_date: Optional[str] = None):
     """会话内缓存 ML 模型；历史模式下训练数据不包含预测赛日及之后赛事。"""
     model_type = _resolve_ml_model_type(model_choice)
@@ -6484,7 +6848,7 @@ def _compute_parlay_schedule_results(
 
 def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommender) -> None:
     if not results:
-        st.warning("未找到合适的过关组合，请尝试选择更多场次或更换 AI 模型")
+        st.warning(t()["no_parlay_combo_found"])
         return
 
     st.markdown("#### 📊 过关推荐结果")
@@ -6551,7 +6915,7 @@ def _runner_backtest_label(runner: Optional[Dict]) -> str:
 def _render_qin_suggestions(sorted_runners: List[Dict], key_prefix: str = "qin") -> None:
     """連贏組合推薦（展開即顯示，無二次扣費）"""
     if len(sorted_runners) < 2:
-        st.warning("馬匹數量不足，無法推薦連贏")
+        st.warning(t()["qin_insufficient_horses"])
         return
 
     top_n = min(5, len(sorted_runners))
@@ -6579,11 +6943,11 @@ def _render_qin_suggestions(sorted_runners: List[Dict], key_prefix: str = "qin")
     combinations.sort(key=lambda x: x["ev"], reverse=True)
     top_combos = combinations[:5]
     if not top_combos:
-        st.info("暫無連贏組合數據")
+        st.info(t()["no_qin_combos"])
         return
 
     if all(c["odds"] <= 0 for c in top_combos):
-        st.caption("⚠️ 缺少獨贏賠率，以下 EV 僅供參考（估算連贏賠率）")
+        st.caption(t()["missing_win_odds_hint"])
 
     selected = []
     for idx, combo in enumerate(top_combos):
@@ -6591,26 +6955,26 @@ def _render_qin_suggestions(sorted_runners: List[Dict], key_prefix: str = "qin")
         with col1:
             st.write(f"**{combo['name']}**")
         with col2:
-            st.write(f"賠率: {combo['odds']:.1f}倍" if combo["odds"] > 0 else "賠率: 估算")
+            st.write(f"{t()['odds_label']}: {combo['odds']:.1f}x" if combo["odds"] > 0 else f"{t()['odds_label']}: {t()['odds_estimated_label']}")
         with col3:
             ev_color = "🟢" if combo["ev"] > 0.15 else "🟡" if combo["ev"] > 0 else "🔴"
             st.write(f"{ev_color} EV: {combo['ev']:+.2f}")
         with col4:
-            if st.checkbox("選擇", key=f"{key_prefix}_pick_{idx}", value=combo["recommended"]):
+            if st.checkbox(t()["select_label"], key=f"{key_prefix}_pick_{idx}", value=combo["recommended"]):
                 selected.append(combo)
         st.markdown("---")
 
     if selected:
         total_stake = len(selected) * 20
-        st.success(f"✅ 已選擇 {len(selected)} 組，建議總投注額: HK${total_stake:.0f}")
+        st.success(t()["qin_selected_summary"].format(count=len(selected), stake=total_stake))
     else:
-        st.info("請勾選您感興趣的組合")
+        st.info(t()["select_combos_hint"])
 
 
 def _render_tri_suggestions(sorted_runners: List[Dict]) -> None:
     """單T 推薦（展開即顯示）"""
     if len(sorted_runners) < 3:
-        st.warning("馬匹數量不足，無法推薦單T")
+        st.warning(t()["tri_insufficient_horses"])
         return
 
     top3 = sorted_runners[:3]
@@ -6721,10 +7085,11 @@ def render_smart_betting(show_title: bool = True):
         with col3:
             model_choice = st.selectbox(
                 t()["ai_model"],
-                options=["评分系统", "LightGBM", "XGBoost", "集成模型"],
+                options=MODEL_CHOICE_OPTIONS,
                 index=1,
+                format_func=display_model_choice,
                 key="ml_model_choice",
-                help="选择预测模型：评分系统（规则驱动）、LightGBM、XGBoost 或集成模型"
+                help=t()["model_select_help"],
             )
         
         with col4:
@@ -6957,10 +7322,10 @@ def render_smart_betting(show_title: bool = True):
             st.caption("💡 修改后需点击「应用权重并刷新」才会生效" if lang == "zh" else "💡 Click 'Apply & Refresh' after modification to take effect")
         else:
             # 未付费，显示按钮
-            st.info("💡 点击下方按钮扣费（1次）后查看评分权重设置")
-            if st.button("💎 扣费查看评分权重设置", key="btn_scoring_weights", use_container_width=True):
+            st.info(t()["scoring_weights_paywall_hint"])
+            if st.button(t()["scoring_weights_paywall_btn"], key="btn_scoring_weights", use_container_width=True):
                 if not consume_free_trial(st.session_state.user_id):
-                    st.warning("免費次數已用完，請升級到專業版")
+                    st.warning(t()["free_trial_used"])
                 else:
                     st.session_state.paid_scoring_weights = True
                     st.session_state.expand_scoring_weights = True
@@ -6975,10 +7340,11 @@ def render_smart_betting(show_title: bool = True):
     perf_log["选择赛日"] = t1 - t0
     
     # ⭐ 日期模式选择（简洁样式，无大框）
-    st.caption("選擇日期模式")
+    st.caption(t()["date_mode_label"])
     date_mode = st.radio(
-        "選擇日期模式",
-        options=["未來賽事", "歷史賽事"],
+        t()["date_mode_label"],
+        options=[DATE_MODE_FUTURE, DATE_MODE_HISTORY],
+        format_func=_date_mode_label,
         index=0,
         horizontal=True,
         key="date_mode_select",
@@ -7004,7 +7370,7 @@ def render_smart_betting(show_title: bool = True):
                     st.warning(t()["no_races"])
     
     # ==================== 根据模式获取赛事列表 ====================
-    if date_mode == "未來賽事":
+    if date_mode == DATE_MODE_FUTURE:
         # 原有逻辑：获取未来14天赛事
         upcoming_races = get_cached_upcoming_races()
         if not upcoming_races:
@@ -7013,54 +7379,47 @@ def render_smart_betting(show_title: bool = True):
         
         valid_races = [r for r in upcoming_races if r.get('race_no', 0) > 0]
         if not valid_races:
-            st.warning("暂无详细赛事数据（排位表尚未公布）。请点击「刷新赛程」同步最新数据。")
+            st.warning(t()["no_race_detail_data"])
             valid_races = upcoming_races
         
         dates = sorted(set([r.get('race_date') for r in valid_races if r.get('race_date')]))
         
         if not dates:
-            st.info("暂无赛事")
+            st.info(t()["no_races_available"])
             return
         
-        date_options = [f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})" for d in dates]
+        date_options = [f"{d} ({_weekday_label(d)})" for d in dates]
         
-        selected_date_str = st.selectbox("選擇賽日", date_options, key="selected_race_date")
+        selected_date_str = st.selectbox(t()["select_race_day"], date_options, key="selected_race_date")
         selected_date = selected_date_str.split(" ")[0]
         
         races = [r for r in valid_races if r.get('race_date') == selected_date]
     
     else:
-        st.info(
-            "📅 歷史測試模式：評分僅用該賽日之前往績；ML 模型訓練亦只使用所選賽日之前數據（不含當日），避免洩露未來賽果。"
-            if lang == "zh"
-            else "Historical test mode: scoring and ML training use data strictly before the selected race day."
-        )
+        st.info(t()["historical_mode_info"])
         historical_races = get_cached_historical_race_summaries()
         if not historical_races:
-            st.warning("暂无历史赛事数据")
+            st.warning(t()["no_history_race_data"])
             return
 
         dates = sorted(
             {r.get("race_date") for r in historical_races if r.get("race_date")},
             reverse=True,
         )
-        date_options = [
-            f"{d} ({['星期一','星期二','星期三','星期四','星期五','星期六','星期日'][datetime.strptime(d, '%Y-%m-%d').weekday()]})"
-            for d in dates
-        ]
+        date_options = [f"{d} ({_weekday_label(d)})" for d in dates]
 
-        selected_date_str = st.selectbox("選擇歷史賽日", date_options, key="selected_history_date")
+        selected_date_str = st.selectbox(t()["select_history_race_day"], date_options, key="selected_history_date")
         selected_date = selected_date_str.split(" ")[0]
         races = [r for r in historical_races if r.get("race_date") == selected_date]
         races.sort(key=lambda x: x.get("race_no", 0))
 
-    prediction_cutoff_date = selected_date if date_mode == "歷史賽事" else None
+    prediction_cutoff_date = selected_date if date_mode == DATE_MODE_HISTORY else None
     #-------------
     # ==================== 单场分析 ====================
     st.markdown(f"### {t()['single_race_analysis']}")
     
     if not races:
-        st.warning("该日期暂无详细赛事数据")
+        st.warning(t()["no_race_detail_for_date"])
         return
     
     race_options = []
@@ -7070,17 +7429,28 @@ def render_smart_betting(show_title: bool = True):
         race_no = r.get('race_no', 0)
         race_time = r.get('scheduledStart', r.get('startTime', r.get('race_time', '')))
         
-        # 构建显示文本
         if distance and distance > 0:
             if race_time:
-                race_options.append(f"第{race_no}場 - {distance}米 ({race_class}) {race_time}")
+                race_options.append(tx(
+                    f"第{race_no}場 - {distance}米 ({race_class}) {race_time}",
+                    f"Race {race_no} - {distance}m ({race_class}) {race_time}",
+                ))
             else:
-                race_options.append(f"第{race_no}場 - {distance}米 ({race_class})")
+                race_options.append(tx(
+                    f"第{race_no}場 - {distance}米 ({race_class})",
+                    f"Race {race_no} - {distance}m ({race_class})",
+                ))
         else:
             if race_time:
-                race_options.append(f"第{race_no}場 ({race_class}) {race_time}")
+                race_options.append(tx(
+                    f"第{race_no}場 ({race_class}) {race_time}",
+                    f"Race {race_no} ({race_class}) {race_time}",
+                ))
             else:
-                race_options.append(f"第{race_no}場 ({race_class})")
+                race_options.append(tx(
+                    f"第{race_no}場 ({race_class})",
+                    f"Race {race_no} ({race_class})",
+                ))
     
     selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     #---------
@@ -7133,7 +7503,7 @@ def render_smart_betting(show_title: bool = True):
                         else:
                             st.warning(t()["update_failed"])
                     except Exception as e:
-                        st.error(f"同步失败: {e}")
+                        st.error(f"{t()['sync_failed']}: {e}")
                 else:
                     # 回退到原有方法
                     if sync_single_race(selected_race):
@@ -7215,7 +7585,7 @@ def render_smart_betting(show_title: bool = True):
                             model
                         )
                     except Exception as e:
-                        st.error(f"🔍 预测异常: {e}")
+                        st.error(f"{t()['prediction_error']}: {e}")
                         ml_probs = [0.34] * len(runners)
                 else:
                     ml_probs = [0.34] * len(runners)
@@ -7352,28 +7722,26 @@ def render_smart_betting(show_title: bool = True):
     st.caption(t()["ev_description"])
     
     # ==================== 折叠1：独赢/位置 ====================
-    with st.expander("🎯 獨贏/位置 推薦", expanded=False):
+    with st.expander(t()["win_place_recommend"], expanded=False):
         if recommendations.get('win') and recommendations['win']:
             rec = recommendations['win'][0]
             st.info(f"**{rec.description}**")
-            st.write(f"獨贏賠率: {rec.odds:.1f}倍")
-            st.write(f"預期ROI: {rec.roi:+.1f}%")
+            st.write(f"{t()['win_odds_label']}: {rec.odds:.1f}x")
+            st.write(f"{t()['expected_roi_label']}: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
         elif recommendations.get('place') and recommendations['place']:
             rec = recommendations['place'][0]
             st.info(f"**{rec.description}**")
-            st.write(f"位置賠率: {rec.odds:.1f}倍")
-            st.write(f"預期ROI: {rec.roi:+.1f}%")
+            st.write(f"{t()['place_odds_label']}: {rec.odds:.1f}x")
+            st.write(f"{t()['expected_roi_label']}: {rec.roi:+.1f}%")
             st.caption(f"💡 {rec.reason}")
         else:
-            st.write("暫無建議")
+            st.write(t()["no_suggestions"])
     
-    # ==================== 連贏推薦 ====================
-    with st.expander("🔗 連贏 推薦", expanded=False):
+    with st.expander(t()["qin_recommend_expander"], expanded=False):
         _render_qin_suggestions(sorted_runners, key_prefix="qin_fold")
 
-    # ==================== 單T推薦 ====================
-    with st.expander("🎲 單T 推薦", expanded=False):
+    with st.expander(t()["tri_recommend_expander"], expanded=False):
         _render_tri_suggestions(sorted_runners)
 
     st.markdown("---")
@@ -7386,13 +7754,16 @@ def render_smart_betting(show_title: bool = True):
     
     if current_races_for_parlay and len(current_races_for_parlay) >= 2:
         # 让用户選擇要過關的場次
-        st.markdown("**選擇要過關的場次**")
+        st.markdown(f"**{t()['parlay_select_races_title']}**")
         
         parlay_race_options = []
         for r in current_races_for_parlay:
             distance = r.get('distance', 0)
             race_class = r.get('race_class', '')
-            parlay_race_options.append(f"第{r.get('race_no')}場 - {distance}米 ({race_class})")
+            parlay_race_options.append(tx(
+                f"第{r.get('race_no')}場 - {distance}米 ({race_class})",
+                f"Race {r.get('race_no')} - {distance}m ({race_class})",
+            ))
         
         # 多选框
         selected_parlay_indices = st.multiselect(
@@ -7404,13 +7775,13 @@ def render_smart_betting(show_title: bool = True):
         )
         
         if len(selected_parlay_indices) >= 2:
-            st.caption(f"已选择 {len(selected_parlay_indices)} 场比赛")
+            st.caption(t()["selected_races_count"].format(count=len(selected_parlay_indices)))
             parlay_cache_key = _parlay_schedule_cache_key(
                 selected_parlay_indices, model_choice, selected_date, prediction_cutoff_date
             )
 
             if st.button("🎲 生成過關推薦", key="generate_parlay_schedule", use_container_width=True):
-                with st.spinner("正在計算過關推薦..."):
+                with st.spinner(t()["calculating_parlay_schedule"]):
                     weights_config = None
                     if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
                         weights_config = st.session_state.get("user_scoring_config", {})
@@ -7425,7 +7796,7 @@ def render_smart_betting(show_title: bool = True):
                     if len(parlay_races_data) < 2:
                         st.session_state.pop("parlay_schedule_results", None)
                         st.session_state.pop("parlay_schedule_cache_key", None)
-                        st.warning("所选场次数据不足，请尝试选择更多场次")
+                        st.warning(t()["parlay_insufficient_data"])
                     else:
                         max_legs = min(len(parlay_races_data), 6)
                         results, recommender = _compute_parlay_schedule_results(
@@ -7440,7 +7811,7 @@ def render_smart_betting(show_title: bool = True):
                 display_recommender = ParlayRecommender()
                 _display_parlay_schedule_results(cached_results, display_recommender)
             else:
-                st.caption("選好場次後，點擊「🎲 生成過關推薦」查看最優 2串1 / 3串1 等組合")
+                st.caption(t()["parlay_select_hint"])
     
     st.markdown("---")
     
@@ -7450,9 +7821,9 @@ def render_smart_betting(show_title: bool = True):
     #----------------
     if st.button(t()["generate_full_day"], key="generate_full_day", use_container_width=True, type="primary"):
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
-            with st.spinner("正在計算全天投注策略..."):
+            with st.spinner(t()["calculating_full_day"]):
                 all_bets = []
                 total_stake = 0
                 total_expected = 0
@@ -7501,12 +7872,12 @@ def render_smart_betting(show_title: bool = True):
 
                         if stake >= 10:
                             all_bets.append({
-                                "場次": f"第{race.get('race_no')}場",
-                                "馬匹": _horse_display_label(horse),
-                                "賠率": odds,
-                                "勝率": f"{prob*100:.1f}%",
-                                "建議注額": f"HK${stake:.0f}",
-                                "期望值": f"${expected:.0f}"
+                                t()["col_race_no"]: f"{tx('第', 'Race ')}{race.get('race_no')}{tx('場', '')}",
+                                t()["col_horse"]: _horse_display_label(horse),
+                                t()["col_odds"]: odds,
+                                t()["col_win_rate"]: f"{prob*100:.1f}%",
+                                t()["col_suggested_amount"]: f"HK${stake:.0f}",
+                                t()["col_expected_value"]: f"${expected:.0f}"
                             })
                             total_stake += stake
                             total_expected += expected
@@ -7515,20 +7886,20 @@ def render_smart_betting(show_title: bool = True):
                     st.dataframe(pd.DataFrame(all_bets), use_container_width=True, hide_index=True)
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("💰 總投注額", f"HK${total_stake:.0f}")
+                        st.metric(t()["total_stake_metric"], f"HK${total_stake:.0f}")
                     with col2:
-                        st.metric("📈 總期望值", f"${total_expected:+.0f}")
+                        st.metric(t()["total_ev_metric"], f"${total_expected:+.0f}")
                     with col3:
                         roi = (total_expected / total_stake * 100) if total_stake > 0 else 0
-                        st.metric("📊 預期ROI", f"{roi:+.1f}%")
+                        st.metric(t()["expected_roi_metric"], f"{roi:+.1f}%")
                 else:
-                    st.warning("未找到符合條件的投注機會")
+                    st.warning(t()["no_betting_opportunities"])
 
     st.markdown("---")
-    st.markdown(f"### 💰 {_model_section_title('赛日最优组合', model_choice)}")
-    st.caption("约 HK$1,000 预算 · 独赢/位置/连赢/单T/三重彩/孖宝 · EV 比例分配（最低 HK$10/注）")
+    st.markdown(f"### 💰 {_model_section_title(t()['day_portfolio_title'], model_choice)}")
+    st.caption(t()["day_portfolio_desc"])
     portfolio_budget = st.number_input(
-        "赛日预算 (HK$)",
+        t()["day_portfolio_budget_label"],
         min_value=100,
         max_value=10000,
         value=1000,
@@ -7536,7 +7907,7 @@ def render_smart_betting(show_title: bool = True):
         key="day_portfolio_budget",
     )
     portfolio_min_ev = st.slider(
-        "最低 EV 门槛",
+        t()["min_ev_threshold"],
         min_value=0.0,
         max_value=0.5,
         value=0.0,
@@ -7544,11 +7915,11 @@ def render_smart_betting(show_title: bool = True):
         format="%.2f",
         key="day_portfolio_min_ev",
     )
-    if st.button("🎯 生成赛日最优组合", key="generate_day_portfolio", use_container_width=True, type="primary"):
+    if st.button(t()["generate_day_portfolio"], key="generate_day_portfolio", use_container_width=True, type="primary"):
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
-            with st.spinner("正在优化赛日组合..."):
+            with st.spinner(t()["optimizing_day_portfolio"]):
                 weights_config = None
                 if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
                     weights_config = st.session_state.get("user_scoring_config", {})
@@ -7582,9 +7953,9 @@ def render_smart_betting(show_title: bool = True):
     #--------------------
     if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True):
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
-            with st.spinner("正在計算過關組合..."):
+            with st.spinner(t()["calculating_parlay"]):
                 confidence_horses = []
                 ml_model = None
                 ml_model_type = None
@@ -7626,9 +7997,9 @@ def render_smart_betting(show_title: bool = True):
                 if parlay_results:
                     st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
                     if len(confidence_horses) < 3:
-                        st.caption("💡 3串1 需至少 3 場勝率≥20% 的信心馬；目前僅列出 2串1。")
+                        st.caption(t()["parlay_3leg_hint"])
                 else:
-                    st.info("暫無符合條件的過關組合（需正期望值 EV>0）")
+                    st.info(t()["no_parlay_combos"])
     
     st.markdown("---")
     st.caption(t()["disclaimer"])
@@ -7661,7 +8032,7 @@ def sync_single_race(race: Dict) -> bool:
     
     if analyze_with_deepseek:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
             with st.spinner("DeepSeek 正在分析..."):
                 # 构建赛事信息
@@ -7686,9 +8057,9 @@ def sync_single_race(race: Dict) -> bool:
     
     if st.button("🚀 生成全天投注策略", key="generate_full_day", use_container_width=True, type="primary"):
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
-            with st.spinner("正在計算全天投注策略..."):
+            with st.spinner(t()["calculating_full_day"]):
                 all_bets = []
                 total_stake = 0
                 total_expected_value = 0
@@ -7781,7 +8152,7 @@ def sync_single_race(race: Dict) -> bool:
     st.caption("基於各場信心馬匹，推薦2串1、3串1過關組合")
 
     if st.button("🎲 生成過關組合", key="generate_parlay", use_container_width=True):
-        with st.spinner("正在計算過關組合..."):
+        with st.spinner(t()["calculating_parlay"]):
             confidence_horses = []
             
             # 收集所有赛事的信心马
@@ -9749,20 +10120,20 @@ def run_day_portfolio_backtest(
     fast_mode=True 时每周重训一次模型（快速模式）。
     """
     if not DAY_PORTFOLIO_OK:
-        st.error(f"赛日组合优化模块加载失败: {DAY_PORTFOLIO_IMPORT_ERROR}")
+        st.error(f"{t()['day_portfolio_import_failed']}: {DAY_PORTFOLIO_IMPORT_ERROR}")
         return {}
 
     model_label = "LightGBM" if model_type == "lightgbm" else "XGBoost"
     if model_type == "lightgbm" and not LGB_AVAILABLE:
-        st.error("LightGBM 未安装")
+        st.error(t()["lightgbm_not_installed"])
         return {}
     if model_type == "xgboost" and not XGB_AVAILABLE:
-        st.error("XGBoost 未安装")
+        st.error(t()["xgboost_not_installed"])
         return {}
 
     all_performances = get_performances_batch(start_date, end_date)
     if not all_performances:
-        st.error("未獲取到任何數據")
+        st.error(t()["no_data_fetched"])
         return {}
 
     incident_texts = [p.get("incident", "") for p in all_performances if p.get("incident")]
@@ -9771,7 +10142,7 @@ def run_day_portfolio_backtest(
     horse_cache = build_horse_performances_cache(all_performances)
     races = get_races_from_performances(all_performances)
     if not races:
-        st.warning("未找到任何賽事")
+        st.warning(t()["no_races_found"])
         return {}
 
     race_days = _group_race_days(races)
@@ -9794,10 +10165,13 @@ def run_day_portfolio_backtest(
 
     for idx, (race_date, venue) in enumerate(sorted_day_keys):
         if st.session_state.get("stop_backtest", False):
-            st.warning("⚠️ 回測已被用戶取消")
+            st.warning(t()["backtest_cancelled"])
             break
 
-        status_text.text(f"赛日组合回测 {model_label}: {race_date} {venue} ({idx + 1}/{len(sorted_day_keys)})")
+        status_text.text(t()["day_portfolio_backtest_progress"].format(
+            model=model_label, date=race_date, venue=venue,
+            current=idx + 1, total=len(sorted_day_keys),
+        ))
         progress_bar.progress((idx + 1) / len(sorted_day_keys))
 
         train_key = race_date
@@ -9915,20 +10289,20 @@ def build_live_day_portfolio(
 def _display_day_portfolio_backtest_summary(result: Dict) -> None:
     if not result:
         return
-    st.markdown(f"#### 📈 赛日组合策略回测（{result.get('model', '')}）")
-    mode_label = "快速（每周重训）" if result.get("fast_mode") else "标准 walk-forward"
-    st.caption(f"模式：{mode_label} · 赛日数 {result.get('day_count', 0)} · 彩池：独赢/位置/连赢/单T/三重彩/孖宝")
+    st.markdown(f"#### {t()['day_portfolio_backtest_title'].format(model=result.get('model', ''))}")
+    mode_label = t()["day_portfolio_mode_fast"] if result.get("fast_mode") else t()["day_portfolio_mode_std"]
+    st.caption(t()["day_portfolio_backtest_caption"].format(mode=mode_label, days=result.get("day_count", 0)))
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.metric("赛日数", result.get("day_count", 0))
-        st.metric("总注数", result.get("total_bets", 0))
+        st.metric(t()["metric_day_count"], result.get("day_count", 0))
+        st.metric(t()["metric_total_bets"], result.get("total_bets", 0))
     with c2:
-        st.metric("命中注数", result.get("total_hits", 0))
-        st.metric("命中率", f"{result.get('hit_rate', 0):.1f}%")
+        st.metric(t()["metric_hit_bets"], result.get("total_hits", 0))
+        st.metric(t()["metric_hit_rate"], f"{result.get('hit_rate', 0):.1f}%")
     with c3:
-        st.metric("总投入", f"${result.get('total_stake', 0):,.0f}")
-        st.metric("总回报", f"${result.get('total_return', 0):,.0f}")
+        st.metric(t()["metric_total_stake"], f"${result.get('total_stake', 0):,.0f}")
+        st.metric(t()["metric_total_return"], f"${result.get('total_return', 0):,.0f}")
     with c4:
         roi = result.get("roi", 0)
         st.metric("ROI", f"{'🟢' if roi > 0 else '🔴'} {roi:+.1f}%")
@@ -9938,42 +10312,42 @@ def _display_day_portfolio_backtest_summary(result: Dict) -> None:
         for bet in day.bets:
             c = bet.candidate
             rows.append({
-                "赛日": day.race_date,
-                "场地": day.venue,
-                "彩池": c.pool,
-                "内容": c.description,
-                "赔率": f"{c.odds:.1f}",
-                "估算": "是" if c.odds_estimated else "否",
-                "EV": f"{c.ev:+.2f}",
-                "金额": f"${bet.stake:.0f}",
-                "命中": "✅" if bet.actual_hit else "❌",
-                "回报": f"${bet.actual_return or 0:.0f}",
-                "盈亏": f"${bet.profit or 0:+.0f}",
+                t()["col_race_day"]: day.race_date,
+                t()["col_venue"]: day.venue,
+                t()["col_pool"]: c.pool,
+                t()["col_content"]: c.description,
+                t()["col_odds"]: f"{c.odds:.1f}",
+                t()["col_estimated"]: t()["col_yes"] if c.odds_estimated else t()["col_no"],
+                t()["ev"]: f"{c.ev:+.2f}",
+                t()["col_stake"]: f"${bet.stake:.0f}",
+                t()["col_hit"]: "✅" if bet.actual_hit else "❌",
+                t()["col_return"]: f"${bet.actual_return or 0:.0f}",
+                t()["col_profit"]: f"${bet.profit or 0:+.0f}",
             })
     if rows:
-        with st.expander("📋 逐注明细", expanded=False):
+        with st.expander(t()["portfolio_bet_details"], expanded=False):
             st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 def _display_live_day_portfolio(result: DayPortfolioResult, budget: float) -> None:
     if not result or not result.bets:
-        st.warning("未找到符合条件的赛日组合（无正 EV 注项）")
+        st.warning(t()["no_day_portfolio_bets"])
         return
-    st.markdown("#### 💰 赛日最优组合推荐")
-    st.caption(f"目标预算约 HK${budget:,.0f} · 实际分配 HK${result.total_stake:,.0f} · 含独赢/位置/连赢/单T/三重彩/孖宝")
+    st.markdown(f"#### {t()['day_portfolio_live_title']}")
+    st.caption(t()["day_portfolio_live_caption"].format(budget=budget, stake=result.total_stake))
     rows = []
     for bet in result.bets:
         c = bet.candidate
         rows.append({
-            "彩池": c.pool,
-            "推荐": c.description,
-            "赔率": f"{c.odds:.1f}{'*' if c.odds_estimated else ''}",
-            "概率": f"{c.probability * 100:.1f}%",
-            "EV": f"{c.ev:+.2f}",
-            "建议金额": f"HK${bet.stake:.0f}",
+            t()["col_pool"]: c.pool,
+            t()["col_recommendation"]: c.description,
+            t()["col_odds"]: f"{c.odds:.1f}{'*' if c.odds_estimated else ''}",
+            t()["col_probability"]: f"{c.probability * 100:.1f}%",
+            t()["ev"]: f"{c.ev:+.2f}",
+            t()["col_suggested_stake"]: f"HK${bet.stake:.0f}",
         })
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.caption("* 星号表示估算赔率")
+    st.caption(t()["estimated_odds_footnote"])
 
 
 #----------
@@ -10920,7 +11294,7 @@ def _display_model_backtest_results(results: List[Dict]) -> None:
 def render_backtest_page(show_title: bool = True):
     """回测页面：模型对比 + 单场回测 + 全天回测"""
     if show_title:
-        st.markdown("## 📊 回測")
+        st.markdown(f"## {t()['backtest']}")
     
     # ==================== 模型对比回测 ====================
     st.markdown(f"## {t()['model_comparison']}")
@@ -10969,35 +11343,37 @@ def render_backtest_page(show_title: bool = True):
     with col_m1:
         enable_rule = st.checkbox(t()["rating_system"], value=True, key="backtest_rule")
     with col_m2:
-        enable_lgb = st.checkbox("LightGBM", value=LGB_AVAILABLE, key="backtest_lgb",
+        enable_lgb = st.checkbox(t()["lightgbm"], value=LGB_AVAILABLE, key="backtest_lgb",
                                  disabled=not LGB_AVAILABLE,
-                                 help="需要安装 lightgbm 库" if not LGB_AVAILABLE else "")
+                                 help=t()["install_lightgbm_help"] if not LGB_AVAILABLE else "")
     with col_m3:
-        enable_xgb = st.checkbox("XGBoost", value=XGB_AVAILABLE, key="backtest_xgb",
+        enable_xgb = st.checkbox(t()["xgboost"], value=XGB_AVAILABLE, key="backtest_xgb",
                                  disabled=not XGB_AVAILABLE,
-                                 help="需要安装 xgboost 库" if not XGB_AVAILABLE else "")
+                                 help=t()["install_xgboost_help"] if not XGB_AVAILABLE else "")
     with col_m4:
-        enable_ensemble = st.checkbox("集成模型", value=(LGB_AVAILABLE or XGB_AVAILABLE), key="backtest_ensemble",
+        enable_ensemble = st.checkbox(t()["ensemble"], value=(LGB_AVAILABLE or XGB_AVAILABLE), key="backtest_ensemble",
                                       disabled=(not LGB_AVAILABLE and not XGB_AVAILABLE),
-                                      help="需要安装 lightgbm 或 xgboost 库" if (not LGB_AVAILABLE and not XGB_AVAILABLE) else "")
+                                      help=t()["ml_install_hint"] if (not LGB_AVAILABLE and not XGB_AVAILABLE) else "")
     
     if not LGB_AVAILABLE and not XGB_AVAILABLE:
-        st.info("💡 提示：LightGBM 和 XGBoost 库未安装。要启用 ML 模型回测，请运行：\n```\npip install lightgbm xgboost\n```")
+        st.info(f"💡 {t()['ml_install_hint']}:\n```\npip install lightgbm xgboost\n```")
     
     st.markdown("---")
     
     # 运行回测
     if run_backtest_btn:
         if not consume_free_trial(st.session_state.user_id):
-            st.warning("免費次數已用完，請升級到專業版")
+            st.warning(t()["free_trial_used"])
         else:
             if backtest_start > backtest_end:
-                st.error("開始日期不能晚於結束日期")
+                st.error(t()["invalid_date_range"])
             else:
                 days_diff = (backtest_end - backtest_start).days
-                st.info(f"📊 回測期間: {backtest_start} 至 {backtest_end} (共 {days_diff} 天)")
+                st.info(t()["backtest_period_info"].format(
+                    start=backtest_start, end=backtest_end, days=days_diff,
+                ))
                 
-                with st.spinner("正在運行模型對比回測..."):
+                with st.spinner(t()["running_model_backtest"]):
                     results = []
                     
                     if enable_rule:
@@ -11042,7 +11418,7 @@ def render_backtest_page(show_title: bool = True):
     #-------------
 # ==================== 赛日组合策略回测 ====================
     st.markdown(f"## {t()['strategy_backtest']}")
-    st.caption("每日约 HK$1,000 在独赢/位置/连赢/单T/三重彩/孖宝间 EV 优化分配 · 与智能投注共用同一优化器")
+    st.caption(t()["strategy_backtest_caption"])
 
     strat_col1, strat_col2, strat_col3, strat_col4, strat_col5, strat_col6 = st.columns(6)
 
@@ -11072,16 +11448,16 @@ def render_backtest_page(show_title: bool = True):
 
     with strat_col3:
         strategy_model = st.selectbox(
-            "AI 模型",
+            t()["ai_model"],
             options=strategy_model_options,
             index=default_model_idx,
             key="strategy_backtest_model",
-            help="策略回测使用的 ML 模型（默认 LightGBM）"
+            help=t()["strategy_model_help"],
         )
 
     with strat_col4:
         portfolio_budget = st.number_input(
-            "赛日预算 (HK$)",
+            t()["day_portfolio_budget_label"],
             min_value=100,
             max_value=5000,
             value=1000,
@@ -11098,15 +11474,15 @@ def render_backtest_page(show_title: bool = True):
             step=0.05,
             format="%.2f",
             key="min_ev_threshold",
-            help="只投注期望值大於此門檻的建議"
+            help=t()["min_ev_help"],
         )
 
     with strat_col6:
         fast_mode = st.checkbox(
-            "快速模式（每周重训）",
+            t()["fast_mode_label"],
             value=False,
             key="strategy_fast_mode",
-            help="标准模式：每个赛日 walk-forward 重训；快速模式：每周重训一次以加快回测"
+            help=t()["fast_mode_help"],
         )
 
     run_strategy_backtest_btn = st.button(
@@ -11130,7 +11506,7 @@ def render_backtest_page(show_title: bool = True):
             )
 
             if cache_key not in st.session_state:
-                with st.spinner(f"正在运行赛日组合策略回测（{strategy_model}）..."):
+                with st.spinner(t()["running_day_portfolio_backtest"].format(model=strategy_model)):
                     result = run_day_portfolio_backtest(
                         start_date,
                         end_date,
@@ -11142,12 +11518,12 @@ def render_backtest_page(show_title: bool = True):
                     st.session_state[cache_key] = result
             else:
                 result = st.session_state[cache_key]
-                st.info("📋 使用缓存的回测结果")
+                st.info(t()["using_cached_backtest"])
 
             if result and result.get("total_bets", 0) > 0:
                 _display_day_portfolio_backtest_summary(result)
             elif result:
-                st.warning("回测完成但未产生任何投注（请尝试扩大日期范围或降低 EV 门槛）")
+                st.warning(t()["backtest_no_bets"])
 
     st.caption(t()['disclaimer_backtest'])
 
