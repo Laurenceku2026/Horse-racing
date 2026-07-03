@@ -347,6 +347,19 @@ TEXTS = {
         "overall_score": "綜合評分",
         "ev": "期望值",
         "no_data": "暫無出賽馬匹數據",
+        "realtime_odds_analysis": "📈 實時賠率分析",
+        "realtime_odds_caption": "最多 26 個關鍵時間點（開賽前 90→0 分鐘），由 Node.js 自動採集寫入 Supabase",
+        "realtime_odds_no_data": "暫無賠率快照。未來賽事將在開賽前自動採集；歷史賽事若曾採集過也會顯示。",
+        "realtime_odds_latest": "最新賠率快照",
+        "realtime_odds_trend": "賠率走勢（距開賽分鐘）",
+        "realtime_odds_snapshots": "快照數",
+        "realtime_odds_min_before": "距開賽（分鐘）",
+        "realtime_odds_recorded_at": "採集時間",
+        "realtime_odds_detail": "各時間點明細",
+        "realtime_odds_points": "已採集 {count} 個時間點",
+        "realtime_odds_opening": "早段賠率",
+        "realtime_odds_latest_val": "最新賠率",
+        "realtime_odds_change": "變化",
         
         # ==================== 回测页面 ====================
         "backtest": "📊 回測",
@@ -795,6 +808,19 @@ Let AI be your racing assistant.
         "overall_score": "Score",
         "ev": "EV",
         "no_data": "No runner data",
+        "realtime_odds_analysis": "📈 Real-time Odds Analysis",
+        "realtime_odds_caption": "Up to 26 key snapshots (90→0 min before post), auto-collected via Node.js into Supabase",
+        "realtime_odds_no_data": "No odds snapshots yet. Future races are collected automatically before post time; historical races show data if previously collected.",
+        "realtime_odds_latest": "Latest Odds Snapshots",
+        "realtime_odds_trend": "Odds Trend (minutes before post)",
+        "realtime_odds_snapshots": "Snapshots",
+        "realtime_odds_min_before": "Min before post",
+        "realtime_odds_recorded_at": "Recorded at",
+        "realtime_odds_detail": "Time-point detail",
+        "realtime_odds_points": "{count} time points captured",
+        "realtime_odds_opening": "Opening odds",
+        "realtime_odds_latest_val": "Latest odds",
+        "realtime_odds_change": "Change",
         
         # ==================== Backtest Page ====================
         "backtest": "📊 Backtest",
@@ -7287,6 +7313,230 @@ def _horse_display_label(runner: Dict) -> str:
     )
 
 
+ODDS_KEY_MINUTES = [
+    90, 80, 70, 60, 50, 45, 40, 35, 30, 27, 24, 21,
+    18, 15, 12, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+]
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_race_odds_history(race_date: str, venue: str, race_no: int) -> List[Dict]:
+    """Fetch WIN/PLA odds time series from odds_history."""
+    if not SUPABASE_URL or not race_date:
+        return []
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = (
+            f"{SUPABASE_URL}/rest/v1/odds_history"
+            f"?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
+            f"&odds_type=in.(WIN,PLA)"
+            f"&select=horse_no,odds_type,odds_value,recorded_at,minutes_before_race"
+            f"&order=minutes_before_race.desc"
+            f"&limit=5000"
+        )
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            return []
+        rows = response.json() or []
+        cleaned: List[Dict] = []
+        for row in rows:
+            try:
+                odds_val = float(row.get("odds_value") or 0)
+            except (TypeError, ValueError):
+                continue
+            if odds_val <= 0:
+                continue
+            hno = row.get("horse_no")
+            if hno in (None, "", 0, "0"):
+                continue
+            cleaned.append(
+                {
+                    "horse_no": str(hno).strip(),
+                    "odds_type": row.get("odds_type"),
+                    "odds_value": odds_val,
+                    "recorded_at": row.get("recorded_at"),
+                    "minutes_before_race": row.get("minutes_before_race"),
+                }
+            )
+        return cleaned
+    except Exception as exc:
+        print(f"fetch_race_odds_history failed: {exc}")
+        return []
+
+
+def _odds_rows_for_pool(rows: List[Dict], odds_type: str) -> List[Dict]:
+    return [r for r in rows if r.get("odds_type") == odds_type]
+
+
+def _dedupe_odds_snapshots(pool_rows: List[Dict]) -> List[Dict]:
+    """Keep one row per horse per minutes_before_race (latest recorded_at)."""
+    best: Dict[Tuple[str, int], Dict] = {}
+    for row in pool_rows:
+        mins = row.get("minutes_before_race")
+        if mins is None:
+            continue
+        try:
+            mins_key = int(mins)
+        except (TypeError, ValueError):
+            continue
+        key = (row.get("horse_no"), mins_key)
+        prev = best.get(key)
+        if prev is None or (row.get("recorded_at") or "") >= (prev.get("recorded_at") or ""):
+            best[key] = row
+    return list(best.values())
+
+
+def _build_odds_summary_table(
+    pool_rows: List[Dict],
+    runners: List[Dict],
+) -> pd.DataFrame:
+    texts = t()
+    deduped = _dedupe_odds_snapshots(pool_rows)
+    by_horse: Dict[str, List[Dict]] = {}
+    for row in deduped:
+        by_horse.setdefault(row["horse_no"], []).append(row)
+
+    name_map = {str(r.get("horse_no")): _horse_display_label(r) for r in runners}
+    table_rows = []
+    horse_order = [str(r.get("horse_no")) for r in runners if r.get("horse_no") is not None]
+    extra_horses = sorted(set(by_horse.keys()) - set(horse_order), key=lambda x: int(x) if x.isdigit() else 999)
+    for hno in horse_order + extra_horses:
+        snaps = by_horse.get(hno, [])
+        if not snaps:
+            continue
+        snaps.sort(key=lambda x: x.get("minutes_before_race", 0), reverse=True)
+        opening = snaps[0]
+        latest = snaps[-1]
+        open_val = float(opening.get("odds_value", 0))
+        latest_val = float(latest.get("odds_value", 0))
+        change = latest_val - open_val if open_val > 0 else 0.0
+        table_rows.append(
+            {
+                texts["horse_no"]: hno,
+                texts["horse_name"]: name_map.get(hno, hno),
+                texts["realtime_odds_opening"]: f"{open_val:.1f}",
+                texts["realtime_odds_latest_val"]: f"{latest_val:.1f}",
+                texts["realtime_odds_change"]: f"{change:+.1f}",
+                texts["realtime_odds_snapshots"]: len(snaps),
+            }
+        )
+    return pd.DataFrame(table_rows)
+
+
+def _build_odds_trend_figure(pool_rows: List[Dict], runners: List[Dict], odds_type: str) -> go.Figure:
+    texts = t()
+    deduped = _dedupe_odds_snapshots(pool_rows)
+    name_map = {str(r.get("horse_no")): _horse_display_label(r) for r in runners}
+    fig = go.Figure()
+    for hno in sorted({r["horse_no"] for r in deduped}, key=lambda x: int(x) if x.isdigit() else 999):
+        horse_rows = [r for r in deduped if r["horse_no"] == hno]
+        horse_rows.sort(key=lambda x: x.get("minutes_before_race", 0), reverse=True)
+        if not horse_rows:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[r.get("minutes_before_race") for r in horse_rows],
+                y=[r.get("odds_value") for r in horse_rows],
+                mode="lines+markers",
+                name=name_map.get(hno, f"#{hno}"),
+                hovertemplate=(
+                    f"{texts['horse_no']} {hno}<br>"
+                    f"{texts['realtime_odds_min_before']}: %{{x}}<br>"
+                    f"{texts['win_odds' if odds_type == 'WIN' else 'place_odds']}: %{{y:.1f}}<extra></extra>"
+                ),
+            )
+        )
+    y_label = texts["win_odds"] if odds_type == "WIN" else texts["place_odds"]
+    fig.update_layout(
+        title=texts["realtime_odds_trend"],
+        xaxis_title=texts["realtime_odds_min_before"],
+        yaxis_title=y_label,
+        xaxis=dict(autorange="reversed"),
+        height=420,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=20, t=60, b=40),
+    )
+    return fig
+
+
+def _render_odds_detail_table(pool_rows: List[Dict], runners: List[Dict], odds_type: str, key_prefix: str) -> None:
+    texts = t()
+    deduped = _dedupe_odds_snapshots(pool_rows)
+    name_map = {str(r.get("horse_no")): _horse_display_label(r) for r in runners}
+    horse_options = [str(r.get("horse_no")) for r in runners if r.get("horse_no") is not None]
+    if not horse_options:
+        horse_options = sorted({r["horse_no"] for r in deduped}, key=lambda x: int(x) if x.isdigit() else 999)
+    if not horse_options:
+        return
+
+    selected_hno = st.selectbox(
+        texts["horse_name"],
+        options=horse_options,
+        format_func=lambda h: name_map.get(str(h), str(h)),
+        key=f"{key_prefix}_horse_detail",
+    )
+    horse_rows = [r for r in deduped if r["horse_no"] == str(selected_hno)]
+    horse_rows.sort(key=lambda x: x.get("minutes_before_race", 0), reverse=True)
+    detail_rows = []
+    for row in horse_rows:
+        recorded = row.get("recorded_at") or ""
+        if recorded:
+            recorded = recorded[:16].replace("T", " ")
+        detail_rows.append(
+            {
+                texts["realtime_odds_min_before"]: row.get("minutes_before_race"),
+                texts["win_odds" if odds_type == "WIN" else "place_odds"]: f"{row.get('odds_value', 0):.1f}",
+                texts["realtime_odds_recorded_at"]: recorded or "-",
+            }
+        )
+    if detail_rows:
+        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
+
+def _render_realtime_odds_analysis(selected_race: Dict, sorted_runners: List[Dict]) -> None:
+    """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
+    texts = t()
+    with st.expander(texts["realtime_odds_analysis"], expanded=False):
+        st.caption(texts["realtime_odds_caption"])
+        race_date = selected_race.get("race_date")
+        venue = selected_race.get("venue", "ST")
+        race_no = selected_race.get("race_no")
+        rows = fetch_race_odds_history(race_date, venue, int(race_no))
+        if not rows:
+            st.info(texts["realtime_odds_no_data"])
+            return
+
+        win_rows = _odds_rows_for_pool(rows, "WIN")
+        pla_rows = _odds_rows_for_pool(rows, "PLA")
+        unique_mins = len({r.get("minutes_before_race") for r in _dedupe_odds_snapshots(rows) if r.get("minutes_before_race") is not None})
+        st.caption(texts["realtime_odds_points"].format(count=unique_mins))
+
+        tab_win, tab_pla = st.tabs([texts["win_odds"], texts["place_odds"]])
+        with tab_win:
+            if not win_rows:
+                st.info(texts["realtime_odds_no_data"])
+            else:
+                st.markdown(f"**{texts['realtime_odds_latest']}**")
+                summary = _build_odds_summary_table(win_rows, sorted_runners)
+                if not summary.empty:
+                    st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.plotly_chart(_build_odds_trend_figure(win_rows, sorted_runners, "WIN"), use_container_width=True)
+                with st.expander(texts["realtime_odds_detail"], expanded=False):
+                    _render_odds_detail_table(win_rows, sorted_runners, "WIN", "win_odds")
+
+        with tab_pla:
+            if not pla_rows:
+                st.info(texts["realtime_odds_no_data"])
+            else:
+                st.markdown(f"**{texts['realtime_odds_latest']}**")
+                summary = _build_odds_summary_table(pla_rows, sorted_runners)
+                if not summary.empty:
+                    st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.plotly_chart(_build_odds_trend_figure(pla_rows, sorted_runners, "PLA"), use_container_width=True)
+                with st.expander(texts["realtime_odds_detail"], expanded=False):
+                    _render_odds_detail_table(pla_rows, sorted_runners, "PLA", "pla_odds")
+
+
 def _backtest_horse_label(name: str, horse_no=None, record: Optional[Dict] = None) -> str:
     from betting_strategy_engine import format_horse_display
     if record:
@@ -8122,6 +8372,8 @@ def render_smart_betting(show_title: bool = True):
     
     t5 = time.time()
     perf_log["显示表格"] = t5 - t4
+
+    _render_realtime_odds_analysis(selected_race, sorted_runners)
         
     #------------
     # ==================== AI 投注策略建议（折叠版） ====================
