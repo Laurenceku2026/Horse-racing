@@ -211,7 +211,7 @@ TEXTS = {
         "jockey_count": "騎師總數",
         "trainer_count": "練馬師總數",
         "date_range": "數據日期範圍",
-        "update_all_data": "更新所有数据",
+        "update_all_data": "更新所有數據",
         "horse_rating_title": "全馬基礎評分榜",
         "horse_rating_desc": "📌 基於最近 N 場歷史表現計算，分數越高代表整體實力越強。",
         "calculate_games": "計算場次",
@@ -220,10 +220,9 @@ TEXTS = {
         "recent_n_games_format": "最近 {n} 場",
         "rating_calculating": "正在計算馬匹評分（{scope}）...",
         "data_update": "🔄 數據更新",
-        "update_all_data": "更新所有数据",
-        "checking_update": "正在检查并更新数据...",
-        "update_complete": "✅ 更新完成！新增 {new_races} 场赛事，{new_records} 条成绩记录",
-        "update_failed": "更新失败",
+        "checking_update": "正在檢查並更新數據...",
+        "update_complete": "✅ 更新完成！新增 {new_races} 場賽事，{new_records} 條成績記錄",
+        "update_failed": "更新失敗",
         "qin_ev_insufficient": "連贏組合 {horse1} + {horse2} 期望值不足，暫不推薦",
         "qin_recommendation": "🔗 連贏推薦",
         "qin_no_odds": "暫無連贏賠率數據",
@@ -233,7 +232,7 @@ TEXTS = {
         "race_table_title": "第{race_no}場 出賽馬匹",
         "run_backtest": "▶️ 運行模型對比回測",
         "select_models": "🤖 選擇要對比的模型",
-        "rating_system": "评分系统",
+        "rating_system": "評分系統",
         "lightgbm": "LightGBM",
         "xgboost": "XGBoost",
         "ensemble": "集成模型",
@@ -312,11 +311,11 @@ TEXTS = {
         
         # ==================== AI 建议 ====================
         "ai_strategy_suggestions": "💡 AI 投注策略建議",
-        "ev_description": "基于AI评分和赔率计算的期望值(EV)推荐",
+        "ev_description": "基於AI評分和賠率計算的期望值(EV)推薦",
         "low_risk": "🎯 低風險 - 獨贏/位置",
         "medium_risk": "🎯 中風險 - 連贏",
         "high_risk": "🎯 高風險 - 單T",
-        "no_suggestions": "暂无建议",
+        "no_suggestions": "暫無建議",
         "qin_recommendation": "🔗 連贏推薦",
         
         # ==================== 过关推荐 ====================
@@ -337,7 +336,9 @@ TEXTS = {
         
         # ==================== 表格列名 ====================
         "horse_name": "馬名",
+        "horse_name_no": "馬名/馬號",
         "horse_no": "馬號",
+        "row_index": "序號",
         "draw": "檔位",
         "actual_weight": "負磅",
         "jockey": "騎師",
@@ -349,6 +350,8 @@ TEXTS = {
         "no_data": "暫無出賽馬匹數據",
         "realtime_odds_analysis": "📈 實時賠率分析",
         "realtime_odds_expand": "展開圖表與明細",
+        "click_open": "點擊打開",
+        "click_open_recommend": "點擊打開推薦",
         "realtime_odds_no_data": "本場在賠率快照庫中無 WIN/PLA 時間序列。自動採集僅在開賽前約 90 分鐘內執行；若該賽日當時未採集，歷史賽事將無走勢數據（僅出馬表中的終場賠率）。",
         "realtime_odds_latest": "最新賠率快照",
         "realtime_odds_trend": "賠率走勢（距開賽分鐘）",
@@ -383,7 +386,7 @@ TEXTS = {
         "data_updated": "數據已更新",
         "update_failed": "更新失敗",
         "syncing_schedule": "正在同步最新賽程...",
-        "sync_complete": "同步完成！成功 {success} 场，失败 {failed} 场",
+        "sync_complete": "同步完成！成功 {success} 場，失敗 {failed} 場",
         "updating_odds": "正在更新最新賠率和出賽馬匹...",
         "calculating_win_rate": "正在計算馬匹勝率（評分系統）...",
         "calculating_ml": "正在計算馬匹勝率（{model}）...",
@@ -441,51 +444,51 @@ TEXTS = {
         "logout_help": "退出登入",
         "tier_pro": "💎 專業版",
         "tier_free": "🔒 免費版",
-        "day_portfolio_title": "赛日最优组合",
-        "day_portfolio_desc": "约 HK$1,000 预算 · 独赢/位置/连赢/单T/三重彩/孖宝 · EV 比例分配（最低 HK$10/注）",
-        "day_portfolio_budget_label": "赛日预算 (HK$)",
-        "generate_day_portfolio": "🎯 生成赛日最优组合",
-        "optimizing_day_portfolio": "正在优化赛日组合...",
-        "day_portfolio_import_failed": "赛日组合优化模块加载失败",
-        "lightgbm_not_installed": "LightGBM 未安装",
-        "xgboost_not_installed": "XGBoost 未安装",
+        "day_portfolio_title": "賽日最優組合",
+        "day_portfolio_desc": "約 HK$1,000 預算 · 獨贏/位置/連贏/單T/三重彩/孖寶 · EV 比例分配（最低 HK$10/注）",
+        "day_portfolio_budget_label": "賽日預算 (HK$)",
+        "generate_day_portfolio": "🎯 生成賽日最優組合",
+        "optimizing_day_portfolio": "正在優化賽日組合...",
+        "day_portfolio_import_failed": "賽日組合優化模組載入失敗",
+        "lightgbm_not_installed": "LightGBM 未安裝",
+        "xgboost_not_installed": "XGBoost 未安裝",
         "no_data_fetched": "未獲取到任何數據",
         "no_races_found": "未找到任何賽事",
         "backtest_cancelled": "⚠️ 回測已被用戶取消",
-        "day_portfolio_backtest_progress": "赛日组合回测 {model}: {date} {venue} ({current}/{total})",
-        "day_portfolio_backtest_title": "📈 赛日组合策略回测（{model}）",
-        "day_portfolio_mode_fast": "快速（每周重训）",
-        "day_portfolio_mode_std": "标准 walk-forward",
-        "day_portfolio_backtest_caption": "模式：{mode} · 赛日数 {days} · 彩池：独赢/位置/连赢/单T/三重彩/孖宝",
-        "metric_day_count": "赛日数",
-        "metric_total_bets": "总注数",
-        "metric_hit_bets": "命中注数",
+        "day_portfolio_backtest_progress": "賽日組合回測 {model}: {date} {venue} ({current}/{total})",
+        "day_portfolio_backtest_title": "📈 賽日組合策略回測（{model}）",
+        "day_portfolio_mode_fast": "快速（每週重訓）",
+        "day_portfolio_mode_std": "標準 walk-forward",
+        "day_portfolio_backtest_caption": "模式：{mode} · 賽日數 {days} · 彩池：獨贏/位置/連贏/單T/三重彩/孖寶",
+        "metric_day_count": "賽日數",
+        "metric_total_bets": "總注數",
+        "metric_hit_bets": "命中注數",
         "metric_hit_rate": "命中率",
-        "metric_total_stake": "总投入",
-        "metric_total_return": "总回报",
-        "portfolio_bet_details": "📋 逐注明细",
-        "col_race_day": "赛日",
-        "col_venue": "场地",
+        "metric_total_stake": "總投入",
+        "metric_total_return": "總回報",
+        "portfolio_bet_details": "📋 逐注明細",
+        "col_race_day": "賽日",
+        "col_venue": "場地",
         "col_pool": "彩池",
-        "col_content": "内容",
-        "col_odds": "赔率",
+        "col_content": "內容",
+        "col_odds": "賠率",
         "col_estimated": "估算",
         "col_yes": "是",
         "col_no": "否",
-        "col_stake": "金额",
+        "col_stake": "金額",
         "col_hit": "命中",
-        "col_return": "回报",
-        "col_profit": "盈亏",
-        "no_day_portfolio_bets": "未找到符合条件的赛日组合（无正 EV 注项）",
-        "day_portfolio_live_title": "💰 赛日最优组合推荐",
-        "day_portfolio_live_caption": "目标预算约 HK${budget:,.0f} · 实际分配 HK${stake:,.0f} · 含独赢/位置/连赢/单T/三重彩/孖宝",
-        "col_recommendation": "推荐",
+        "col_return": "回報",
+        "col_profit": "盈虧",
+        "no_day_portfolio_bets": "未找到符合條件的賽日組合（無正 EV 注項）",
+        "day_portfolio_live_title": "💰 賽日最優組合推薦",
+        "day_portfolio_live_caption": "目標預算約 HK${budget:,.0f} · 實際分配 HK${stake:,.0f} · 含獨贏/位置/連贏/單T/三重彩/孖寶",
+        "col_recommendation": "推薦",
         "col_probability": "概率",
-        "col_suggested_stake": "建议金额",
-        "estimated_odds_footnote": "* 星号表示估算赔率",
-        "fast_mode_label": "快速模式（每周重训）",
-        "fast_mode_help": "标准模式：每个赛日 walk-forward 重训；快速模式：每周重训一次以加快回测",
-        "strategy_backtest_caption": "每日约 HK$1,000 在独赢/位置/连赢/单T/三重彩/孖宝间 EV 优化分配 · 与智能投注共用同一优化器",
+        "col_suggested_stake": "建議金額",
+        "estimated_odds_footnote": "* 星號表示估算賠率",
+        "fast_mode_label": "快速模式（每週重訓）",
+        "fast_mode_help": "標準模式：每個賽日 walk-forward 重訓；快速模式：每週重訓一次以加快回測",
+        "strategy_backtest_caption": "每日約 HK$1,000 在獨贏/位置/連贏/單T/三重彩/孖寶間 EV 優化分配 · 與智能投注共用同一優化器",
         "strategy_model_help": "策略回测使用的 ML 模型（默认 LightGBM）",
         "min_ev_help": "只投注期望值大於此門檻的建議",
         "running_day_portfolio_backtest": "正在运行赛日组合策略回测（{model}）...",
@@ -798,7 +801,9 @@ Let AI be your racing assistant.
         
         # ==================== Table Columns ====================
         "horse_name": "Horse",
+        "horse_name_no": "Horse / No.",
         "horse_no": "No.",
+        "row_index": "#",
         "draw": "Draw",
         "actual_weight": "Weight",
         "jockey": "Jockey",
@@ -810,6 +815,8 @@ Let AI be your racing assistant.
         "no_data": "No runner data",
         "realtime_odds_analysis": "📈 Real-time Odds Analysis",
         "realtime_odds_expand": "Show charts & details",
+        "click_open": "Click to open",
+        "click_open_recommend": "Click to open recommendation",
         "realtime_odds_no_data": "No WIN/PLA time-series snapshots for this race. Collection runs only in the ~90 minutes before post time; past race days have no trend data unless captured at the time (final odds may still appear in the runner table).",
         "realtime_odds_latest": "Latest Odds Snapshots",
         "realtime_odds_trend": "Odds Trend (minutes before post)",
@@ -1844,6 +1851,28 @@ def trial_gated_checkbox(label: str, checkbox_key: str, trial_key: str) -> bool:
     if not st.session_state.get(checkbox_key):
         return False
     return require_trial(trial_key)
+
+
+def trial_gated_toggle_button(
+    label: str,
+    state_key: str,
+    trial_key: str,
+    *,
+    hint: Optional[str] = None,
+    primary: bool = False,
+) -> bool:
+    """按鈕式開關：首次點擊静默扣次並展開內容。"""
+    if st.session_state.get(state_key):
+        return True
+
+    hint_text = hint or t()["click_open"]
+    st.caption(hint_text)
+    btn_type = "primary" if primary else "secondary"
+    if st.button(label, key=f"trial_btn_{state_key}", use_container_width=True, type=btn_type):
+        if require_trial(trial_key):
+            st.session_state[state_key] = True
+            st.rerun()
+    return False
 
 
 def _render_paywall_content() -> None:
@@ -7752,10 +7781,11 @@ def _render_realtime_odds_analysis(
     """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
     texts = t()
     st.markdown(f"#### {_odds_analysis_heading(selected_race, selected_date)}")
-    show_odds = trial_gated_checkbox(
+    show_odds = trial_gated_toggle_button(
         texts["realtime_odds_expand"],
         f"show_odds_analysis_{race_ui_key}",
         f"odds_analysis:{race_ui_key}",
+        hint=texts["click_open"],
     )
     if not show_odds:
         return
@@ -7789,10 +7819,11 @@ def _render_realtime_odds_analysis(
             if not summary.empty:
                 st.dataframe(summary, use_container_width=True, hide_index=True)
             st.plotly_chart(_build_odds_trend_figure(win_rows, sorted_runners, "WIN"), use_container_width=True)
-            if trial_gated_checkbox(
+            if trial_gated_toggle_button(
                 texts["realtime_odds_detail"],
                 f"show_odds_win_detail_{race_ui_key}",
                 f"odds_win_detail:{race_ui_key}",
+                hint=texts["click_open"],
             ):
                 _render_odds_detail_table(win_rows, sorted_runners, "WIN", "win_odds")
 
@@ -7805,10 +7836,11 @@ def _render_realtime_odds_analysis(
             if not summary.empty:
                 st.dataframe(summary, use_container_width=True, hide_index=True)
             st.plotly_chart(_build_odds_trend_figure(pla_rows, sorted_runners, "PLA"), use_container_width=True)
-            if trial_gated_checkbox(
+            if trial_gated_toggle_button(
                 texts["realtime_odds_detail"],
                 f"show_odds_pla_detail_{race_ui_key}",
                 f"odds_pla_detail:{race_ui_key}",
+                hint=texts["click_open"],
             ):
                 _render_odds_detail_table(pla_rows, sorted_runners, "PLA", "pla_odds")
 
@@ -8574,7 +8606,7 @@ def render_smart_betting(show_title: bool = True):
     st.markdown(f"#### 🏇 {t()['race_table_title'].format(race_no=selected_race.get('race_no'))} ({model_choice})")
     #-----------
     race_data = []
-    for runner in sorted_runners:
+    for row_idx, runner in enumerate(sorted_runners, start=1):
         horse_name = _horse_display_label(runner)
         # 安全处理赔率
         odds_win_raw = runner.get('odds_win')
@@ -8612,8 +8644,8 @@ def render_smart_betting(show_title: bool = True):
             ev_display = "-"
         
         race_data.append({
-            t()["horse_no"]: runner.get('horse_no', '-'),
-            t()["horse_name"]: horse_name,
+            t()["row_index"]: row_idx,
+            t()["horse_name_no"]: horse_name,
             t()["draw"]: runner.get('draw', '-'),
             t()["actual_weight"]: runner.get('actual_weight', '-'),
             t()["jockey"]: resolve_jockey_name(runner),
@@ -8640,7 +8672,12 @@ def render_smart_betting(show_title: bool = True):
     st.markdown(f"### {_model_section_title(t()['ai_strategy_suggestions'], model_choice)}")
     st.caption(t()["ev_description"])
     
-    if trial_gated_checkbox(t()["win_place_recommend"], f"show_win_rec_{current_race_key}", f"rec_win:{current_race_key}"):
+    if trial_gated_toggle_button(
+        t()["win_place_recommend"],
+        f"show_win_rec_{current_race_key}",
+        f"rec_win:{current_race_key}",
+        hint=t()["click_open_recommend"],
+    ):
         if recommendations.get('win') and recommendations['win']:
             rec = recommendations['win'][0]
             st.info(f"**{rec.description}**")
@@ -8656,10 +8693,20 @@ def render_smart_betting(show_title: bool = True):
         else:
             st.write(t()["no_suggestions"])
     
-    if trial_gated_checkbox(t()["qin_recommend_expander"], f"show_qin_rec_{current_race_key}", f"rec_qin:{current_race_key}"):
+    if trial_gated_toggle_button(
+        t()["qin_recommend_expander"],
+        f"show_qin_rec_{current_race_key}",
+        f"rec_qin:{current_race_key}",
+        hint=t()["click_open_recommend"],
+    ):
         _render_qin_suggestions(sorted_runners, key_prefix="qin_fold")
 
-    if trial_gated_checkbox(t()["tri_recommend_expander"], f"show_tri_rec_{current_race_key}", f"rec_tri:{current_race_key}"):
+    if trial_gated_toggle_button(
+        t()["tri_recommend_expander"],
+        f"show_tri_rec_{current_race_key}",
+        f"rec_tri:{current_race_key}",
+        hint=t()["click_open_recommend"],
+    ):
         _render_tri_suggestions(sorted_runners)
 
     st.markdown("---")
@@ -8903,7 +8950,7 @@ def render_smart_betting(show_title: bool = True):
     st.markdown(f"### {_model_section_title(t()['parlay_generation'], model_choice)}")
     st.caption(t()["parlay_description"])
     #--------------------
-    if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True):
+    if st.button(t()["generate_parlay_combo"], key="generate_parlay", use_container_width=True, type="primary"):
         if not require_trial(f"parlay_combo:{selected_date}:{model_choice}", dedupe=False):
             pass
         else:
