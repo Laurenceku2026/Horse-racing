@@ -88,12 +88,31 @@ class BettingRecommendation:
 class BettingStrategyEngine:
     """AI投注策略引擎"""
     
-    def __init__(self):
+    def __init__(self, lang: str = "zh"):
+        self.lang = lang
         self.weights = {
             "win_prob": 0.50,   # 胜率权重
             "place_prob": 0.30, # 入Q率权重
             "show_prob": 0.20   # 入T率权重
         }
+
+    def _risk_level(self, win_prob: float) -> str:
+        if self.lang == "en":
+            if win_prob > 0.3:
+                return "Low"
+            if win_prob > 0.15:
+                return "Medium"
+            return "High"
+        if win_prob > 0.3:
+            return "低"
+        if win_prob > 0.15:
+            return "中"
+        return "高"
+
+    def _fixed_risk(self, level: str) -> str:
+        if self.lang == "en":
+            return {"低": "Low", "中": "Medium", "高": "High"}.get(level, level)
+        return level
     
     def scores_to_probabilities(self, scores: List[float], temperature: float = 0.8) -> List[float]:
         """
@@ -200,17 +219,23 @@ class BettingStrategyEngine:
             
             if ev > 0.10:  # 只推荐正期望值且 > 10%
                 roi = self.calculate_roi(ev)
-                risk = "低" if win_prob > 0.3 else "中" if win_prob > 0.15 else "高"
+                risk = self._risk_level(win_prob)
+                if self.lang == "en":
+                    description = f"Win - {prob.horse_name}"
+                    reason = f"AI win rate {prob.win_prob:.0f}%, odds {odds}x, EV {ev:+.2f}"
+                else:
+                    description = f"獨贏 - {prob.horse_name}"
+                    reason = f"AI勝率{prob.win_prob:.0f}%，賠率{odds}倍，期望值{ev:+.2f}"
                 
                 recommendations.append(BettingRecommendation(
                     type="WIN",
-                    description=f"獨贏 - {prob.horse_name}",
+                    description=description,
                     content=f"{prob.horse_name}",
                     odds=odds,
                     ev=ev,
                     roi=roi,
                     risk_level=risk,
-                    reason=f"AI勝率{prob.win_prob:.0f}%，賠率{odds}倍，期望值{ev:+.2f}"
+                    reason=reason
                 ))
         
         # 按期望值降序排序
@@ -233,17 +258,23 @@ class BettingStrategyEngine:
             
             if ev > 0.05:  # 位置彩池门槛较低
                 roi = self.calculate_roi(ev)
-                risk = "低"
+                risk = self._fixed_risk("低")
+                if self.lang == "en":
+                    description = f"Place - {prob.horse_name}"
+                    reason = f"Top-3 probability {prob.show_prob:.0f}%, odds {odds}x"
+                else:
+                    description = f"位置 - {prob.horse_name}"
+                    reason = f"入三甲概率{prob.show_prob:.0f}%，賠率{odds}倍"
                 
                 recommendations.append(BettingRecommendation(
                     type="PLA",
-                    description=f"位置 - {prob.horse_name}",
+                    description=description,
                     content=f"{prob.horse_name}",
                     odds=odds,
                     ev=ev,
                     roi=roi,
                     risk_level=risk,
-                    reason=f"入三甲概率{prob.show_prob:.0f}%，賠率{odds}倍"
+                    reason=reason
                 ))
         
         recommendations.sort(key=lambda x: x.ev, reverse=True)
@@ -275,17 +306,24 @@ class BettingStrategyEngine:
                 
                 if ev > 0.10:
                     roi = self.calculate_roi(ev)
-                    risk = "中"
+                    risk = self._fixed_risk("中")
+                    combo_label = f"{probs[i].horse_name} + {probs[j].horse_name}"
+                    if self.lang == "en":
+                        description = f"Quinella - {combo_label}"
+                        reason = f"Combined probability {combo_prob*100:.1f}%, odds {odds}x"
+                    else:
+                        description = f"連贏 - {combo_label}"
+                        reason = f"組合概率{combo_prob*100:.1f}%，賠率{odds}倍"
                     
                     recommendations.append(BettingRecommendation(
                         type="QIN",
-                        description=f"連贏 - {probs[i].horse_name} + {probs[j].horse_name}",
-                        content=f"{probs[i].horse_name} + {probs[j].horse_name}",
+                        description=description,
+                        content=combo_label,
                         odds=odds,
                         ev=ev,
                         roi=roi,
                         risk_level=risk,
-                        reason=f"組合概率{combo_prob*100:.1f}%，賠率{odds}倍"
+                        reason=reason
                     ))
         
         recommendations.sort(key=lambda x: x.ev, reverse=True)
@@ -314,17 +352,26 @@ class BettingStrategyEngine:
                     
                     if ev > 0.15:
                         roi = self.calculate_roi(ev)
-                        risk = "高"
+                        risk = self._fixed_risk("高")
+                        combo_label = (
+                            f"{probs[i].horse_name} + {probs[j].horse_name} + {probs[k].horse_name}"
+                        )
+                        if self.lang == "en":
+                            description = f"Trio - {combo_label}"
+                            reason = f"Combined probability {combo_prob*100:.2f}%, odds {odds}x"
+                        else:
+                            description = f"單T - {combo_label}"
+                            reason = f"組合概率{combo_prob*100:.2f}%，賠率{odds}倍"
                         
                         recommendations.append(BettingRecommendation(
                             type="TRI",
-                            description=f"單T - {probs[i].horse_name} + {probs[j].horse_name} + {probs[k].horse_name}",
-                            content=f"{probs[i].horse_name} + {probs[j].horse_name} + {probs[k].horse_name}",
+                            description=description,
+                            content=combo_label,
                             odds=odds,
                             ev=ev,
                             roi=roi,
                             risk_level=risk,
-                            reason=f"組合概率{combo_prob*100:.2f}%，賠率{odds}倍"
+                            reason=reason
                         ))
         
         recommendations.sort(key=lambda x: x.ev, reverse=True)
