@@ -348,8 +348,8 @@ TEXTS = {
         "ev": "期望值",
         "no_data": "暫無出賽馬匹數據",
         "realtime_odds_analysis": "📈 實時賠率分析",
-        "realtime_odds_caption": "最多 26 個關鍵時間點（開賽前 90→0 分鐘），由 Node.js 自動採集寫入 Supabase",
-        "realtime_odds_no_data": "暫無賠率快照。未來賽事將在開賽前自動採集；歷史賽事若曾採集過也會顯示。",
+        "realtime_odds_expand": "展開圖表與明細",
+        "realtime_odds_no_data": "本場在賠率快照庫中無 WIN/PLA 時間序列。自動採集僅在開賽前約 90 分鐘內執行；若該賽日當時未採集，歷史賽事將無走勢數據（僅出馬表中的終場賠率）。",
         "realtime_odds_latest": "最新賠率快照",
         "realtime_odds_trend": "賠率走勢（距開賽分鐘）",
         "realtime_odds_snapshots": "快照數",
@@ -809,8 +809,8 @@ Let AI be your racing assistant.
         "ev": "EV",
         "no_data": "No runner data",
         "realtime_odds_analysis": "📈 Real-time Odds Analysis",
-        "realtime_odds_caption": "Up to 26 key snapshots (90→0 min before post), auto-collected via Node.js into Supabase",
-        "realtime_odds_no_data": "No odds snapshots yet. Future races are collected automatically before post time; historical races show data if previously collected.",
+        "realtime_odds_expand": "Show charts & details",
+        "realtime_odds_no_data": "No WIN/PLA time-series snapshots for this race. Collection runs only in the ~90 minutes before post time; past race days have no trend data unless captured at the time (final odds may still appear in the runner table).",
         "realtime_odds_latest": "Latest Odds Snapshots",
         "realtime_odds_trend": "Odds Trend (minutes before post)",
         "realtime_odds_snapshots": "Snapshots",
@@ -7320,48 +7320,73 @@ ODDS_KEY_MINUTES = [
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def fetch_race_odds_history(race_date: str, venue: str, race_no: int) -> List[Dict]:
-    """Fetch WIN/PLA odds time series from odds_history."""
+def _query_odds_history_rows(race_date: str, venue: Optional[str], race_no: int) -> List[Dict]:
     if not SUPABASE_URL or not race_date:
         return []
     try:
         headers = get_supabase_headers(use_secret=True)
         url = (
             f"{SUPABASE_URL}/rest/v1/odds_history"
-            f"?race_date=eq.{race_date}&venue=eq.{venue}&race_no=eq.{race_no}"
+            f"?race_date=eq.{race_date}&race_no=eq.{race_no}"
             f"&odds_type=in.(WIN,PLA)"
-            f"&select=horse_no,odds_type,odds_value,recorded_at,minutes_before_race"
+            f"&select=horse_no,odds_type,odds_value,recorded_at,minutes_before_race,venue"
             f"&order=minutes_before_race.desc"
             f"&limit=5000"
         )
+        if venue:
+            url += f"&venue=eq.{venue}"
         response = requests.get(url, headers=headers, timeout=30)
         if response.status_code != 200:
+            print(f"odds_history query failed: {response.status_code} venue={venue}")
             return []
-        rows = response.json() or []
-        cleaned: List[Dict] = []
-        for row in rows:
-            try:
-                odds_val = float(row.get("odds_value") or 0)
-            except (TypeError, ValueError):
-                continue
-            if odds_val <= 0:
-                continue
-            hno = row.get("horse_no")
-            if hno in (None, "", 0, "0"):
-                continue
-            cleaned.append(
-                {
-                    "horse_no": str(hno).strip(),
-                    "odds_type": row.get("odds_type"),
-                    "odds_value": odds_val,
-                    "recorded_at": row.get("recorded_at"),
-                    "minutes_before_race": row.get("minutes_before_race"),
-                }
-            )
-        return cleaned
+        return response.json() or []
     except Exception as exc:
-        print(f"fetch_race_odds_history failed: {exc}")
+        print(f"_query_odds_history_rows failed: {exc}")
         return []
+
+
+def _clean_odds_history_rows(rows: List[Dict]) -> List[Dict]:
+    cleaned: List[Dict] = []
+    for row in rows:
+        try:
+            odds_val = float(row.get("odds_value") or 0)
+        except (TypeError, ValueError):
+            continue
+        if odds_val <= 0:
+            continue
+        hno = row.get("horse_no")
+        if hno in (None, "", 0, "0"):
+            continue
+        cleaned.append(
+            {
+                "horse_no": str(hno).strip(),
+                "odds_type": row.get("odds_type"),
+                "odds_value": odds_val,
+                "recorded_at": row.get("recorded_at"),
+                "minutes_before_race": row.get("minutes_before_race"),
+                "venue": row.get("venue"),
+            }
+        )
+    return cleaned
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_race_odds_history(race_date: str, venue: str, race_no: int) -> List[Dict]:
+    """Fetch WIN/PLA odds time series from odds_history (with venue fallback)."""
+    race_no = int(race_no)
+    venue = (venue or "ST").strip()
+
+    rows = _clean_odds_history_rows(_query_odds_history_rows(race_date, venue, race_no))
+    if rows:
+        return rows
+
+    for alt in ("ST", "HV"):
+        if alt != venue:
+            rows = _clean_odds_history_rows(_query_odds_history_rows(race_date, alt, race_no))
+            if rows:
+                return rows
+
+    return _clean_odds_history_rows(_query_odds_history_rows(race_date, None, race_no))
 
 
 def _odds_rows_for_pool(rows: List[Dict], odds_type: str) -> List[Dict]:
@@ -7493,12 +7518,26 @@ def _render_odds_detail_table(pool_rows: List[Dict], runners: List[Dict], odds_t
         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
 
-def _render_realtime_odds_analysis(selected_race: Dict, sorted_runners: List[Dict]) -> None:
+def _odds_analysis_heading(selected_race: Dict, selected_date: str) -> str:
+    race_date = selected_race.get("race_date") or selected_date
+    race_no = selected_race.get("race_no", "-")
+    venue = selected_race.get("venue", "ST")
+    return tx(
+        f"📈 實時賠率分析（{race_date} 第{race_no}場 {venue}）",
+        f"📈 Real-time Odds Analysis ({race_date} R{race_no} {venue})",
+    )
+
+
+def _render_realtime_odds_analysis(
+    selected_race: Dict,
+    sorted_runners: List[Dict],
+    selected_date: str,
+) -> None:
     """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
     texts = t()
-    with st.expander(texts["realtime_odds_analysis"], expanded=False):
-        st.caption(texts["realtime_odds_caption"])
-        race_date = selected_race.get("race_date")
+    st.markdown(f"#### {_odds_analysis_heading(selected_race, selected_date)}")
+    with st.expander(texts["realtime_odds_expand"], expanded=False):
+        race_date = selected_race.get("race_date") or selected_date
         venue = selected_race.get("venue", "ST")
         race_no = selected_race.get("race_no")
         rows = fetch_race_odds_history(race_date, venue, int(race_no))
@@ -7508,7 +7547,13 @@ def _render_realtime_odds_analysis(selected_race: Dict, sorted_runners: List[Dic
 
         win_rows = _odds_rows_for_pool(rows, "WIN")
         pla_rows = _odds_rows_for_pool(rows, "PLA")
-        unique_mins = len({r.get("minutes_before_race") for r in _dedupe_odds_snapshots(rows) if r.get("minutes_before_race") is not None})
+        unique_mins = len(
+            {
+                r.get("minutes_before_race")
+                for r in _dedupe_odds_snapshots(rows)
+                if r.get("minutes_before_race") is not None
+            }
+        )
         st.caption(texts["realtime_odds_points"].format(count=unique_mins))
 
         tab_win, tab_pla = st.tabs([texts["win_odds"], texts["place_odds"]])
@@ -8373,7 +8418,7 @@ def render_smart_betting(show_title: bool = True):
     t5 = time.time()
     perf_log["显示表格"] = t5 - t4
 
-    _render_realtime_odds_analysis(selected_race, sorted_runners)
+    _render_realtime_odds_analysis(selected_race, sorted_runners, selected_date)
         
     #------------
     # ==================== AI 投注策略建议（折叠版） ====================
