@@ -321,6 +321,29 @@ async function logCollectionRun(summary) {
     }
 }
 
+const DB_ROW_KEEP_LIMIT = 20000;
+
+async function runDatabaseCleanup(keepLimit = DB_ROW_KEEP_LIMIT) {
+    try {
+        const { data, error } = await supabase.rpc('manual_cleanup', { p_keep: keepLimit });
+        if (error) {
+            console.error('[清理] manual_cleanup 失败:', error.message);
+            return { success: false, error: error.message };
+        }
+
+        const tables = data?.tables || [];
+        const totalDeleted = tables.reduce(
+            (sum, row) => sum + (Number(row?.deleted) || 0),
+            0
+        );
+        console.log(`[清理] 完成 keep<=${keepLimit}，共删除 ${totalDeleted} 条`);
+        return { success: true, keepLimit, totalDeleted, result: data };
+    } catch (err) {
+        console.error('[清理] 异常:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
 async function runAutoOddsCollection(source = 'auto') {
     const startedAt = new Date().toISOString();
     const startTime = Date.now();
@@ -376,6 +399,10 @@ async function runAutoOddsCollection(source = 'auto') {
     };
 
     await logCollectionRun(summary);
+
+    const cleanupResult = await runDatabaseCleanup(DB_ROW_KEEP_LIMIT);
+    summary.cleanup = cleanupResult;
+
     console.log(
         `[采集任务] 完成 checked=${targetRaces.length} collected=${racesCollected} saved=${rowsSaved} skipped=${rowsSkipped}`
     );
@@ -688,8 +715,13 @@ app.post('/api/odds/final', async (req, res) => {
 
 app.post('/api/cleanup', async (req, res) => {
     try {
-        const result = await supabase.rpc('manual_cleanup');
-        res.json({ success: true, result });
+        const keepLimit = Number(req.body?.keepLimit) || DB_ROW_KEEP_LIMIT;
+        const cleanup = await runDatabaseCleanup(keepLimit);
+        if (!cleanup.success) {
+            res.status(500).json({ success: false, error: cleanup.error });
+            return;
+        }
+        res.json({ success: true, ...cleanup });
     } catch (error) {
         console.error('清理失败:', error);
         res.status(500).json({ success: false, error: error.message });

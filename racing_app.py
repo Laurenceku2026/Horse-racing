@@ -13464,50 +13464,54 @@ def get_latest_race_date_from_db() -> Optional[str]:
         return None
 
 
-def cleanup_old_records(keep_count: int = 9000) -> Dict:
-    """清理旧记录，只保留最新的 keep_count 条"""
-    result = {"deleted": 0, "kept": 0}
-    
+def run_database_cleanup(keep_count: int = 20000) -> Dict:
+    """调用 Supabase manual_cleanup，各数据表超过 keep_count 行时删除最旧记录。"""
+    result: Dict = {
+        "deleted": 0,
+        "kept": 0,
+        "tables": [],
+        "error": None,
+    }
+    if not SUPABASE_URL:
+        result["error"] = "Supabase 未配置"
+        return result
     try:
         headers = get_supabase_headers(use_secret=True)
-        
-        # 获取当前记录数
-        count_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=id"
-        count_response = requests.get(count_url, headers=headers)
-        
-        if count_response.status_code != 200:
+        url = f"{SUPABASE_URL}/rest/v1/rpc/manual_cleanup"
+        response = requests.post(
+            url,
+            headers=headers,
+            json={"p_keep": keep_count},
+            timeout=120,
+        )
+        if response.status_code != 200:
+            result["error"] = f"HTTP {response.status_code}: {response.text[:300]}"
             return result
-        
-        all_ids = [item.get('id') for item in count_response.json() if item.get('id')]
-        total_count = len(all_ids)
-        
-        if total_count <= keep_count:
-            result["kept"] = total_count
-            return result
-        
-        # 获取需要保留的最新记录 ID
-        keep_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?order=race_date.desc&limit={keep_count}&select=id"
-        keep_response = requests.get(keep_url, headers=headers)
-        
-        if keep_response.status_code != 200:
-            return result
-        
-        keep_ids = {str(item.get('id')) for item in keep_response.json() if item.get('id')}
-        
-        # 删除不在保留列表中的记录
-        for record_id in all_ids:
-            if str(record_id) not in keep_ids:
-                delete_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?id=eq.{record_id}"
-                delete_response = requests.delete(delete_url, headers=headers)
-                if delete_response.status_code in [200, 204]:
-                    result["deleted"] += 1
-        
+
+        payload = response.json() or {}
+        tables = payload.get("tables") or []
+        result["tables"] = tables
+        result["deleted"] = int(payload.get("total_deleted") or 0)
         result["kept"] = keep_count
-        
-    except Exception as e:
-        print(f"清理旧记录失败: {e}")
-    
-    return result
+
+        for row in tables:
+            if row.get("error"):
+                print(f"cleanup {row.get('table')}: {row.get('error')}")
+            elif row.get("skipped"):
+                print(f"cleanup {row.get('table')}: skipped ({row.get('reason')})")
+
+        return result
+    except Exception as exc:
+        result["error"] = str(exc)
+        print(f"run_database_cleanup failed: {exc}")
+        return result
+
+
+def cleanup_old_records(keep_count: int = 20000) -> Dict:
+    """兼容旧调用：统一走 Supabase manual_cleanup RPC。"""
+    return run_database_cleanup(keep_count=keep_count)
+
+
 #----------------
 # ==================== 智能赛期获取（从官网下拉菜单）====================
 
@@ -13926,13 +13930,19 @@ def sync_all_data() -> Dict:
         else:
             st.info("未发现新数据")
         
-        # ==================== 第5步：清理旧数据（每次更新后都检查）====================
+        # ==================== 第5步：清理旧数据（各表超过 20000 行删最旧）====================
         with st.spinner("正在检查并清理旧数据..."):
-            cleanup_result = cleanup_old_records(keep_count=20000)
-            if cleanup_result.get("deleted", 0) > 0:
-                st.info(f"已清理 {cleanup_result['deleted']} 条旧记录，数据库保持在 20000 行以内")
+            cleanup_result = run_database_cleanup(keep_count=20000)
+            if cleanup_result.get("error"):
+                st.warning(
+                    f"数据清理未执行：{cleanup_result['error']}（请先在 Supabase 执行 scripts/manual_cleanup.sql）"
+                )
+            elif cleanup_result.get("deleted", 0) > 0:
+                st.info(
+                    f"已清理 {cleanup_result['deleted']} 条旧记录，各数据表保持在 20000 行以内"
+                )
             else:
-                st.info(f"当前数据量 {cleanup_result.get('kept', 0)} 条，未超过 20000 条上限")
+                st.info("各数据表均未超过 20000 行上限，无需清理")
         
         # ==================== 第6步：清除缓存 ====================
         st.cache_data.clear()
@@ -13946,61 +13956,6 @@ def sync_all_data() -> Dict:
         return result
 
 #-------------
-def cleanup_old_records(keep_count: int = 20000) -> Dict:
-    """清理旧记录，只保留最新的 keep_count 条（默认 20000）"""
-    result = {"deleted": 0, "kept": 0}
-    
-    try:
-        headers = get_supabase_headers(use_secret=True)
-        
-        # 获取当前记录数
-        count_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=id"
-        count_response = requests.get(count_url, headers=headers)
-        
-        if count_response.status_code != 200:
-            print(f"获取记录数失败: {count_response.status_code}")
-            return result
-        
-        all_ids = [item.get('id') for item in count_response.json() if item.get('id')]
-        total_count = len(all_ids)
-        result["kept"] = total_count
-        
-        print(f"当前数据量: {total_count} 条，保留上限: {keep_count} 条")
-        
-        # 如果未超过 keep_count，不清理
-        if total_count <= keep_count:
-            print(f"数据量未超过 {keep_count} 条，无需清理")
-            return result
-        
-        # 获取需要保留的最新记录 ID
-        keep_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?order=race_date.desc&limit={keep_count}&select=id"
-        keep_response = requests.get(keep_url, headers=headers)
-        
-        if keep_response.status_code != 200:
-            print(f"获取保留记录失败: {keep_response.status_code}")
-            return result
-        
-        keep_ids = {str(item.get('id')) for item in keep_response.json() if item.get('id')}
-        
-        # 删除不在保留列表中的记录
-        deleted_count = 0
-        for record_id in all_ids:
-            if str(record_id) not in keep_ids:
-                delete_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?id=eq.{record_id}"
-                delete_response = requests.delete(delete_url, headers=headers)
-                if delete_response.status_code in [200, 204]:
-                    deleted_count += 1
-        
-        result["deleted"] = deleted_count
-        result["kept"] = keep_count
-        
-        print(f"数据清理完成：原 {total_count} 条，删除 {deleted_count} 条，保留 {keep_count} 条")
-        
-    except Exception as e:
-        print(f"清理旧记录失败: {e}")
-    
-    return result
-#----------
 def update_all_data_for_date(race_date: str, show_progress: bool = True) -> Dict:
     """更新指定日期的所有赛事数据 - 直接从 API 获取并同步"""
     result = {"success": 0, "failed": 0, "total": 0}
