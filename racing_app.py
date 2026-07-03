@@ -987,6 +987,43 @@ def _date_mode_label(mode: str) -> str:
     if mode == DATE_MODE_HISTORY:
         return t()["date_mode_history"]
     return mode
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_horses_name_lookup() -> Dict[str, Dict[str, str]]:
+    """horse_id -> {name_zh, name_en}，用于英文模式补全马名。"""
+    lookup: Dict[str, Dict[str, str]] = {}
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=horse_id,name_zh,name_en&limit=50000"
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code == 200:
+            for row in response.json():
+                hid = row.get("horse_id")
+                if hid:
+                    lookup[str(hid)] = {
+                        "name_zh": row.get("name_zh") or "",
+                        "name_en": row.get("name_en") or "",
+                    }
+    except Exception as exc:
+        print(f"get_horses_name_lookup failed: {exc}")
+    return lookup
+
+
+def resolve_horse_name(record: Dict) -> str:
+    """当前语言下的马名。"""
+    from betting_strategy_engine import pick_horse_name
+
+    lang = get_lang()
+    lookup = get_horses_name_lookup() if lang == "en" else None
+    return pick_horse_name(record, lang, lookup)
+
+
+def localize_runner_names(runners: List[Dict]) -> List[Dict]:
+    """就地更新 runner 的 horse_name 为当前语言。"""
+    for runner in runners:
+        runner["horse_name"] = resolve_horse_name(runner)
+    return runners
 #-------------------------
 #-------------
 @st.cache_data(ttl=300)
@@ -4486,7 +4523,7 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                     if lang == "zh":
                         column_order = ["Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "綜合評分", "出賽場次"]
                     else:
-                        column_order = ["Horse_ID", "Name (CN)", "Name (EN)", "Sex", "Age", "Avg Weight", "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races"]
+                        column_order = ["Horse_ID", "Name (EN)", "Sex", "Age", "Avg Weight", "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races"]
                     
                     df_display = df_display[[c for c in column_order if c in df_display.columns]]
                     
@@ -4804,20 +4841,22 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             })
         
         # 格式化百分比
-        df_display["勝率"] = df_display["勝率"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
-        df_display["入Q率"] = df_display["入Q率"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
-        df_display["入T率"] = df_display["入T率"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
-        
-        if lang == "en":
-            df_display["Win Rate"] = df_display["Win Rate"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
-            df_display["Place Rate"] = df_display["Place Rate"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
-            df_display["Show Rate"] = df_display["Show Rate"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
+        pct_cols = (
+            ["勝率", "入Q率", "入T率"]
+            if lang == "zh"
+            else ["Win Rate", "Place Rate", "Show Rate"]
+        )
+        for col in pct_cols:
+            if col in df_display.columns:
+                df_display[col] = df_display[col].apply(
+                    lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x
+                )
         
         # 调整列顺序
         if lang == "zh":
             column_order = ["Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "綜合評分", "出賽場次"]
         else:
-            column_order = ["Horse_ID", "Name (CN)", "Name (EN)", "Sex", "Age", "Avg Weight", "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races"]
+            column_order = ["Horse_ID", "Name (EN)", "Sex", "Age", "Avg Weight", "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races"]
         
         df_display = df_display[[c for c in column_order if c in df_display.columns]]
         
@@ -4832,15 +4871,26 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
 #------------
 def render_horse_rating_table(df: pd.DataFrame):
     """渲染马匹评分表格（列宽最小化）"""
+    lang = get_lang()
     if df.empty:
-        st.info("暫無馬匹數據，請點擊「更新數據」同步馬匹資料")
+        st.info(tx("暫無馬匹數據，請點擊「更新數據」同步馬匹資料", "No horse data. Click Update Data to sync."))
         return
-    
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
+
+    if lang == "en":
+        column_config = {
+            "Horse_ID": st.column_config.TextColumn("ID", width="90px"),
+            "Name (EN)": st.column_config.TextColumn("Name", width="140px"),
+            "Sex": st.column_config.TextColumn("Sex", width="40px"),
+            "Age": st.column_config.TextColumn("Age", width="40px"),
+            "Avg Weight": st.column_config.TextColumn("Weight", width="60px"),
+            "Win Rate": st.column_config.TextColumn("Win%", width="55px"),
+            "Place Rate": st.column_config.TextColumn("Place%", width="55px"),
+            "Show Rate": st.column_config.TextColumn("Show%", width="55px"),
+            "Overall Score": st.column_config.NumberColumn("Score", width="60px", format="%.0f"),
+            "Races": st.column_config.TextColumn("Races", width="50px"),
+        }
+    else:
+        column_config = {
             "Horse_ID": st.column_config.TextColumn("ID", width="90px"),
             "馬名(中)": st.column_config.TextColumn("中文名", width="100px"),
             "馬名(英)": st.column_config.TextColumn("英文名", width="120px"),
@@ -4850,11 +4900,18 @@ def render_horse_rating_table(df: pd.DataFrame):
             "勝率": st.column_config.TextColumn("勝率", width="55px"),
             "入Q率": st.column_config.TextColumn("入Q率", width="55px"),
             "入T率": st.column_config.TextColumn("入T率", width="55px"),
-            "基礎評分": st.column_config.NumberColumn("評分", width="60px", format="%.0f")
+            "綜合評分": st.column_config.NumberColumn("評分", width="60px", format="%.0f"),
+            "出賽場次": st.column_config.TextColumn("場次", width="50px"),
         }
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config=column_config,
     )
     
-    st.caption(f"📊 共 {len(df)} 匹馬")
+    st.caption(tx(f"📊 共 {len(df)} 匹馬", f"📊 Total {len(df)} horses"))
 
 
 def _supabase_exact_count(table: str, select: str = "horse_id") -> int:
@@ -5624,7 +5681,9 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     
                     result.append({
                         "horse_id": runner.get('horse_id'),
-                        "horse_name": runner.get('horse_name_zh', runner.get('horse_name', '')),
+                        "horse_name_zh": runner.get('horse_name_zh', runner.get('horse_name', '')),
+                        "horse_name_en": runner.get('horse_name_en', ''),
+                        "horse_name": "",
                         "horse_no": runner.get('horse_no'),
                         "draw": runner.get('draw'),
                         "actual_weight": runner.get('actual_weight'),
@@ -5637,7 +5696,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     })
                 
                 print(f"从 race_runners_clean 获取到 {len(result)} 匹马 (未来赛事)")
-                return result
+                return localize_runner_names(result)
             else:
                 print(f"race_runners_clean 中无数据: {race_date} {venue} 第{race_no}场")
                 return []
@@ -5668,7 +5727,9 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     
                     result.append({
                         "horse_id": p.get('horse_id'),
-                        "horse_name": p.get('horse_name', ''),
+                        "horse_name_zh": p.get('horse_name', ''),
+                        "horse_name_en": p.get('horse_name_en', ''),
+                        "horse_name": "",
                         "horse_no": p.get('horse_no'),
                         "draw": p.get('draw'),
                         "actual_weight": p.get('actual_weight'),
@@ -5689,7 +5750,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     })
                 
                 print(f"从 past_performances_v2 获取到 {len(result)} 匹马 (历史赛事)")
-                return result
+                return localize_runner_names(result)
             else:
                 return []
         
@@ -6896,20 +6957,28 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
 # ==================== 智能投注：连赢/单T 展示辅助 ====================
 def _horse_display_label(runner: Dict) -> str:
     from betting_strategy_engine import format_horse_display
-    return format_horse_display(runner.get("horse_name", ""), runner.get("horse_no"))
+    return format_horse_display(resolve_horse_name(runner), runner.get("horse_no"))
 
 
-def _backtest_horse_label(name: str, horse_no=None) -> str:
+def _backtest_horse_label(name: str, horse_no=None, record: Optional[Dict] = None) -> str:
     from betting_strategy_engine import format_horse_display
-    if not name:
+    if record:
+        display_name = resolve_horse_name(record)
+    elif not name:
         return "-"
-    return format_horse_display(name, horse_no)
+    else:
+        display_name = resolve_horse_name({"horse_name": name})
+    return format_horse_display(display_name, horse_no)
 
 
 def _runner_backtest_label(runner: Optional[Dict]) -> str:
     if not runner:
         return "-"
-    return _backtest_horse_label(runner.get("horse_name", ""), runner.get("horse_no"))
+    return _backtest_horse_label(
+        runner.get("horse_name", ""),
+        runner.get("horse_no"),
+        record=runner,
+    )
 
 
 def _render_qin_suggestions(sorted_runners: List[Dict], key_prefix: str = "qin") -> None:
@@ -9909,6 +9978,7 @@ def _prepare_ml_runners_for_strategy(
     prepared = []
     for i, row in enumerate(runners_data):
         item = dict(row)
+        item["horse_name"] = resolve_horse_name(row)
         prob = ml_probs[i] if i < len(ml_probs) else 0.34
         item["win_probability"] = prob
         item["overall_score"] = prob * 100
@@ -10197,6 +10267,9 @@ def run_day_portfolio_backtest(
 
         day_races = race_days[(race_date, venue)]
         scored_by_race = _score_races_for_day_ml(day_races, all_performances, model_type, model)
+        for race_no, runners in scored_by_race.items():
+            for row in runners:
+                row["horse_name"] = resolve_horse_name(row)
         day_performances = [
             p for p in all_performances if p.get("race_date") == race_date and p.get("venue") == venue
         ]

@@ -30,6 +30,26 @@ def normalize_horse_no(horse_no) -> str:
     return str(horse_no).strip()
 
 
+def _runner_display_name(row: Dict) -> str:
+    """Localized horse name (reads Streamlit lang if available)."""
+    from betting_strategy_engine import pick_horse_name
+
+    lang = "zh"
+    try:
+        import streamlit as st
+        lang = st.session_state.get("lang", "zh")
+    except Exception:
+        pass
+    lookup = None
+    if lang == "en":
+        try:
+            from racing_app import get_horses_name_lookup
+            lookup = get_horses_name_lookup()
+        except Exception:
+            lookup = None
+    return pick_horse_name(row, lang, lookup)
+
+
 @dataclass
 class ScoredRunner:
     horse_no: str
@@ -441,7 +461,7 @@ def build_race_day_races_from_performances(
             runners.append(
                 ScoredRunner(
                     horse_no=hno,
-                    horse_name=row.get("horse_name", ""),
+                    horse_name=_runner_display_name(row),
                     win_probability=wp if wp <= 1 else wp / 100.0,
                     odds_win=odds,
                 )
@@ -454,7 +474,7 @@ def build_race_day_races_from_performances(
                 runners.append(
                     ScoredRunner(
                         horse_no=hno,
-                        horse_name=row.get("horse_name", ""),
+                        horse_name=_runner_display_name(row),
                         win_probability=0.05,
                         odds_win=_safe_float(row.get("odds"), 10),
                     )

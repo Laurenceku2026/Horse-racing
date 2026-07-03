@@ -21,6 +21,47 @@ def format_horse_display(name: str, horse_no=None) -> str:
     return name or "-"
 
 
+def pick_horse_name(
+    record: Dict,
+    lang: str = "zh",
+    name_lookup: Optional[Dict[str, Dict[str, str]]] = None,
+) -> str:
+    """按语言选择马名（英文模式优先英文名）。"""
+    prefer_en = lang == "en"
+    name_en = (
+        record.get("horse_name_en")
+        or record.get("name_en")
+        or ""
+    )
+    if isinstance(name_en, str):
+        name_en = name_en.strip()
+    else:
+        name_en = str(name_en or "").strip()
+
+    name_zh = (
+        record.get("horse_name_zh")
+        or record.get("horse_name")
+        or record.get("name_zh")
+        or ""
+    )
+    if isinstance(name_zh, str):
+        name_zh = name_zh.strip()
+    else:
+        name_zh = str(name_zh or "").strip()
+
+    horse_id = record.get("horse_id")
+    if name_lookup and horse_id:
+        info = name_lookup.get(str(horse_id), {})
+        if not name_en:
+            name_en = (info.get("name_en") or "").strip()
+        if not name_zh:
+            name_zh = (info.get("name_zh") or "").strip()
+
+    if prefer_en and name_en:
+        return name_en
+    return name_zh or name_en or "-"
+
+
 @dataclass
 class HorseProbability:
     """马匹概率数据"""
