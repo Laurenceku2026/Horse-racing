@@ -1860,19 +1860,88 @@ def trial_gated_toggle_button(
     *,
     hint: Optional[str] = None,
     primary: bool = False,
+    show_hint: bool = True,
 ) -> bool:
-    """按鈕式開關：首次點擊静默扣次並展開內容。"""
+    """按鈕式開關：首次點擊静默扣次並展開內容；已展開時不再顯示按鈕。"""
     if st.session_state.get(state_key):
         return True
 
-    hint_text = hint or t()["click_open"]
-    st.caption(hint_text)
+    if show_hint:
+        st.caption(hint or t()["click_open"])
     btn_type = "primary" if primary else "secondary"
     if st.button(label, key=f"trial_btn_{state_key}", use_container_width=True, type=btn_type):
         if require_trial(trial_key):
             st.session_state[state_key] = True
             st.rerun()
     return False
+
+
+def _render_ai_strategy_recommendation_sections(
+    current_race_key: str,
+    recommendations: Dict,
+    sorted_runners: List[Dict],
+) -> None:
+    """已展開的推薦置頂並顯示標題；未展開的按鈕集中在下方。"""
+    sections = [
+        {
+            "label": t()["win_place_recommend"],
+            "state_key": f"show_win_rec_{current_race_key}",
+            "trial_key": f"rec_win:{current_race_key}",
+        },
+        {
+            "label": t()["qin_recommend_expander"],
+            "state_key": f"show_qin_rec_{current_race_key}",
+            "trial_key": f"rec_qin:{current_race_key}",
+        },
+        {
+            "label": t()["tri_recommend_expander"],
+            "state_key": f"show_tri_rec_{current_race_key}",
+            "trial_key": f"rec_tri:{current_race_key}",
+        },
+    ]
+
+    def _render_win_place_body() -> None:
+        if recommendations.get("win") and recommendations["win"]:
+            rec = recommendations["win"][0]
+            st.info(f"**{rec.description}**")
+            st.write(f"{t()['win_odds_label']}: {rec.odds:.1f}x")
+            st.write(f"{t()['expected_roi_label']}: {rec.roi:+.1f}%")
+            st.caption(f"💡 {rec.reason}")
+        elif recommendations.get("place") and recommendations["place"]:
+            rec = recommendations["place"][0]
+            st.info(f"**{rec.description}**")
+            st.write(f"{t()['place_odds_label']}: {rec.odds:.1f}x")
+            st.write(f"{t()['expected_roi_label']}: {rec.roi:+.1f}%")
+            st.caption(f"💡 {rec.reason}")
+        else:
+            st.write(t()["no_suggestions"])
+
+    renderers = [
+        _render_win_place_body,
+        lambda: _render_qin_suggestions(sorted_runners, key_prefix="qin_fold"),
+        lambda: _render_tri_suggestions(sorted_runners),
+    ]
+
+    closed_sections = []
+    for section, render_body in zip(sections, renderers):
+        if st.session_state.get(section["state_key"]):
+            st.markdown(f"#### {section['label']}")
+            render_body()
+            st.markdown("")
+        else:
+            closed_sections.append(section)
+
+    if not closed_sections:
+        return
+
+    st.caption(t()["click_open_recommend"])
+    for section in closed_sections:
+        trial_gated_toggle_button(
+            section["label"],
+            section["state_key"],
+            section["trial_key"],
+            show_hint=False,
+        )
 
 
 def _render_paywall_content() -> None:
@@ -8671,43 +8740,7 @@ def render_smart_betting(show_title: bool = True):
     # ==================== AI 投注策略建议（折叠版） ====================
     st.markdown(f"### {_model_section_title(t()['ai_strategy_suggestions'], model_choice)}")
     st.caption(t()["ev_description"])
-    
-    if trial_gated_toggle_button(
-        t()["win_place_recommend"],
-        f"show_win_rec_{current_race_key}",
-        f"rec_win:{current_race_key}",
-        hint=t()["click_open_recommend"],
-    ):
-        if recommendations.get('win') and recommendations['win']:
-            rec = recommendations['win'][0]
-            st.info(f"**{rec.description}**")
-            st.write(f"{t()['win_odds_label']}: {rec.odds:.1f}x")
-            st.write(f"{t()['expected_roi_label']}: {rec.roi:+.1f}%")
-            st.caption(f"💡 {rec.reason}")
-        elif recommendations.get('place') and recommendations['place']:
-            rec = recommendations['place'][0]
-            st.info(f"**{rec.description}**")
-            st.write(f"{t()['place_odds_label']}: {rec.odds:.1f}x")
-            st.write(f"{t()['expected_roi_label']}: {rec.roi:+.1f}%")
-            st.caption(f"💡 {rec.reason}")
-        else:
-            st.write(t()["no_suggestions"])
-    
-    if trial_gated_toggle_button(
-        t()["qin_recommend_expander"],
-        f"show_qin_rec_{current_race_key}",
-        f"rec_qin:{current_race_key}",
-        hint=t()["click_open_recommend"],
-    ):
-        _render_qin_suggestions(sorted_runners, key_prefix="qin_fold")
-
-    if trial_gated_toggle_button(
-        t()["tri_recommend_expander"],
-        f"show_tri_rec_{current_race_key}",
-        f"rec_tri:{current_race_key}",
-        hint=t()["click_open_recommend"],
-    ):
-        _render_tri_suggestions(sorted_runners)
+    _render_ai_strategy_recommendation_sections(current_race_key, recommendations, sorted_runners)
 
     st.markdown("---")
     # ==================== 新增：過関投注推薦器 ====================
