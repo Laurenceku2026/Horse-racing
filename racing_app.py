@@ -1147,36 +1147,39 @@ def get_horses_name_by_zh_lookup() -> Dict[str, str]:
     return by_zh
 
 
+def _apply_name_lookups_to_record(record: Dict) -> Dict:
+    """Fill horse_name_en on a copy using horses_v2 (by id, then by Chinese name)."""
+    enriched = dict(record)
+    if (enriched.get("horse_name_en") or "").strip():
+        return enriched
+    by_id = get_horses_name_lookup()
+    by_zh = get_horses_name_by_zh_lookup()
+    hid = str(enriched.get("horse_id") or "")
+    if hid and hid in by_id:
+        enriched["horse_name_en"] = by_id[hid].get("name_en") or ""
+    zh = (enriched.get("horse_name_zh") or enriched.get("horse_name") or "").strip()
+    if not (enriched.get("horse_name_en") or "").strip() and zh and zh in by_zh:
+        enriched["horse_name_en"] = by_zh[zh]
+    return enriched
+
+
 def resolve_horse_name(record: Dict) -> str:
     """当前语言下的马名。"""
     from betting_strategy_engine import pick_horse_name
 
     lang = get_lang()
-    if lang == "en":
-        return pick_horse_name(
-            record,
-            lang,
-            get_horses_name_lookup(),
-            get_horses_name_by_zh_lookup(),
-        )
-    return pick_horse_name(record, lang)
+    rec = _apply_name_lookups_to_record(record) if lang == "en" else record
+    lookup = get_horses_name_lookup() if lang == "en" else None
+    return pick_horse_name(rec, lang, lookup)
 
 
 def _enrich_runner_horse_names(runners: List[Dict]) -> List[Dict]:
     """Fill missing English names from horses_v2 (language-neutral, safe to cache)."""
     if not runners:
         return runners
-    by_id = get_horses_name_lookup()
-    by_zh = get_horses_name_by_zh_lookup()
     for runner in runners:
-        if (runner.get("horse_name_en") or "").strip():
-            continue
-        hid = str(runner.get("horse_id") or "")
-        if hid and hid in by_id:
-            runner["horse_name_en"] = by_id[hid].get("name_en") or ""
-        zh = (runner.get("horse_name_zh") or runner.get("horse_name") or "").strip()
-        if not (runner.get("horse_name_en") or "").strip() and zh and zh in by_zh:
-            runner["horse_name_en"] = by_zh[zh]
+        if not (runner.get("horse_name_en") or "").strip():
+            runner["horse_name_en"] = _apply_name_lookups_to_record(runner).get("horse_name_en") or ""
     return runners
 
 

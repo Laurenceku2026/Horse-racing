@@ -41,21 +41,17 @@ def normalize_horse_no(horse_no) -> str:
 
 def _runner_display_name(row: Dict) -> str:
     """Localized horse name (reads Streamlit lang if available)."""
-    from betting_strategy_engine import pick_horse_name
-
     lang = _session_lang()
-    lookup = None
-    by_zh = None
     if lang == "en":
         try:
-            from racing_app import get_horses_name_by_zh_lookup, get_horses_name_lookup
+            from racing_app import resolve_horse_name
 
-            lookup = get_horses_name_lookup()
-            by_zh = get_horses_name_by_zh_lookup()
+            return resolve_horse_name(row)
         except Exception:
-            lookup = None
-            by_zh = None
-    return pick_horse_name(row, lang, lookup, by_zh)
+            pass
+    from betting_strategy_engine import pick_horse_name
+
+    return pick_horse_name(row, lang)
 
 
 @dataclass
