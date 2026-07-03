@@ -119,11 +119,28 @@ class DayPortfolioOptimizer:
     DBL_DISCOUNT = 0.92
     TOP_N = 5
 
-    def __init__(self, min_stake: float = 10.0, min_ev: float = 0.0, max_candidates: int = 50):
+    def __init__(
+        self,
+        min_stake: float = 10.0,
+        min_ev: float = 0.0,
+        max_candidates: int = 50,
+        lang: str = "zh",
+    ):
         self.min_stake = min_stake
         self.min_ev = min_ev
         self.max_candidates = max_candidates
-        self.engine = BettingStrategyEngine()
+        self.lang = lang
+        self.engine = BettingStrategyEngine(lang=lang)
+
+    def _race_prefix(self, race_no: int) -> str:
+        if self.lang == "en":
+            return f"R{race_no}"
+        return f"第{race_no}場"
+
+    def _bet_desc(self, race_no: int, pool_label: str, detail: str) -> str:
+        if self.lang == "en":
+            return f"{self._race_prefix(race_no)} {pool_label} {detail}"
+        return f"{self._race_prefix(race_no)} {pool_label} {detail}"
 
     def _attach_probs(self, runners: List[ScoredRunner]) -> List[ScoredRunner]:
         if not runners:
@@ -166,7 +183,11 @@ class DayPortfolioOptimizer:
                 candidates.append(
                     BetCandidate(
                         pool="WIN",
-                        description=f"第{race.race_no}場 獨贏 {r.label}",
+                        description=self._bet_desc(
+                            race.race_no,
+                            "Win" if self.lang == "en" else "獨贏",
+                            r.label,
+                        ),
                         race_no=race.race_no,
                         horse_nos=(r.horse_no,),
                         odds=r.odds_win,
@@ -183,7 +204,11 @@ class DayPortfolioOptimizer:
                     candidates.append(
                         BetCandidate(
                             pool="PLA",
-                            description=f"第{race.race_no}場 位置 {r.label}",
+                            description=self._bet_desc(
+                                race.race_no,
+                                "Place" if self.lang == "en" else "位置",
+                                r.label,
+                            ),
                             race_no=race.race_no,
                             horse_nos=(r.horse_no,),
                             odds=place_odds,
@@ -204,7 +229,11 @@ class DayPortfolioOptimizer:
                 candidates.append(
                     BetCandidate(
                         pool="QIN",
-                        description=f"第{race.race_no}場 連贏 {a.label}+{b.label}",
+                        description=self._bet_desc(
+                            race.race_no,
+                            "Quinella" if self.lang == "en" else "連贏",
+                            f"{a.label}+{b.label}",
+                        ),
                         race_no=race.race_no,
                         horse_nos=tuple(sorted([a.horse_no, b.horse_no])),
                         odds=qin_odds,
@@ -228,7 +257,11 @@ class DayPortfolioOptimizer:
                 candidates.append(
                     BetCandidate(
                         pool="TRI",
-                        description=f"第{race.race_no}場 單T {labels}",
+                        description=self._bet_desc(
+                            race.race_no,
+                            "Trio" if self.lang == "en" else "單T",
+                            labels,
+                        ),
                         race_no=race.race_no,
                         horse_nos=nos,
                         odds=tri_odds,
@@ -252,7 +285,11 @@ class DayPortfolioOptimizer:
                         candidates.append(
                             BetCandidate(
                                 pool="TCE",
-                                description=f"第{race.race_no}場 三重彩 {labels}",
+                                description=self._bet_desc(
+                                    race.race_no,
+                                    "Tierce" if self.lang == "en" else "三重彩",
+                                    labels,
+                                ),
                                 race_no=race.race_no,
                                 horse_nos=tuple(p.horse_no for p in perm),
                                 odds=tce_odds,
@@ -282,10 +319,19 @@ class DayPortfolioOptimizer:
                     joint_prob = h1.win_probability * h2.win_probability
                     ev_d = self.engine.calculate_ev(joint_prob, dbl_odds)
                     if ev_d > self.min_ev:
+                        dbl_detail = (
+                            f"R{n1} {h1.label} + R{n2} {h2.label}"
+                            if self.lang == "en"
+                            else f"第{n1}場{h1.label} + 第{n2}場{h2.label}"
+                        )
                         candidates.append(
                             BetCandidate(
                                 pool="DBL",
-                                description=f"孖寶 第{n1}場{h1.label} + 第{n2}場{h2.label}",
+                                description=(
+                                    f"Double {dbl_detail}"
+                                    if self.lang == "en"
+                                    else f"孖寶 {dbl_detail}"
+                                ),
                                 race_no=n1,
                                 race_no_2=n2,
                                 horse_nos=(h1.horse_no, h2.horse_no),

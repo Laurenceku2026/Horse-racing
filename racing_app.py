@@ -582,6 +582,20 @@ TEXTS = {
         "ml_insufficient_train": "⚠️ {date} 訓練數據不足 ({count} 條)，跳過",
         "ml_training": "正在訓練模型: {date} (訓練數據: {count} 條, 模型: {model})",
         "ml_train_failed": "⚠️ {date} 模型訓練失敗，跳過",
+        "progress_race_analysis": "正在分析第 {current}/{total} 场...",
+        "progress_building_parlay": "正在计算过关组合...",
+        "progress_optimizing_full_day": "正在优化全天投注策略...",
+        "rule_backtest_progress": "正在回测: {date} 第{race_no}场 ({current}/{total})",
+        "parlay_col_combo": "组合",
+        "parlay_col_races": "场次",
+        "parlay_col_horses": "马匹",
+        "parlay_col_odds": "组合赔率",
+        "parlay_col_joint_prob": "联合概率",
+        "parlay_col_stake": "建议注额",
+        "parlay_combo_2x1": "2串1",
+        "parlay_combo_3x1": "3串1",
+        "parlay_races_2": "第{r1}场 + 第{r2}场",
+        "parlay_races_3": "第{r1}场 + 第{r2}场 + 第{r3}场",
     },
     "en": {
         # ==================== Basic ====================
@@ -1016,6 +1030,20 @@ Let AI be your racing assistant.
         "ml_insufficient_train": "⚠️ {date} insufficient training data ({count} rows), skipped",
         "ml_training": "Training model: {date} ({count} rows, model: {model})",
         "ml_train_failed": "⚠️ {date} model training failed, skipped",
+        "progress_race_analysis": "Analyzing race {current}/{total}...",
+        "progress_building_parlay": "Building parlay combinations...",
+        "progress_optimizing_full_day": "Optimizing full-day strategy...",
+        "rule_backtest_progress": "Backtesting: {date} Race {race_no} ({current}/{total})",
+        "parlay_col_combo": "Combo",
+        "parlay_col_races": "Races",
+        "parlay_col_horses": "Horses",
+        "parlay_col_odds": "Combined Odds",
+        "parlay_col_joint_prob": "Joint Prob.",
+        "parlay_col_stake": "Suggested Stake",
+        "parlay_combo_2x1": "2-leg",
+        "parlay_combo_3x1": "3-leg",
+        "parlay_races_2": "R{r1} + R{r2}",
+        "parlay_races_3": "R{r1} + R{r2} + R{r3}",
     }
 }
 #---------
@@ -1193,6 +1221,36 @@ def format_risk_level(level: str) -> str:
         "High": t()["risk_high"],
     }
     return mapping.get(level, level)
+
+
+class _UiProgressBar:
+    """Streamlit progress bar helper for long smart-betting operations."""
+
+    def __init__(self, start_text: Optional[str] = None):
+        self.bar = st.progress(0, text=start_text or t()["sb_loading_runners"])
+
+    def step(self, fraction: float, text: str) -> None:
+        self.bar.progress(min(max(fraction, 0.0), 1.0), text=text)
+
+    def finish(self, text: Optional[str] = None) -> None:
+        self.bar.progress(1.0, text=text or t()["sb_analysis_done"])
+        self.bar.empty()
+
+
+def _runner_record(row: Dict) -> Dict:
+    """Build a horse record dict for name resolution."""
+    horse_name_zh = row.get("horse_name_zh") or row.get("horse_name") or row.get("name_zh") or ""
+    return {
+        "horse_id": row.get("horse_id"),
+        "horse_name": horse_name_zh,
+        "horse_name_zh": horse_name_zh,
+        "horse_name_en": row.get("horse_name_en") or row.get("name_en") or "",
+        "horse_no": row.get("horse_no"),
+    }
+
+
+def _finalize_parlay_runners(runners: List[Dict]) -> List[Dict]:
+    return localize_runner_names(runners) if runners else []
 #-------------------------
 #-------------
 @st.cache_data(ttl=300)
@@ -6882,16 +6940,18 @@ def _score_runners_for_parlay_race(
             horse_ids = tuple({r.get("horse_id") for r in runners_data if r.get("horse_id")})
             perf_cache = se_get_horses_performances_batch(horse_ids)
             horse_birth_years = load_horse_birth_years()
-            return score_runners_for_prediction(
-                race.get("race_date"),
-                race.get("venue"),
-                race.get("distance", 1200),
-                runners_data,
-                perf_cache,
-                horse_birth_years,
-                cfg,
-                temperature=0.8,
-                incident_llm_map=incident_llm_map,
+            return _finalize_parlay_runners(
+                score_runners_for_prediction(
+                    race.get("race_date"),
+                    race.get("venue"),
+                    race.get("distance", 1200),
+                    runners_data,
+                    perf_cache,
+                    horse_birth_years,
+                    cfg,
+                    temperature=0.8,
+                    incident_llm_map=incident_llm_map,
+                )
             )
 
         scores, _ = calculate_all_horses_scores_v2(runners_data, user_weights)
@@ -6899,7 +6959,7 @@ def _score_runners_for_parlay_race(
             if i < len(scores):
                 runner["overall_score"] = scores[i].get("overall_score", 0)
                 runner["win_probability"] = scores[i].get("win_probability", 0) / 100
-        return runners_data
+        return _finalize_parlay_runners(runners_data)
 
     if ml_model is None:
         ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
@@ -6907,7 +6967,7 @@ def _score_runners_for_parlay_race(
         for runner in runners_data:
             runner["win_probability"] = 0.34
             runner["overall_score"] = 34
-        return runners_data
+        return _finalize_parlay_runners(runners_data)
 
     ml_probs = get_model_predictions(
         race.get("race_date"),
@@ -6921,13 +6981,13 @@ def _score_runners_for_parlay_race(
         if i < len(ml_probs):
             runner["win_probability"] = ml_probs[i]
             runner["overall_score"] = ml_probs[i] * 100
-    return runners_data
+    return _finalize_parlay_runners(runners_data)
 
 
 def _pack_parlay_race_entry(race: Dict, runners_data: List[Dict]) -> Dict:
     sorted_runners = sorted(runners_data, key=lambda x: x.get("win_probability", 0), reverse=True)
     scores = [runner.get("combined_score", runner.get("overall_score", 50)) for runner in sorted_runners]
-    horse_names = [runner.get("horse_name", "") for runner in sorted_runners]
+    horse_names = [resolve_horse_name(_runner_record(runner)) for runner in sorted_runners]
     horse_nos = [runner.get("horse_no") for runner in sorted_runners]
     odds = []
     for runner in sorted_runners:
@@ -7005,6 +7065,13 @@ def _generate_parlay_combo_results(
     生成 2串1 / 3串1 过关组合。
     3串1 选取三场各一匹马，要求联合期望值 EV > 0。
     """
+    texts = t()
+    col_combo = texts["parlay_col_combo"]
+    col_races = texts["parlay_col_races"]
+    col_horses = texts["parlay_col_horses"]
+    col_odds = texts["parlay_col_odds"]
+    col_prob = texts["parlay_col_joint_prob"]
+    col_stake = texts["parlay_col_stake"]
     results: List[Dict] = []
     n = len(confidence_horses)
 
@@ -7020,12 +7087,12 @@ def _generate_parlay_combo_results(
             ev = joint_prob * combined_odds - 1 if combined_odds > 0 else -1
             if ev > 0:
                 results.append({
-                    "組合": "2串1",
-                    "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
-                    "馬匹": f"{h1['display_name']} + {h2['display_name']}",
-                    "組合賠率": f"{combined_odds:.1f}",
-                    "聯合概率": f"{joint_prob * 100:.1f}%",
-                    "建議注額": f"HK${bankroll * 0.05 * risk_multiplier:.0f}",
+                    col_combo: texts["parlay_combo_2x1"],
+                    col_races: texts["parlay_races_2"].format(r1=h1["race_no"], r2=h2["race_no"]),
+                    col_horses: f"{h1['display_name']} + {h2['display_name']}",
+                    col_odds: f"{combined_odds:.1f}",
+                    col_prob: f"{joint_prob * 100:.1f}%",
+                    col_stake: f"HK${bankroll * 0.05 * risk_multiplier:.0f}",
                     "_ev": ev,
                 })
 
@@ -7044,12 +7111,16 @@ def _generate_parlay_combo_results(
                 ev = joint_prob * combined_odds - 1 if combined_odds > 0 else -1
                 if ev > 0:
                     results.append({
-                        "組合": "3串1",
-                        "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場 + 第{h3['race_no']}場",
-                        "馬匹": f"{h1['display_name']} + {h2['display_name']} + {h3['display_name']}",
-                        "組合賠率": f"{combined_odds:.1f}",
-                        "聯合概率": f"{joint_prob * 100:.1f}%",
-                        "建議注額": f"HK${bankroll * 0.03 * risk_multiplier:.0f}",
+                        col_combo: texts["parlay_combo_3x1"],
+                        col_races: texts["parlay_races_3"].format(
+                            r1=h1["race_no"], r2=h2["race_no"], r3=h3["race_no"]
+                        ),
+                        col_horses: (
+                            f"{h1['display_name']} + {h2['display_name']} + {h3['display_name']}"
+                        ),
+                        col_odds: f"{combined_odds:.1f}",
+                        col_prob: f"{joint_prob * 100:.1f}%",
+                        col_stake: f"HK${bankroll * 0.03 * risk_multiplier:.0f}",
                         "_ev": ev,
                     })
 
@@ -7091,6 +7162,7 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
         return
 
     texts = t()
+    lang = get_lang()
     st.markdown(f"#### {texts['parlay_results_title']}")
     display_order = ["2x1", "3x1", "2x3", "3x4", "3x7", "4x11", "4x1", "5x1", "6x1"]
     shown_types = [t for t in display_order if t in results] + [
@@ -7112,7 +7184,7 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
             with st.container(border=True):
                 col1, col2, col3 = st.columns([2, 1, 1])
                 with col1:
-                    st.markdown(f"**{format_parlay_display(rec)}**")
+                    st.markdown(f"**{format_parlay_display(rec, lang=lang)}**")
                 with col2:
                     st.markdown(f"{texts['parlay_odds_label']}: **{rec.total_odds:.1f}**x")
                     st.markdown(f"{texts['parlay_combined_prob']}: {rec.combined_prob:.1f}%")
@@ -7129,7 +7201,7 @@ def _display_parlay_schedule_results(results: Dict, recommender: ParlayRecommend
         st.markdown("---")
         st.markdown(f"#### {texts['parlay_best_title']}")
         st.success(
-            f"**{texts['parlay_best_combo']}**: {format_parlay_display(best_rec)}\n"
+            f"**{texts['parlay_best_combo']}**: {format_parlay_display(best_rec, lang=lang)}\n"
             f"- {texts['parlay_method']}: {best_rec.parlay_type} ({best_rec.num_bets} {tx('注', 'bets')})\n"
             f"- {texts['parlay_total_odds']}: {best_rec.total_odds:.1f}x\n"
             f"- {texts['parlay_expected_roi']}: {best_rec.roi:+.1f}%\n"
@@ -8044,29 +8116,47 @@ def render_smart_betting(show_title: bool = True):
             )
 
             if st.button(t()["generate_parlay"], key="generate_parlay_schedule", use_container_width=True):
-                with st.spinner(t()["calculating_parlay_schedule"]):
-                    weights_config = None
-                    if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
-                        weights_config = st.session_state.get("user_scoring_config", {})
-                    parlay_races_data = _build_parlay_races_data(
-                        current_races_for_parlay,
-                        selected_parlay_indices,
+                progress = _UiProgressBar(t()["calculating_parlay_schedule"])
+                weights_config = None
+                if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
+                    weights_config = st.session_state.get("user_scoring_config", {})
+                sorted_indices = sorted(
+                    selected_parlay_indices,
+                    key=lambda i: current_races_for_parlay[i].get("race_no", 0),
+                )
+                parlay_races_data = []
+                total = max(len(sorted_indices), 1)
+                for step_i, idx in enumerate(sorted_indices):
+                    progress.step(
+                        (step_i + 0.5) / total,
+                        t()["progress_race_analysis"].format(current=step_i + 1, total=total),
+                    )
+                    race = current_races_for_parlay[idx]
+                    runners_data = _score_runners_for_parlay_race(
+                        race,
                         model_choice,
                         user_weights,
                         weights_config,
+                        None,
+                        None,
                         prediction_cutoff_date,
                     )
-                    if len(parlay_races_data) < 2:
-                        st.session_state.pop("parlay_schedule_results", None)
-                        st.session_state.pop("parlay_schedule_cache_key", None)
-                        st.warning(t()["parlay_insufficient_data"])
-                    else:
-                        max_legs = min(len(parlay_races_data), 6)
-                        results, recommender = _compute_parlay_schedule_results(
-                            parlay_races_data, max_legs
-                        )
-                        st.session_state["parlay_schedule_results"] = results
-                        st.session_state["parlay_schedule_cache_key"] = parlay_cache_key
+                    if runners_data:
+                        parlay_races_data.append(_pack_parlay_race_entry(race, runners_data))
+                progress.step(0.9, t()["progress_building_parlay"])
+                if len(parlay_races_data) < 2:
+                    st.session_state.pop("parlay_schedule_results", None)
+                    st.session_state.pop("parlay_schedule_cache_key", None)
+                    progress.finish()
+                    st.warning(t()["parlay_insufficient_data"])
+                else:
+                    max_legs = min(len(parlay_races_data), 6)
+                    results, recommender = _compute_parlay_schedule_results(
+                        parlay_races_data, max_legs
+                    )
+                    st.session_state["parlay_schedule_results"] = results
+                    st.session_state["parlay_schedule_cache_key"] = parlay_cache_key
+                    progress.finish()
 
             cached_key = st.session_state.get("parlay_schedule_cache_key")
             cached_results = st.session_state.get("parlay_schedule_results")
@@ -8086,77 +8176,83 @@ def render_smart_betting(show_title: bool = True):
         if not consume_free_trial(st.session_state.user_id):
             st.warning(t()["free_trial_used"])
         else:
-            with st.spinner(t()["calculating_full_day"]):
-                all_bets = []
-                total_stake = 0
-                total_expected = 0
-                ml_model = None
-                ml_model_type = None
-                if model_choice != "评分系统":
-                    ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
-                weights_config = None
-                if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
-                    weights_config = st.session_state.get("user_scoring_config", {})
+            progress = _UiProgressBar(t()["progress_optimizing_full_day"])
+            all_bets = []
+            total_stake = 0
+            total_expected = 0
+            ml_model = None
+            ml_model_type = None
+            if model_choice != "评分系统":
+                ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
+            weights_config = None
+            if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
+                weights_config = st.session_state.get("user_scoring_config", {})
 
-                for race in races:
-                    race_runners = _score_runners_for_parlay_race(
-                        race,
-                        model_choice,
-                        user_weights,
-                        weights_config,
-                        ml_model,
-                        ml_model_type,
-                        prediction_cutoff_date,
-                    )
-                    if not race_runners:
+            total_races = max(len(races), 1)
+            for race_i, race in enumerate(races):
+                progress.step(
+                    (race_i + 0.5) / total_races,
+                    t()["progress_race_analysis"].format(current=race_i + 1, total=total_races),
+                )
+                race_runners = _score_runners_for_parlay_race(
+                    race,
+                    model_choice,
+                    user_weights,
+                    weights_config,
+                    ml_model,
+                    ml_model_type,
+                    prediction_cutoff_date,
+                )
+                if not race_runners:
+                    continue
+
+                top_horses = sorted(race_runners, key=lambda x: x.get('win_probability', 0), reverse=True)[:2]
+                for horse in top_horses:
+                    if horse is None:
+                        continue
+                    prob = horse.get('win_probability', 0)
+                    odds_raw = horse.get('odds_win')
+
+                    try:
+                        odds = float(odds_raw) if odds_raw else 0
+                    except (ValueError, TypeError):
+                        odds = 0
+
+                    if prob <= 0 or odds <= 1:
                         continue
 
-                    top_horses = sorted(race_runners, key=lambda x: x.get('win_probability', 0), reverse=True)[:2]
-                    for horse in top_horses:
-                        if horse is None:
-                            continue
-                        prob = horse.get('win_probability', 0)
-                        odds_raw = horse.get('odds_win')
+                    kelly = calculate_kelly_fraction(prob, odds)
+                    if kelly <= 0:
+                        continue
 
-                        try:
-                            odds = float(odds_raw) if odds_raw else 0
-                        except (ValueError, TypeError):
-                            odds = 0
+                    stake = bankroll * kelly * risk_multiplier * 0.3
+                    expected = calculate_expected_value(prob, odds, stake)
 
-                        if prob <= 0 or odds <= 1:
-                            continue
+                    if stake >= 10:
+                        all_bets.append({
+                            t()["col_race_no"]: f"{tx('第', 'Race ')}{race.get('race_no')}{tx('場', '')}",
+                            t()["col_horse"]: _horse_display_label(horse),
+                            t()["col_odds"]: odds,
+                            t()["col_win_rate"]: f"{prob*100:.1f}%",
+                            t()["col_suggested_amount"]: f"HK${stake:.0f}",
+                            t()["col_expected_value"]: f"${expected:.0f}"
+                        })
+                        total_stake += stake
+                        total_expected += expected
 
-                        kelly = calculate_kelly_fraction(prob, odds)
-                        if kelly <= 0:
-                            continue
-
-                        stake = bankroll * kelly * risk_multiplier * 0.3
-                        expected = calculate_expected_value(prob, odds, stake)
-
-                        if stake >= 10:
-                            all_bets.append({
-                                t()["col_race_no"]: f"{tx('第', 'Race ')}{race.get('race_no')}{tx('場', '')}",
-                                t()["col_horse"]: _horse_display_label(horse),
-                                t()["col_odds"]: odds,
-                                t()["col_win_rate"]: f"{prob*100:.1f}%",
-                                t()["col_suggested_amount"]: f"HK${stake:.0f}",
-                                t()["col_expected_value"]: f"${expected:.0f}"
-                            })
-                            total_stake += stake
-                            total_expected += expected
-
-                if all_bets:
-                    st.dataframe(pd.DataFrame(all_bets), use_container_width=True, hide_index=True)
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric(t()["total_stake_metric"], f"HK${total_stake:.0f}")
-                    with col2:
-                        st.metric(t()["total_ev_metric"], f"${total_expected:+.0f}")
-                    with col3:
-                        roi = (total_expected / total_stake * 100) if total_stake > 0 else 0
-                        st.metric(t()["expected_roi_metric"], f"{roi:+.1f}%")
-                else:
-                    st.warning(t()["no_betting_opportunities"])
+            progress.finish()
+            if all_bets:
+                st.dataframe(pd.DataFrame(all_bets), use_container_width=True, hide_index=True)
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(t()["total_stake_metric"], f"HK${total_stake:.0f}")
+                with col2:
+                    st.metric(t()["total_ev_metric"], f"${total_expected:+.0f}")
+                with col3:
+                    roi = (total_expected / total_stake * 100) if total_stake > 0 else 0
+                    st.metric(t()["expected_roi_metric"], f"{roi:+.1f}%")
+            else:
+                st.warning(t()["no_betting_opportunities"])
 
     st.markdown("---")
     st.markdown(f"### 💰 {_model_section_title(t()['day_portfolio_title'], model_choice)}")
@@ -8182,31 +8278,38 @@ def render_smart_betting(show_title: bool = True):
         if not consume_free_trial(st.session_state.user_id):
             st.warning(t()["free_trial_used"])
         else:
-            with st.spinner(t()["optimizing_day_portfolio"]):
-                weights_config = None
-                if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
-                    weights_config = st.session_state.get("user_scoring_config", {})
-                incident_texts = []
-                for race in races:
-                    for runner in get_cached_race_runners(
-                        race.get("race_date"), race.get("venue"), race.get("race_no")
-                    ) or []:
-                        txt = runner.get("incident", "")
-                        if txt:
-                            incident_texts.append(txt)
-                incident_llm_map = _build_incident_llm_map(incident_texts)
-                portfolio_result = build_live_day_portfolio(
-                    races,
-                    model_choice,
-                    portfolio_budget,
-                    min_ev=portfolio_min_ev,
-                    prediction_cutoff_date=prediction_cutoff_date,
-                    user_weights=user_weights,
-                    weights_config=weights_config,
-                    incident_llm_map=incident_llm_map,
+            progress = _UiProgressBar(t()["optimizing_day_portfolio"])
+            weights_config = None
+            if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
+                weights_config = st.session_state.get("user_scoring_config", {})
+            incident_texts = []
+            total_races = max(len(races), 1)
+            for race_i, race in enumerate(races):
+                progress.step(
+                    (race_i + 0.4) / total_races,
+                    t()["progress_race_analysis"].format(current=race_i + 1, total=total_races),
                 )
-                if portfolio_result:
-                    _display_live_day_portfolio(portfolio_result, portfolio_budget)
+                for runner in get_cached_race_runners(
+                    race.get("race_date"), race.get("venue"), race.get("race_no")
+                ) or []:
+                    txt = runner.get("incident", "")
+                    if txt:
+                        incident_texts.append(txt)
+            progress.step(0.85, t()["sb_building_recommendations"])
+            incident_llm_map = _build_incident_llm_map(incident_texts)
+            portfolio_result = build_live_day_portfolio(
+                races,
+                model_choice,
+                portfolio_budget,
+                min_ev=portfolio_min_ev,
+                prediction_cutoff_date=prediction_cutoff_date,
+                user_weights=user_weights,
+                weights_config=weights_config,
+                incident_llm_map=incident_llm_map,
+            )
+            progress.finish()
+            if portfolio_result:
+                _display_live_day_portfolio(portfolio_result, portfolio_budget)
     
     st.markdown("---")
     
@@ -8218,51 +8321,58 @@ def render_smart_betting(show_title: bool = True):
         if not consume_free_trial(st.session_state.user_id):
             st.warning(t()["free_trial_used"])
         else:
-            with st.spinner(t()["calculating_parlay"]):
-                confidence_horses = []
-                ml_model = None
-                ml_model_type = None
-                if model_choice != "评分系统":
-                    ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
-                weights_config = None
-                if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
-                    weights_config = st.session_state.get("user_scoring_config", {})
+            progress = _UiProgressBar(t()["calculating_parlay"])
+            confidence_horses = []
+            ml_model = None
+            ml_model_type = None
+            if model_choice != "评分系统":
+                ml_model_type, ml_model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
+            weights_config = None
+            if model_choice == "评分系统" and st.session_state.get("scoring_weights_applied"):
+                weights_config = st.session_state.get("user_scoring_config", {})
 
-                for race in races:
-                    race_runners = _score_runners_for_parlay_race(
-                        race,
-                        model_choice,
-                        user_weights,
-                        weights_config,
-                        ml_model,
-                        ml_model_type,
-                        prediction_cutoff_date,
-                    )
-                    if not race_runners:
-                        continue
-
-                    top = max(race_runners, key=lambda x: x.get('win_probability', 0), default=None)
-                    if top and top.get('win_probability', 0) >= 0.20:
-                        confidence_horses.append({
-                            "race_no": race.get('race_no'),
-                            "horse_name": top.get('horse_name', ''),
-                            "horse_no": top.get('horse_no'),
-                            "display_name": _horse_display_label(top),
-                            "probability": top.get('win_probability', 0),
-                            "odds": top.get('odds_win', 0)
-                        })
-
-                confidence_horses.sort(key=lambda x: x.get("race_no", 0))
-                parlay_results = _generate_parlay_combo_results(
-                    confidence_horses, bankroll, risk_multiplier
+            total_races = max(len(races), 1)
+            for race_i, race in enumerate(races):
+                progress.step(
+                    (race_i + 0.5) / total_races,
+                    t()["progress_race_analysis"].format(current=race_i + 1, total=total_races),
                 )
+                race_runners = _score_runners_for_parlay_race(
+                    race,
+                    model_choice,
+                    user_weights,
+                    weights_config,
+                    ml_model,
+                    ml_model_type,
+                    prediction_cutoff_date,
+                )
+                if not race_runners:
+                    continue
 
-                if parlay_results:
-                    st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
-                    if len(confidence_horses) < 3:
-                        st.caption(t()["parlay_3leg_hint"])
-                else:
-                    st.info(t()["no_parlay_combos"])
+                top = max(race_runners, key=lambda x: x.get('win_probability', 0), default=None)
+                if top and top.get('win_probability', 0) >= 0.20:
+                    confidence_horses.append({
+                        "race_no": race.get('race_no'),
+                        "horse_name": resolve_horse_name(_runner_record(top)),
+                        "horse_no": top.get('horse_no'),
+                        "display_name": _horse_display_label(top),
+                        "probability": top.get('win_probability', 0),
+                        "odds": top.get('odds_win', 0)
+                    })
+
+            progress.step(0.9, t()["progress_building_parlay"])
+            confidence_horses.sort(key=lambda x: x.get("race_no", 0))
+            parlay_results = _generate_parlay_combo_results(
+                confidence_horses, bankroll, risk_multiplier
+            )
+            progress.finish()
+
+            if parlay_results:
+                st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
+                if len(confidence_horses) < 3:
+                    st.caption(t()["parlay_3leg_hint"])
+            else:
+                st.info(t()["no_parlay_combos"])
     
     st.markdown("---")
     st.caption(t()["disclaimer"])
@@ -8285,250 +8395,6 @@ def sync_single_race(race: Dict) -> bool:
     except Exception as e:
         print(f"同步单场赛事失败: {e}")
         return False
-    #----------------
-    # ==================== DeepSeek AI 分析 ====================
-    st.markdown("### 🤖 AI 智能分析")
-    
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        analyze_with_deepseek = st.button("🔍 使用 DeepSeek 分析本场赛事", use_container_width=True, type="secondary")
-    
-    if analyze_with_deepseek:
-        if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
-        else:
-            with st.spinner("DeepSeek 正在分析..."):
-                # 构建赛事信息
-                race_info = {
-                    "venue": selected_race.get('venue', 'ST'),
-                    "distance": selected_race.get('distance', 0),
-                    "race_class": selected_race.get('race_class', ''),
-                    "going": selected_race.get('going', '')
-                }
-                # 获取前5匹马的详细信息用于分析
-                top_runners = sorted_runners[:5] if sorted_runners else []
-                analysis_text = analyze_race_with_deepseek(race_info, top_runners)
-                
-                st.markdown("#### 📝 DeepSeek 分析结果")
-                st.info(analysis_text)
-    #------------
-    st.markdown("---")
-    
-    # ==================== 全天优化投注 ====================
-    st.markdown("### 🌟 全天優化投注")
-    st.caption("基於凱利公式 + 風險管理，自動分配全天投注策略")
-    
-    if st.button("🚀 生成全天投注策略", key="generate_full_day", use_container_width=True, type="primary"):
-        if not consume_free_trial(st.session_state.user_id):
-            st.warning(t()["free_trial_used"])
-        else:
-            with st.spinner(t()["calculating_full_day"]):
-                all_bets = []
-                total_stake = 0
-                total_expected_value = 0
-                
-                # 遍历所有赛事
-                for race in races:
-                    race_id_tmp = race.get('race_id')
-                    # 正确（传入 race_date, venue, race_no）
-                    race_runners = get_race_runners_with_details(
-                        race.get('race_date'),
-                        race.get('venue'),
-                        race.get('race_no')
-                    )
-                    
-                    if not race_runners:
-                        continue
-                    
-                    # 计算评分
-                    race_scores, race_probs = calculate_all_horses_scores(race_id_tmp, race_runners, user_weights)
-                    
-                    for i, runner in enumerate(race_runners):
-                        if i < len(race_scores):
-                            runner['win_probability'] = race_scores[i].get('win_probability', 0) / 100
-                    
-                    # 获取前三名马
-                    top_horses = get_top_horses_by_probability(race_runners, limit=3)
-                    
-                    for horse in top_horses:
-                        if horse is None:
-                            continue
-                        prob = horse.get('win_probability', 0)
-                        odds_raw = horse.get('odds_win')
-                        
-                        # 安全转换赔率
-                        try:
-                            odds = float(odds_raw) if odds_raw else 0
-                        except (ValueError, TypeError):
-                            odds = 0
-                        
-                        if prob <= 0 or odds <= 1:
-                            continue
-                        
-                        kelly_fraction = calculate_kelly_fraction(prob, odds)
-                        if kelly_fraction <= 0:
-                            continue
-                        
-                        stake = bankroll * kelly_fraction * risk_multiplier * 0.3  # 每场分配30%预算
-                        expected_value = calculate_expected_value(prob, odds, stake)
-                        
-                        if stake >= 10:
-                            all_bets.append({
-                                "場次": f"第{race.get('race_no')}場",
-                                "馬匹": horse.get('horse_name_zh', horse.get('horse_name_en', '')),
-                                "賠率": odds,
-                                "勝率": f"{prob*100:.1f}%",
-                                "建議注額": f"HK${stake:.0f}",
-                                "期望值": f"${expected_value:.0f}"
-                            })
-                            total_stake += stake
-                            total_expected_value += expected_value
-                
-                # 显示结果
-                if all_bets:
-                    st.markdown("#### 📋 投注計劃")
-                    st.dataframe(pd.DataFrame(all_bets), use_container_width=True, hide_index=True)
-                    
-                    st.markdown("---")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("💰 總投注額", f"HK${total_stake:.0f}")
-                    with col2:
-                        st.metric("📈 總期望值", f"${total_expected_value:+.0f}")
-                    with col3:
-                        roi = (total_expected_value / total_stake * 100) if total_stake > 0 else 0
-                        st.metric("📊 預期ROI", f"{roi:+.1f}%")
-                    
-                    # 资金分配图表
-                    if len(all_bets) > 1:
-                        bet_df = pd.DataFrame(all_bets)
-                        bet_df['注額'] = bet_df['建議注額'].str.replace('HK$', '').astype(float)
-                        fig = px.pie(bet_df, values='注額', names='場次', title="資金分配")
-                        st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("未找到符合條件的投注機會，請調整預算或風險偏好")
-    
-    st.markdown("---")
-    
-    # ==================== 过关组合推荐 ====================
-    st.markdown("### 🔗 過關組合推薦")
-    st.caption("基於各場信心馬匹，推薦2串1、3串1過關組合")
-
-    if st.button("🎲 生成過關組合", key="generate_parlay", use_container_width=True):
-        with st.spinner(t()["calculating_parlay"]):
-            confidence_horses = []
-            
-            # 收集所有赛事的信心马
-            for race in races:
-                race_id_tmp = race.get('race_id')
-                race_runners = get_race_runners_with_details(
-                    race.get('race_date'),
-                    race.get('venue'),
-                    race.get('race_no')
-                )
-                
-                if not race_runners:
-                    continue
-                
-                # 计算评分
-                race_scores, race_probs = calculate_all_horses_scores(race_id_tmp, race_runners, user_weights)
-                
-                for i, runner in enumerate(race_runners):
-                    if i < len(race_scores):
-                        runner['win_probability'] = race_scores[i].get('win_probability', 0) / 100
-                
-                # 获取最高胜率马
-                top = max(race_runners, key=lambda x: x.get('win_probability', 0), default=None)
-                if top:
-                    prob = top.get('win_probability', 0)
-                    if prob >= 0.20:  # 胜率大于20%
-                        # 安全获取赔率
-                        odds_raw = top.get('odds_win', 0)
-                        try:
-                            odds = float(odds_raw) if odds_raw else 0
-                        except (ValueError, TypeError):
-                            odds = 0
-                        
-                        confidence_horses.append({
-                            "race_no": race.get('race_no'),
-                            "horse_name": top.get('horse_name_zh', top.get('horse_name_en', '')),
-                            "probability": prob,
-                            "odds": odds,
-                            "race_id": race_id_tmp
-                        })
-            
-            # 生成过关组合
-            parlay_results = []
-            
-            # 2串1
-            # 2串1
-            for i in range(len(confidence_horses)):
-                for j in range(i+1, len(confidence_horses)):
-                    h1, h2 = confidence_horses[i], confidence_horses[j]
-                    
-                    prob1 = h1.get('probability', 0) or 0
-                    prob2 = h2.get('probability', 0) or 0
-                    odds1 = h1.get('odds', 0) or 0
-                    odds2 = h2.get('odds', 0) or 0
-                    
-                    joint_prob = prob1 * prob2
-                    combined_odds = odds1 * odds2 if odds1 > 0 and odds2 > 0 else 0
-                    
-                    if joint_prob * combined_odds > 1 and combined_odds > 0:
-                        suggested_stake = bankroll * 0.05 * risk_multiplier
-                        parlay_results.append({
-                            "組合": "2串1",
-                            "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場",
-                            "馬匹": f"{h1['horse_name']} + {h2['horse_name']}",
-                            "組合賠率": f"{combined_odds:.1f}",
-                            "聯合概率": f"{joint_prob*100:.1f}%",
-                            "建議注額": f"HK${suggested_stake:.0f}"
-                        })
-            
-            # 3串1
-            # 3串1
-            for i in range(len(confidence_horses)):
-                for j in range(i+1, len(confidence_horses)):
-                    for k in range(j+1, len(confidence_horses)):
-                        h1, h2, h3 = confidence_horses[i], confidence_horses[j], confidence_horses[k]
-                        
-                        prob1 = h1.get('probability', 0) or 0
-                        prob2 = h2.get('probability', 0) or 0
-                        prob3 = h3.get('probability', 0) or 0
-                        odds1 = h1.get('odds', 0) or 0
-                        odds2 = h2.get('odds', 0) or 0
-                        odds3 = h3.get('odds', 0) or 0
-                        
-                        joint_prob = prob1 * prob2 * prob3
-                        combined_odds = odds1 * odds2 * odds3 if odds1 > 0 and odds2 > 0 and odds3 > 0 else 0
-                        
-                        if joint_prob * combined_odds > 1 and combined_odds > 0:
-                            suggested_stake = bankroll * 0.03 * risk_multiplier
-                            parlay_results.append({
-                                "組合": "3串1",
-                                "場次": f"第{h1['race_no']}場 + 第{h2['race_no']}場 + 第{h3['race_no']}場",
-                                "馬匹": f"{h1['horse_name']} + {h2['horse_name']} + {h3['horse_name']}",
-                                "組合賠率": f"{combined_odds:.1f}",
-                                "聯合概率": f"{joint_prob*100:.1f}%",
-                                "建議注額": f"HK${suggested_stake:.0f}"
-                            })
-            
-            if parlay_results:
-                st.dataframe(pd.DataFrame(parlay_results), use_container_width=True, hide_index=True)
-                
-                total_parlay_stake = sum(float(r['建議注額'].replace('HK$', '')) for r in parlay_results)
-                st.info(f"💰 過關總建議注額: HK${total_parlay_stake:.0f}")
-            else:
-                st.info("暫無符合條件的過關組合")
-    
-    st.markdown("---")
-    
-    # ==================== 投注记录 ====================
-    with st.expander("📋 我的投注記錄", expanded=False):
-        st.info("投注記錄功能將在後續版本中實現")
-    
-    st.markdown("---")
-    st.caption("⚠️ 本建議基於AI模型預測，不保證實際收益。請理性投注，切勿超出預算。")
 
 
 # ==================== 第4次代码结束 ====================
@@ -8915,6 +8781,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
     """
     # 获取当前语言
     lang = st.session_state.get("lang", "zh")
+    texts = t()
     
     # 模型名称（双语）
     model_names = {
@@ -8957,7 +8824,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
         status_w = config.get('status', {})
         
         # ==================== 2. 批量获取所有数据 ====================
-        status_text_msg = f"📥 正在加載 {start_date} 至 {end_date} 的歷史數據..." if lang == "zh" else f"📥 Loading historical data from {start_date} to {end_date}..."
+        status_text_msg = texts["ml_loading_data"].format(start=start_date, end=end_date)
         with st.spinner(status_text_msg):
             all_performances = get_performances_batch(start_date, end_date)
         
@@ -9028,7 +8895,12 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             race_no = race['race_no']
             distance = race.get('distance', 1200)
             
-            progress_msg = f"正在回測: {race_date} 第{race_no}場 ({idx+1}/{result['测试场次']})" if lang == "zh" else f"Backtesting: {race_date} Race {race_no} ({idx+1}/{result['测试场次']})"
+            progress_msg = t()["rule_backtest_progress"].format(
+                date=race_date,
+                race_no=race_no,
+                current=idx + 1,
+                total=result["测试场次"],
+            )
             status_text.text(progress_msg)
             progress_bar.progress((idx + 1) / result['测试场次'])
             
@@ -9047,10 +8919,13 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 horse_id = r.get("horse_id")
                 if not horse_id:
                     continue
+                horse_name_zh = r.get("horse_name", "")
                 runners_input.append(
                     {
                         "horse_id": horse_id,
-                        "horse_name": r.get("horse_name", ""),
+                        "horse_name": horse_name_zh,
+                        "horse_name_zh": horse_name_zh,
+                        "horse_name_en": r.get("horse_name_en", ""),
                         "horse_no": r.get("horse_no"),
                         "draw": r.get("draw"),
                         "actual_weight": r.get("actual_weight"),
@@ -9076,55 +8951,67 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             if not runners:
                 continue
             
-            # 排序找出预测前三名（已按 combined_score 排序）
-            predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
-            predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
-            predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
-            predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
+            predicted_1st_id = runners[0].get("horse_id") if len(runners) > 0 else None
+            predicted_2nd_id = runners[1].get("horse_id") if len(runners) > 1 else None
+            predicted_3rd_id = runners[2].get("horse_id") if len(runners) > 2 else None
+            predicted_top3_ids = {predicted_1st_id, predicted_2nd_id, predicted_3rd_id} - {None}
             #-------
             # 获取实际结果
             runners_data_sorted = sorted(runners_data, key=lambda x: x.get('position', 99))
-            actual_1st = None
-            actual_2nd = None
-            actual_3rd = None
-            actual_top3_set = set()
+            actual_1st_id = None
+            actual_2nd_id = None
+            actual_3rd_id = None
+            actual_top3_ids = set()
             
             actual_1st_label = actual_2nd_label = actual_3rd_label = "-"
             for r in runners_data_sorted:
                 pos = r.get('position')
-                horse_name = r.get('horse_name', '')
+                record = _runner_record(r)
+                hid = r.get("horse_id")
                 if pos == 1:
-                    actual_1st = horse_name
-                    actual_1st_label = _backtest_horse_label(horse_name, r.get('horse_no'))
-                    actual_top3_set.add(horse_name)
+                    actual_1st_id = hid
+                    actual_1st_label = _backtest_horse_label(
+                        r.get('horse_name', ''), r.get('horse_no'), record=record
+                    )
+                    actual_top3_ids.add(hid)
                 elif pos == 2:
-                    actual_2nd = horse_name
-                    actual_2nd_label = _backtest_horse_label(horse_name, r.get('horse_no'))
-                    actual_top3_set.add(horse_name)
+                    actual_2nd_id = hid
+                    actual_2nd_label = _backtest_horse_label(
+                        r.get('horse_name', ''), r.get('horse_no'), record=record
+                    )
+                    actual_top3_ids.add(hid)
                 elif pos == 3:
-                    actual_3rd = horse_name
-                    actual_3rd_label = _backtest_horse_label(horse_name, r.get('horse_no'))
-                    actual_top3_set.add(horse_name)
+                    actual_3rd_id = hid
+                    actual_3rd_label = _backtest_horse_label(
+                        r.get('horse_name', ''), r.get('horse_no'), record=record
+                    )
+                    actual_top3_ids.add(hid)
 
             pred_1st_label = _runner_backtest_label(runners[0] if len(runners) > 0 else None)
             pred_2nd_label = _runner_backtest_label(runners[1] if len(runners) > 1 else None)
             pred_3rd_label = _runner_backtest_label(runners[2] if len(runners) > 2 else None)
             
             # 统计各指标
-            is_correct = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
+            is_correct = (predicted_1st_id == actual_1st_id) if predicted_1st_id and actual_1st_id else False
             
-            hits = len(predicted_top3_set & actual_top3_set)
+            hits = len(predicted_top3_ids & actual_top3_ids)
             total_top3_hits += hits
             if hits >= 1:
                 total_top3_hit_races += 1
             
-            tri_correct = (predicted_top3_set == actual_top3_set) if len(predicted_top3_set) == 3 and len(actual_top3_set) == 3 else False
+            tri_correct = (
+                predicted_top3_ids == actual_top3_ids
+                if len(predicted_top3_ids) == 3 and len(actual_top3_ids) == 3
+                else False
+            )
             if tri_correct:
                 total_tri_correct += 1
             
-            tce_correct = (predicted_1st == actual_1st and 
-                           predicted_2nd == actual_2nd and 
-                           predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
+            tce_correct = (
+                predicted_1st_id == actual_1st_id
+                and predicted_2nd_id == actual_2nd_id
+                and predicted_3rd_id == actual_3rd_id
+            ) if all([predicted_1st_id, predicted_2nd_id, predicted_3rd_id, actual_1st_id, actual_2nd_id, actual_3rd_id]) else False
             if tce_correct:
                 total_tce_correct += 1
             #----------------
@@ -9134,19 +9021,14 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             
             # ✅ 获取实际获胜马的赔率
             actual_winner_odds = 0
-            actual_winner_name = None
             for r in runners_data:
                 if r.get('position') == 1:
-                    actual_winner_name = r.get('horse_name', '')
                     odds_raw = r.get('odds')
                     try:
                         actual_winner_odds = float(odds_raw) if odds_raw and odds_raw != '' else 0
                     except (ValueError, TypeError):
                         actual_winner_odds = 0
                     break
-            
-            # ✅ 检查预测是否正确（预测第一名 = 实际第一名）
-            is_correct = (predicted_1st == actual_winner_name) if predicted_1st and actual_winner_name else False
             
             # ✅ 使用实际获胜马的赔率计算回报
             if is_correct and actual_winner_odds > 0:
@@ -9158,12 +9040,11 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             # ==================== 位置投注ROI（额外统计） ====================
             # 每匹预测前三名的马，位置投注30元
             # 注意：需要先在函数开头初始化 total_position_stake 和 total_position_return
-            for predicted_horse in predicted_top3_set:
-                if predicted_horse and predicted_horse in actual_top3_set:
+            for predicted_id in predicted_top3_ids:
+                if predicted_id and predicted_id in actual_top3_ids:
                     total_position_stake += 30
-                    # 位置赔率保守估计1.5倍
                     total_position_return += 30 * 1.5
-                elif predicted_horse:
+                elif predicted_id:
                     total_position_stake += 30
             
             # 记录调试详情（双语）
@@ -10411,7 +10292,12 @@ def run_day_portfolio_backtest(
 
     race_days = _group_race_days(races)
     sorted_day_keys = sorted(race_days.keys())
-    optimizer = DayPortfolioOptimizer(min_stake=10.0, min_ev=min_ev, max_candidates=50)
+    optimizer = DayPortfolioOptimizer(
+        min_stake=10.0,
+        min_ev=min_ev,
+        max_candidates=50,
+        lang=get_lang(),
+    )
 
     from scoring_engine import get_cached_model, get_current_weights_hash, set_cached_model
 
@@ -10522,7 +10408,12 @@ def build_live_day_portfolio(
         if ml_model is None:
             return None
 
-    optimizer = DayPortfolioOptimizer(min_stake=10.0, min_ev=min_ev, max_candidates=50)
+    optimizer = DayPortfolioOptimizer(
+        min_stake=10.0,
+        min_ev=min_ev,
+        max_candidates=50,
+        lang=get_lang(),
+    )
     scored_by_race: Dict[int, List[Dict]] = {}
 
     for race in races:
@@ -11191,10 +11082,10 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 runners.sort(key=lambda x: x.get('good_group_prob', 0), reverse=True)
                 
                 # 获取预测前三名（好马组概率最高的3匹）
-                predicted_1st = runners[0].get('horse_name') if len(runners) > 0 else None
-                predicted_2nd = runners[1].get('horse_name') if len(runners) > 1 else None
-                predicted_3rd = runners[2].get('horse_name') if len(runners) > 2 else None
-                predicted_top3_set = {predicted_1st, predicted_2nd, predicted_3rd} - {None}
+                predicted_1st_id = runners[0].get('horse_id') if len(runners) > 0 else None
+                predicted_2nd_id = runners[1].get('horse_id') if len(runners) > 1 else None
+                predicted_3rd_id = runners[2].get('horse_id') if len(runners) > 2 else None
+                predicted_top3_ids = {predicted_1st_id, predicted_2nd_id, predicted_3rd_id} - {None}
                 
                 # 保存预测前三名的赔率（用于ROI计算）
                 predicted_top3_odds = []
@@ -11204,27 +11095,34 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 #-----------
                 # 获取实际结果（用于验证）
                 runners_data_sorted_actual = sorted(runners_data, key=lambda x: x.get('position', 99))
-                actual_1st = None
-                actual_2nd = None
-                actual_3rd = None
-                actual_top3_set = set()
+                actual_1st_id = None
+                actual_2nd_id = None
+                actual_3rd_id = None
+                actual_top3_ids = set()
                 actual_1st_label = actual_2nd_label = actual_3rd_label = "-"
                 
                 for rr in runners_data_sorted_actual:
                     pos = rr.get('position')
-                    horse_name = rr.get('horse_name', '')
+                    record = _runner_record(rr)
+                    hid = rr.get('horse_id')
                     if pos == 1:
-                        actual_1st = horse_name
-                        actual_1st_label = _backtest_horse_label(horse_name, rr.get('horse_no'), record=rr)
-                        actual_top3_set.add(horse_name)
+                        actual_1st_id = hid
+                        actual_1st_label = _backtest_horse_label(
+                            rr.get('horse_name', ''), rr.get('horse_no'), record=record
+                        )
+                        actual_top3_ids.add(hid)
                     elif pos == 2:
-                        actual_2nd = horse_name
-                        actual_2nd_label = _backtest_horse_label(horse_name, rr.get('horse_no'), record=rr)
-                        actual_top3_set.add(horse_name)
+                        actual_2nd_id = hid
+                        actual_2nd_label = _backtest_horse_label(
+                            rr.get('horse_name', ''), rr.get('horse_no'), record=record
+                        )
+                        actual_top3_ids.add(hid)
                     elif pos == 3:
-                        actual_3rd = horse_name
-                        actual_3rd_label = _backtest_horse_label(horse_name, rr.get('horse_no'), record=rr)
-                        actual_top3_set.add(horse_name)
+                        actual_3rd_id = hid
+                        actual_3rd_label = _backtest_horse_label(
+                            rr.get('horse_name', ''), rr.get('horse_no'), record=record
+                        )
+                        actual_top3_ids.add(hid)
 
                 pred_1st_label = _runner_backtest_label(runners[0] if len(runners) > 0 else None)
                 pred_2nd_label = _runner_backtest_label(runners[1] if len(runners) > 1 else None)
@@ -11233,23 +11131,36 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 # ==================== 统计命中情况 ====================
 
                 # 1. 独赢正确率：预测第1名 = 实际第1名
-                is_correct_win = (predicted_1st == actual_1st) if predicted_1st and actual_1st else False
+                is_correct_win = (
+                    predicted_1st_id == actual_1st_id
+                    if predicted_1st_id and actual_1st_id
+                    else False
+                )
                 
                 # 2. 前三名命中匹数：预测前3名 ∩ 实际前3名
-                hits = len(predicted_top3_set & actual_top3_set)
+                hits = len(predicted_top3_ids & actual_top3_ids)
                 total_top3_hits += hits
                 if hits >= 1:
                     total_top3_hit_races += 1
                 
                 # 3. 前三名全中（不限顺序）：预测前3名集合 = 实际前3名集合
-                tri_correct = (predicted_top3_set == actual_top3_set) if len(predicted_top3_set) == 3 and len(actual_top3_set) == 3 else False
+                tri_correct = (
+                    predicted_top3_ids == actual_top3_ids
+                    if len(predicted_top3_ids) == 3 and len(actual_top3_ids) == 3
+                    else False
+                )
                 if tri_correct:
                     total_tri_correct += 1
                 
                 # 4. 前三名顺序正确：预测第1/2/3名 = 实际第1/2/3名
-                tce_correct = (predicted_1st == actual_1st and 
-                               predicted_2nd == actual_2nd and 
-                               predicted_3rd == actual_3rd) if all([predicted_1st, predicted_2nd, predicted_3rd, actual_1st, actual_2nd, actual_3rd]) else False
+                tce_correct = (
+                    predicted_1st_id == actual_1st_id
+                    and predicted_2nd_id == actual_2nd_id
+                    and predicted_3rd_id == actual_3rd_id
+                ) if all([
+                    predicted_1st_id, predicted_2nd_id, predicted_3rd_id,
+                    actual_1st_id, actual_2nd_id, actual_3rd_id,
+                ]) else False
                 if tce_correct:
                     total_tce_correct += 1
                 #-------------
@@ -11290,8 +11201,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 total_position_stake += position_stake_per_horse * 3  # 3匹马，每匹30元
                 
                 # 位置赔率：保守估计为独赢赔率的35%
-                for i, horse_name in enumerate([predicted_1st, predicted_2nd, predicted_3rd]):
-                    if horse_name and horse_name in actual_top3_set:
+                for i, predicted_id in enumerate([predicted_1st_id, predicted_2nd_id, predicted_3rd_id]):
+                    if predicted_id and predicted_id in actual_top3_ids:
                         # 该马跑入前3名，位置投注中奖
                         odds_val = predicted_top3_odds[i] if i < len(predicted_top3_odds) else 3.0
                         # 位置赔率约为独赢的30-40%，保守取35%
@@ -11421,10 +11332,21 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                 result["feature_importance"] = None
         
         if not result["cancelled"]:
-            st.success(f"✅ {result['模型']} 回測完成: {result['测试场次']} 場, 獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%")
+            model_label = display_model_choice(result["模型"])
+            if lang == "zh":
+                st.success(
+                    f"✅ {model_label} 回測完成: {result['测试场次']} 場, "
+                    f"獨贏正確率 {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%"
+                )
+            else:
+                st.success(
+                    f"✅ {model_label} backtest complete: {result['测试场次']} races, "
+                    f"win accuracy {result['独赢正确率']:.1f}%, ROI {result['ROI']:+.1f}%"
+                )
         
     except Exception as e:
-        st.error(f"ML回測失敗 ({model_type}): {e}")
+        err_msg = f"ML回測失敗 ({model_type}): {e}" if lang == "zh" else f"ML backtest failed ({model_type}): {e}"
+        st.error(err_msg)
         print(f"ML回測失敗: {e}")
     
     # 重置取消标志

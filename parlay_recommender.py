@@ -393,12 +393,14 @@ class ParlayRecommender:
         return results
 
 
-def format_parlay_display(rec: ParlayRecommendation) -> str:
+def format_parlay_display(rec: ParlayRecommendation, lang: str = "zh") -> str:
     """格式化过关推荐显示"""
     legs_text = []
     for sel in rec.selections:
-        legs_text.append(
-            f"第{sel.race_no}場 {format_horse_display(sel.horse_name, sel.selected_horse_no)}"
-        )
+        horse = format_horse_display(sel.horse_name, sel.selected_horse_no)
+        if lang == "en":
+            legs_text.append(f"R{sel.race_no} {horse}")
+        else:
+            legs_text.append(f"第{sel.race_no}場 {horse}")
 
     return f"{' → '.join(legs_text)}"
