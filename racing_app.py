@@ -5769,7 +5769,10 @@ def get_dashboard_stats() -> Dict:
         stats["horse_count"] = _supabase_exact_count("horses_v2", "horse_id")
         stats["perf_count"] = _supabase_exact_count("past_performances_v2", "horse_id")
 
-        perf_races_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=race_date,venue,race_no&limit=50000"
+        perf_races_url = (
+            f"{SUPABASE_URL}/rest/v1/past_performances_v2"
+            f"?select=race_date,venue,race_no,jockey,trainer&limit=50000"
+        )
         perf_races_response = requests.get(perf_races_url, headers=headers, timeout=30)
         if perf_races_response.status_code == 200:
             unique_races = {
