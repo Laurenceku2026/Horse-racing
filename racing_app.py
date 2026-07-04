@@ -5785,11 +5785,11 @@ def get_dashboard_stats() -> Dict:
             trainers = set()
             for p in perf_races_response.json():
                 jockey_name = p.get("jockey")
-                if jockey_name and jockey_name.strip():
-                    jockeys.add(jockey_name)
+                if jockey_name and str(jockey_name).strip():
+                    jockeys.add(str(jockey_name).strip())
                 trainer_name = p.get("trainer")
-                if trainer_name and trainer_name.strip():
-                    trainers.add(trainer_name)
+                if trainer_name and str(trainer_name).strip():
+                    trainers.add(str(trainer_name).strip())
             stats["jockey_count"] = len(jockeys)
             stats["trainer_count"] = len(trainers)
 
