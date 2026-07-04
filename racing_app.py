@@ -8189,6 +8189,28 @@ def _run_odds_snapshot_collect(
     return rows
 
 
+def _render_odds_detail_section(
+    pool_rows: List[Dict],
+    runners: List[Dict],
+    odds_type: str,
+    odds_label_key: str,
+    state_key: str,
+    trial_key: str,
+) -> None:
+    """明细表固定位置展开，避免按钮消失后内容错位。"""
+    texts = t()
+    if st.session_state.get(state_key):
+        st.markdown(f"**{texts['realtime_odds_detail']}**")
+        _render_odds_detail_table(pool_rows, runners, odds_type, odds_label_key)
+    else:
+        trial_gated_toggle_button(
+            texts["realtime_odds_detail"],
+            state_key,
+            trial_key,
+            hint=texts["click_open"],
+        )
+
+
 def _render_realtime_odds_analysis(
     selected_race: Dict,
     sorted_runners: List[Dict],
@@ -8198,13 +8220,15 @@ def _render_realtime_odds_analysis(
     """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
     texts = t()
     st.markdown(f"#### {_odds_analysis_heading(selected_race, selected_date)}")
-    show_odds = trial_gated_toggle_button(
-        texts["realtime_odds_expand"],
-        f"show_odds_analysis_{race_ui_key}",
-        f"odds_analysis:{race_ui_key}",
-        hint=texts["click_open"],
-    )
-    if not show_odds:
+
+    odds_state_key = f"show_odds_analysis_{race_ui_key}"
+    if not st.session_state.get(odds_state_key):
+        trial_gated_toggle_button(
+            texts["realtime_odds_expand"],
+            odds_state_key,
+            f"odds_analysis:{race_ui_key}",
+            hint=texts["click_open"],
+        )
         return
 
     race_date = selected_race.get("race_date") or selected_date
@@ -8226,15 +8250,18 @@ def _render_realtime_odds_analysis(
         )
     )
 
-    if st.button(
+    def _manual_collect() -> None:
+        st.session_state[f"manual_collect_pending_{race_ui_key}"] = True
+
+    st.button(
         tx("🔄 立即採集賠率快照", "🔄 Collect odds snapshots now"),
         key=f"manual_collect_odds_{race_ui_key}",
         use_container_width=True,
-    ):
+        on_click=_manual_collect,
+    )
+    if st.session_state.pop(f"manual_collect_pending_{race_ui_key}", False):
         with st.spinner(tx("正在採集賠率快照...", "Collecting odds snapshots...")):
             rows = _run_odds_snapshot_collect(race_date, venue, race_no, force=True)
-        if rows:
-            st.rerun()
 
     if not rows:
         auto_collect_key = f"auto_odds_collect_{race_ui_key}"
@@ -8242,8 +8269,6 @@ def _render_realtime_odds_analysis(
             st.session_state[auto_collect_key] = True
             with st.spinner(tx("正在自動採集賠率快照...", "Auto-collecting odds snapshots...")):
                 rows = _run_odds_snapshot_collect(race_date, venue, race_no, show_success=True)
-            if rows:
-                st.rerun()
 
     if not rows:
         st.info(texts["realtime_odds_no_data"])
@@ -8276,13 +8301,14 @@ def _render_realtime_odds_analysis(
             if not summary.empty:
                 st.dataframe(summary, use_container_width=True, hide_index=True)
             st.plotly_chart(_build_odds_trend_figure(win_rows, sorted_runners, "WIN"), use_container_width=True)
-            if trial_gated_toggle_button(
-                texts["realtime_odds_detail"],
+            _render_odds_detail_section(
+                win_rows,
+                sorted_runners,
+                "WIN",
+                "win_odds",
                 f"show_odds_win_detail_{race_ui_key}",
                 f"odds_win_detail:{race_ui_key}",
-                hint=texts["click_open"],
-            ):
-                _render_odds_detail_table(win_rows, sorted_runners, "WIN", "win_odds")
+            )
 
     with tab_pla:
         if not pla_rows:
@@ -8293,13 +8319,14 @@ def _render_realtime_odds_analysis(
             if not summary.empty:
                 st.dataframe(summary, use_container_width=True, hide_index=True)
             st.plotly_chart(_build_odds_trend_figure(pla_rows, sorted_runners, "PLA"), use_container_width=True)
-            if trial_gated_toggle_button(
-                texts["realtime_odds_detail"],
+            _render_odds_detail_section(
+                pla_rows,
+                sorted_runners,
+                "PLA",
+                "pla_odds",
                 f"show_odds_pla_detail_{race_ui_key}",
                 f"odds_pla_detail:{race_ui_key}",
-                hint=texts["click_open"],
-            ):
-                _render_odds_detail_table(pla_rows, sorted_runners, "PLA", "pla_odds")
+            )
 
 
 def _backtest_horse_label(name: str, horse_no=None, record: Optional[Dict] = None) -> str:
