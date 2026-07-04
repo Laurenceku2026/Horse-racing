@@ -15,9 +15,8 @@ import time
 import hmac
 import plotly.graph_objects as go
 import plotly.express as px
-from typing import List, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
-from typing import List, Dict, Tuple, Optional
 from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db, get_odds_tce_from_db
@@ -353,6 +352,8 @@ TEXTS = {
         "realtime_odds_expand": "展開圖表與明細",
         "click_open": "點擊打開",
         "click_open_recommend": "點擊打開推薦",
+        "collapse_section": "▼ 收起",
+        "reopen_section": "▶ 再次展開",
         "realtime_odds_no_data": "本場在賠率快照庫中無 WIN/PLA 時間序列。自動採集僅在開賽前約 90 分鐘內執行；若該賽日當時未採集，歷史賽事將無走勢數據（僅出馬表中的終場賠率）。",
         "realtime_odds_latest": "最新賠率快照",
         "realtime_odds_trend": "賠率走勢（距開賽分鐘）",
@@ -828,6 +829,8 @@ Let AI be your racing assistant.
         "realtime_odds_expand": "Show charts & details",
         "click_open": "Click to open",
         "click_open_recommend": "Click to open recommendation",
+        "collapse_section": "▼ Collapse",
+        "reopen_section": "▶ Expand again",
         "realtime_odds_no_data": "No WIN/PLA time-series snapshots for this race. Collection runs only in the ~90 minutes before post time; past race days have no trend data unless captured at the time (final odds may still appear in the runner table).",
         "realtime_odds_latest": "Latest Odds Snapshots",
         "realtime_odds_trend": "Odds Trend (minutes before post)",
@@ -2045,6 +2048,122 @@ def trial_gated_checkbox(label: str, checkbox_key: str, trial_key: str) -> bool:
     return require_trial(trial_key)
 
 
+def _section_unlock_key(state_key: str) -> str:
+    return f"unlocked_{state_key}"
+
+
+def _section_anchor_id(state_key: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "_", state_key)
+    return f"sec_{safe}"
+
+
+def _scroll_to_section_anchor(state_key: str) -> None:
+    """展開後滾動到區塊頂部，避免視口停在下方其他模塊。"""
+    flag = f"scroll_to_{state_key}"
+    if not st.session_state.pop(flag, False):
+        return
+    anchor_id = _section_anchor_id(state_key)
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            function tryScroll() {{
+                const doc = window.parent.document;
+                const el = doc.getElementById("{anchor_id}");
+                if (!el) return false;
+                el.scrollIntoView({{behavior: "smooth", block: "start"}});
+                return true;
+            }}
+            let n = 0;
+            const timer = setInterval(function() {{
+                if (tryScroll() || ++n > 24) clearInterval(timer);
+            }}, 120);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def render_collapsible_trial_section(
+    title: str,
+    state_key: str,
+    trial_key: str,
+    render_content: Callable[[], None],
+    *,
+    expand_label: Optional[str] = None,
+    use_heading: bool = True,
+    show_expand_hint: bool = False,
+) -> None:
+    """可折疊區塊：首次展開扣次；折起後再開不扣次；內容在同一位置顯示。"""
+    unlock_key = _section_unlock_key(state_key)
+    expanded = bool(st.session_state.get(state_key))
+    unlocked = bool(st.session_state.get(unlock_key))
+    expand_text = expand_label or title
+
+    if not expanded:
+        if show_expand_hint:
+            st.caption(t()["click_open"])
+
+        def _mark_scroll() -> None:
+            st.session_state[f"scroll_to_{state_key}"] = True
+
+        if unlocked:
+            def _reopen() -> None:
+                st.session_state[state_key] = True
+                _mark_scroll()
+
+            st.button(
+                f"{t()['reopen_section']} · {expand_text}",
+                key=f"reopen_{state_key}",
+                use_container_width=True,
+                type="secondary",
+                on_click=_reopen,
+            )
+        else:
+
+            def _first_open() -> None:
+                if require_trial(trial_key):
+                    st.session_state[state_key] = True
+                    st.session_state[unlock_key] = True
+                    _mark_scroll()
+
+            st.button(
+                expand_text,
+                key=f"trial_btn_{state_key}",
+                use_container_width=True,
+                type="secondary",
+                on_click=_first_open,
+            )
+        return
+
+    anchor_id = _section_anchor_id(state_key)
+    st.markdown(f'<div id="{anchor_id}"></div>', unsafe_allow_html=True)
+    _scroll_to_section_anchor(state_key)
+
+    header_col, btn_col = st.columns([5, 1])
+    with header_col:
+        if use_heading:
+            st.markdown(f"#### {title}")
+        else:
+            st.markdown(f"**{title}**")
+    with btn_col:
+
+        def _collapse() -> None:
+            st.session_state[state_key] = False
+
+        st.button(
+            t()["collapse_section"],
+            key=f"collapse_{state_key}",
+            use_container_width=True,
+            on_click=_collapse,
+        )
+
+    render_content()
+
+
 def trial_gated_toggle_button(
     label: str,
     state_key: str,
@@ -2061,6 +2180,7 @@ def trial_gated_toggle_button(
     def _on_open() -> None:
         if require_trial(trial_key):
             st.session_state[state_key] = True
+            st.session_state[_section_unlock_key(state_key)] = True
 
     if show_hint:
         st.caption(hint or t()["click_open"])
@@ -2132,16 +2252,13 @@ def _render_ai_strategy_recommendation_sections(
         st.caption(t()["click_open_recommend"])
 
     for section, render_body in zip(sections, renderers):
-        if st.session_state.get(section["state_key"]):
-            st.markdown(f"#### {section['label']}")
-            render_body()
-        else:
-            trial_gated_toggle_button(
-                section["label"],
-                section["state_key"],
-                section["trial_key"],
-                show_hint=False,
-            )
+        render_collapsible_trial_section(
+            section["label"],
+            section["state_key"],
+            section["trial_key"],
+            render_body,
+            expand_label=section["label"],
+        )
         st.markdown("")
 
 
@@ -8197,44 +8314,57 @@ def _render_odds_detail_section(
     state_key: str,
     trial_key: str,
 ) -> None:
-    """明细表固定位置展开，避免按钮消失后内容错位。"""
     texts = t()
-    if st.session_state.get(state_key):
-        st.markdown(f"**{texts['realtime_odds_detail']}**")
+
+    def _body() -> None:
         _render_odds_detail_table(pool_rows, runners, odds_type, odds_label_key)
-    else:
-        trial_gated_toggle_button(
-            texts["realtime_odds_detail"],
-            state_key,
-            trial_key,
-            hint=texts["click_open"],
-        )
+
+    render_collapsible_trial_section(
+        texts["realtime_odds_detail"],
+        state_key,
+        trial_key,
+        _body,
+        expand_label=texts["realtime_odds_detail"],
+        use_heading=False,
+    )
 
 
-def _render_realtime_odds_analysis(
+def _load_realtime_odds_rows(
+    race_ui_key: str,
+    race_date: str,
+    venue: str,
+    race_no: int,
+) -> List[Dict]:
+    """加载赔率走勢；首次自动采集后缓存，折起再开无需重复请求。"""
+    cache_key = f"odds_rows_cache_{race_ui_key}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    rows = fetch_race_odds_history(race_date, venue, race_no)
+    if not rows:
+        auto_collect_key = f"auto_odds_collect_{race_ui_key}"
+        if not st.session_state.get(auto_collect_key):
+            st.session_state[auto_collect_key] = True
+            with st.spinner(tx("正在自動採集賠率快照...", "Auto-collecting odds snapshots...")):
+                rows = _run_odds_snapshot_collect(race_date, venue, race_no, show_success=True)
+
+    st.session_state[cache_key] = rows
+    return rows
+
+
+def _render_realtime_odds_body(
     selected_race: Dict,
     sorted_runners: List[Dict],
     selected_date: str,
     race_ui_key: str,
 ) -> None:
-    """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
     texts = t()
-    st.markdown(f"#### {_odds_analysis_heading(selected_race, selected_date)}")
-
-    odds_state_key = f"show_odds_analysis_{race_ui_key}"
-    if not st.session_state.get(odds_state_key):
-        trial_gated_toggle_button(
-            texts["realtime_odds_expand"],
-            odds_state_key,
-            f"odds_analysis:{race_ui_key}",
-            hint=texts["click_open"],
-        )
-        return
-
     race_date = selected_race.get("race_date") or selected_date
     venue = selected_race.get("venue", "ST")
     race_no = int(selected_race.get("race_no"))
-    rows = fetch_race_odds_history(race_date, venue, race_no)
+    cache_key = f"odds_rows_cache_{race_ui_key}"
+
+    rows = _load_realtime_odds_rows(race_ui_key, race_date, venue, race_no)
     unique_mins = len(
         {
             r.get("minutes_before_race")
@@ -8262,13 +8392,7 @@ def _render_realtime_odds_analysis(
     if st.session_state.pop(f"manual_collect_pending_{race_ui_key}", False):
         with st.spinner(tx("正在採集賠率快照...", "Collecting odds snapshots...")):
             rows = _run_odds_snapshot_collect(race_date, venue, race_no, force=True)
-
-    if not rows:
-        auto_collect_key = f"auto_odds_collect_{race_ui_key}"
-        if not st.session_state.get(auto_collect_key):
-            st.session_state[auto_collect_key] = True
-            with st.spinner(tx("正在自動採集賠率快照...", "Auto-collecting odds snapshots...")):
-                rows = _run_odds_snapshot_collect(race_date, venue, race_no, show_success=True)
+            st.session_state[cache_key] = rows
 
     if not rows:
         st.info(texts["realtime_odds_no_data"])
@@ -8327,6 +8451,28 @@ def _render_realtime_odds_analysis(
                 f"show_odds_pla_detail_{race_ui_key}",
                 f"odds_pla_detail:{race_ui_key}",
             )
+
+
+def _render_realtime_odds_analysis(
+    selected_race: Dict,
+    sorted_runners: List[Dict],
+    selected_date: str,
+    race_ui_key: str,
+) -> None:
+    """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
+    heading = _odds_analysis_heading(selected_race, selected_date)
+    odds_state_key = f"show_odds_analysis_{race_ui_key}"
+    texts = t()
+
+    render_collapsible_trial_section(
+        heading,
+        odds_state_key,
+        f"odds_analysis:{race_ui_key}",
+        lambda: _render_realtime_odds_body(
+            selected_race, sorted_runners, selected_date, race_ui_key
+        ),
+        expand_label=texts["realtime_odds_expand"],
+    )
 
 
 def _backtest_horse_label(name: str, horse_no=None, record: Optional[Dict] = None) -> str:
@@ -8980,6 +9126,8 @@ def render_smart_betting(show_title: bool = True):
                         get_cached_upcoming_races.clear()
                         fetch_race_odds_history.clear()
                         _query_odds_history_rows.clear()
+                        st.session_state.pop(f"odds_rows_cache_{current_race_key}", None)
+                        st.session_state.pop(f"auto_odds_collect_{current_race_key}", None)
                         auto_sync_key = (
                             f"auto_sync_{selected_race.get('race_date')}_"
                             f"{selected_race.get('venue')}_{selected_race.get('race_no')}"
