@@ -2058,13 +2058,20 @@ def trial_gated_toggle_button(
     if st.session_state.get(state_key):
         return True
 
+    def _on_open() -> None:
+        if require_trial(trial_key):
+            st.session_state[state_key] = True
+
     if show_hint:
         st.caption(hint or t()["click_open"])
     btn_type = "primary" if primary else "secondary"
-    if st.button(label, key=f"trial_btn_{state_key}", use_container_width=True, type=btn_type):
-        if require_trial(trial_key):
-            st.session_state[state_key] = True
-            st.rerun()
+    st.button(
+        label,
+        key=f"trial_btn_{state_key}",
+        use_container_width=True,
+        type=btn_type,
+        on_click=_on_open,
+    )
     return False
 
 
@@ -2073,7 +2080,7 @@ def _render_ai_strategy_recommendation_sections(
     recommendations: Dict,
     sorted_runners: List[Dict],
 ) -> None:
-    """已展開的推薦置頂並顯示標題；未展開的按鈕集中在下方。"""
+    """各推薦區塊固定順序渲染：展開內容替換同位置按鈕，避免點擊後頁面跳轉。"""
     sections = [
         {
             "label": t()["win_place_recommend"],
@@ -2120,26 +2127,22 @@ def _render_ai_strategy_recommendation_sections(
         lambda: _render_tce_suggestions(sorted_runners),
     ]
 
-    closed_sections = []
+    any_open = any(st.session_state.get(section["state_key"]) for section in sections)
+    if not any_open:
+        st.caption(t()["click_open_recommend"])
+
     for section, render_body in zip(sections, renderers):
         if st.session_state.get(section["state_key"]):
             st.markdown(f"#### {section['label']}")
             render_body()
-            st.markdown("")
         else:
-            closed_sections.append(section)
-
-    if not closed_sections:
-        return
-
-    st.caption(t()["click_open_recommend"])
-    for section in closed_sections:
-        trial_gated_toggle_button(
-            section["label"],
-            section["state_key"],
-            section["trial_key"],
-            show_hint=False,
-        )
+            trial_gated_toggle_button(
+                section["label"],
+                section["state_key"],
+                section["trial_key"],
+                show_hint=False,
+            )
+        st.markdown("")
 
 
 def _render_paywall_content() -> None:
