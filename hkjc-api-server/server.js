@@ -74,9 +74,21 @@ function extractRaceMetadata(raceDetails) {
     };
 }
 
-async function enrichMeetings(activeMeetings) {
+async function enrichMeetings(activeMeetings, maxDays = 14) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const futureLimit = new Date(today);
+    futureLimit.setDate(futureLimit.getDate() + maxDays);
+
     const enriched = [];
     for (const meeting of activeMeetings) {
+        const meetingDate = new Date(meeting.date);
+        meetingDate.setHours(0, 0, 0, 0);
+        if (meetingDate < today || meetingDate > futureLimit) {
+            enriched.push(meeting);
+            continue;
+        }
+
         const venueCode = getOddsVenueCode(meeting);
         const races = [];
         for (const race of meeting.races || []) {
@@ -102,7 +114,7 @@ async function enrichMeetings(activeMeetings) {
                 );
                 races.push(race);
             }
-            await new Promise((resolve) => setTimeout(resolve, 120));
+            await new Promise((resolve) => setTimeout(resolve, 30));
         }
         enriched.push({ ...meeting, races });
     }

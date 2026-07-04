@@ -5916,11 +5916,10 @@ def render_home():
 # ==================== 辅助函数：获取赛日所有赛事 ====================
 # ==================== 缓存版本的数据获取函数 ====================
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def get_cached_upcoming_races() -> List[Dict]:
     """缓存未来14天的赛事列表（直接从 API 获取）"""
-    races = get_upcoming_races()
-    return races
+    return get_upcoming_races()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -5961,7 +5960,7 @@ def get_cached_race_runners(race_date: str, venue: str, race_no: int) -> List[Di
     runners = get_race_runners_with_details(race_date, venue, race_no)
     return _enrich_runner_horse_names([dict(r) for r in runners]) if runners else []
 #-----------
-def get_upcoming_races_from_api() -> List[Dict]:
+def get_upcoming_races_from_api(detailed: bool = True) -> List[Dict]:
     """
     从 Node.js API 获取未来赛程（直接调用 getActiveMeetings）
     这是获取赛程的主要数据源
@@ -5971,9 +5970,11 @@ def get_upcoming_races_from_api() -> List[Dict]:
         if not API_BASE_URL:
             print("⚠️ API地址未配置")
             return []
-        
-        url = f"{API_BASE_URL.rstrip('/')}/meetings?detailed=1"
-        response = requests.get(url, timeout=120)
+
+        detail_flag = "1" if detailed else "0"
+        url = f"{API_BASE_URL.rstrip('/')}/meetings?detailed={detail_flag}"
+        timeout = 300 if detailed else 45
+        response = requests.get(url, timeout=timeout)
         
         if response.status_code != 200:
             print(f"❌ API返回错误: {response.status_code}")
@@ -6221,16 +6222,13 @@ def get_upcoming_races() -> List[Dict]:
     获取未来14天的赛事列表（带缓存）
     优先从 API 获取，失败时尝试从数据库读取
     """
-    # 优先从 API 获取
-    races = get_upcoming_races_from_api()
-    
+    races = get_upcoming_races_from_api(detailed=True)
+    if not races:
+        races = get_upcoming_races_from_api(detailed=False)
+
     if races:
-        races = _enrich_upcoming_races_from_db(races)
-        # 同步到数据库作为备份
-        sync_races_to_db(races)
-        return races
-    
-    # API 失败，尝试从数据库读取
+        return _enrich_upcoming_races_from_db(races)
+
     print("⚠️ API获取失败，尝试从数据库读取缓存...")
     return get_upcoming_races_from_db()
 #------------------
@@ -8591,31 +8589,41 @@ def render_smart_betting(show_title: bool = True):
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         refresh_schedule_btn = st.button(t()["refresh_schedule"], use_container_width=True)
-    
+
     if refresh_schedule_btn:
+        get_cached_upcoming_races.clear()
+        get_cached_race_runners.clear()
+        st.session_state["schedule_refresh_pending"] = True
+        st.rerun()
+
+    if st.session_state.pop("schedule_refresh_pending", False):
         with st.spinner(t()["syncing_schedule"]):
-            api_races = get_upcoming_races_from_api()
-            if api_races:
-                seen_meetings = set()
-                for race in api_races:
-                    meeting_key = (race.get("race_date"), race.get("venue"))
-                    if not meeting_key[0] or not meeting_key[1] or meeting_key in seen_meetings:
-                        continue
-                    seen_meetings.add(meeting_key)
-                    sync_meeting_via_api(meeting_key[0], meeting_key[1])
-                sync_races_to_db(api_races)
-                get_cached_upcoming_races.clear()
-                get_cached_race_runners.clear()
-                st.cache_data.clear()
-                st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
-                st.rerun()
-            else:
-                st.warning(t()["no_races"])
+            try:
+                api_races = get_upcoming_races_from_api(detailed=True)
+                if not api_races:
+                    api_races = get_upcoming_races_from_api(detailed=False)
+                if api_races:
+                    api_races = _enrich_upcoming_races_from_db(api_races)
+                    sync_races_to_db(api_races)
+                    st.session_state["upcoming_races_override"] = api_races
+                    st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
+                else:
+                    st.warning(t()["no_races"])
+            except requests.RequestException as exc:
+                st.error(
+                    tx(
+                        f"同步賽程超時或失敗，請稍後再試：{exc}",
+                        f"Schedule sync timed out or failed, please retry: {exc}",
+                    )
+                )
     
     # ==================== 根据模式获取赛事列表 ====================
     if date_mode == DATE_MODE_FUTURE:
         # 原有逻辑：获取未来14天赛事
-        upcoming_races = get_cached_upcoming_races()
+        if st.session_state.get("upcoming_races_override"):
+            upcoming_races = st.session_state.pop("upcoming_races_override")
+        else:
+            upcoming_races = get_cached_upcoming_races()
         if not upcoming_races:
             st.info(t()["no_races"])
             return
@@ -8740,18 +8748,21 @@ def render_smart_betting(show_title: bool = True):
             f"auto_sync_{selected_race.get('race_date')}_"
             f"{selected_race.get('venue')}_{selected_race.get('race_no')}"
         )
-        if not st.session_state.get(auto_sync_key):
-            with st.spinner(t()["updating_odds"]):
-                meeting_result = sync_meeting_via_api(
-                    selected_race.get("race_date"),
-                    selected_race.get("venue"),
-                )
-                if not meeting_result.get("success"):
-                    sync_single_race(selected_race)
-                st.session_state[auto_sync_key] = True
+        auto_sync_state = st.session_state.get(auto_sync_key)
+        if auto_sync_state not in ("done", "failed"):
+            if auto_sync_state != "running":
+                st.session_state[auto_sync_key] = "running"
+                try:
+                    with st.spinner(t()["updating_odds"]):
+                        synced = sync_single_race(selected_race)
+                    st.session_state[auto_sync_key] = "done" if synced else "failed"
+                except Exception:
+                    st.session_state[auto_sync_key] = "failed"
                 get_cached_race_runners.clear()
-                get_cached_upcoming_races.clear()
                 st.rerun()
+            else:
+                st.info(tx("正在同步出馬數據...", "Syncing runner data..."))
+                return
         runners = get_cached_race_runners(
             selected_race.get('race_date'),
             selected_race.get('venue'),
