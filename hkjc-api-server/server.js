@@ -138,6 +138,63 @@ function snapToKeyMinute(rawMinutes) {
     return bestDiff <= SNAP_TOLERANCE ? best : null;
 }
 
+function resolveKeyMinuteForSnapshot(postTimeIso) {
+    if (!postTimeIso) {
+        return null;
+    }
+    const postTime = new Date(postTimeIso);
+    const minutesToStart = (postTime - new Date()) / 1000 / 60;
+    if (minutesToStart > MAX_COLLECT_MINUTES || minutesToStart < MIN_COLLECT_MINUTES) {
+        return null;
+    }
+    let keyMinute = snapToKeyMinute(minutesToStart);
+    if (keyMinute === null) {
+        keyMinute = Math.min(90, Math.max(0, Math.round(minutesToStart)));
+    }
+    return keyMinute;
+}
+
+async function saveParsedOddsSnapshots(raceCtx, parsed, runners, keyMinute) {
+    if (keyMinute === null || !parsed) {
+        return { saved: 0, skipped: 0 };
+    }
+
+    let savedCount = 0;
+    let skippedCount = 0;
+    for (const runner of runners) {
+        const horseNo = parseInt(runner.no, 10);
+        if (!horseNo) {
+            continue;
+        }
+
+        if (parsed.WIN[horseNo]) {
+            const res = await saveOddsSnapshot(
+                raceCtx,
+                horseNo,
+                'WIN',
+                parsed.WIN[horseNo],
+                keyMinute
+            );
+            savedCount += res.saved || 0;
+            skippedCount += res.skipped || 0;
+        }
+
+        if (parsed.PLA[horseNo]) {
+            const res = await saveOddsSnapshot(
+                raceCtx,
+                horseNo,
+                'PLA',
+                parsed.PLA[horseNo],
+                keyMinute
+            );
+            savedCount += res.saved || 0;
+            skippedCount += res.skipped || 0;
+        }
+    }
+
+    return { saved: savedCount, skipped: skippedCount, keyMinute };
+}
+
 function parseWinPlaceOdds(oddsData) {
     const result = { WIN: {}, PLA: {} };
     if (!oddsData) {
@@ -247,7 +304,7 @@ async function getRacesNeedingOdds() {
                 const postTime = new Date(race.postTime);
                 const minutesToStart = (postTime - now) / 1000 / 60;
 
-                if (minutesToStart <= 180 && minutesToStart >= MIN_COLLECT_MINUTES) {
+                if (minutesToStart <= MAX_COLLECT_MINUTES && minutesToStart >= MIN_COLLECT_MINUTES) {
                     racesToSync.push({
                         date: meeting.date,
                         venue: venueCode,
@@ -537,6 +594,13 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
 
         const runners = raceDetails.runners || [];
         const raceCtx = { date, venue, raceNo: parseInt(raceNo) };
+        const keyMinute = resolveKeyMinuteForSnapshot(raceDetails.postTime);
+        if (keyMinute !== null) {
+            const snapRes = await saveParsedOddsSnapshots(raceCtx, parsed, runners, keyMinute);
+            console.log(
+                `[同步] 赔率快照 ${date} ${venue} R${raceNo} T-${snapRes.keyMinute}: saved=${snapRes.saved}, skipped=${snapRes.skipped}`
+            );
+        }
 
         for (const runner of runners) {
             const horseId = (runner.horse && runner.horse.id) || runner.id || runner.horseId || '';
@@ -861,6 +925,46 @@ app.post('/api/sync/all', async (req, res) => {
 app.post('/api/collect/odds', async (req, res) => {
     const summary = await runAutoOddsCollection('manual');
     res.json({ success: true, summary });
+});
+
+app.post('/api/collect/race', async (req, res) => {
+    const { date, venue, raceNo } = req.body;
+    if (!date || !venue || !raceNo) {
+        res.status(400).json({ success: false, error: 'date, venue, raceNo required' });
+        return;
+    }
+
+    try {
+        const raceDetails = await horseAPI.getRaceWithDateAndVenueCode(
+            date,
+            venue,
+            parseInt(raceNo, 10)
+        );
+        if (!raceDetails?.postTime) {
+            res.status(404).json({ success: false, error: 'race not found or missing postTime' });
+            return;
+        }
+
+        const postTime = new Date(raceDetails.postTime);
+        const minutesToStart = (postTime - new Date()) / 1000 / 60;
+        const race = {
+            date,
+            venue,
+            raceNo: parseInt(raceNo, 10),
+            postTime,
+            minutesToStart,
+        };
+
+        if (minutesToStart <= SNAP_TOLERANCE && minutesToStart >= MIN_COLLECT_MINUTES) {
+            await updateFinalOdds(race);
+        }
+
+        const result = await collectOddsForRace(race);
+        res.json({ success: Boolean(result.success), ...result });
+    } catch (error) {
+        console.error('单场赔率采集失败:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 app.post('/api/collect/auto', async (req, res) => {

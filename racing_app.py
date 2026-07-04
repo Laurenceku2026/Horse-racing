@@ -8082,6 +8082,19 @@ def _render_realtime_odds_analysis(
     race_no = selected_race.get("race_no")
     rows = fetch_race_odds_history(race_date, venue, int(race_no))
     if not rows:
+        collect_key = f"odds_history_collect_{race_ui_key}"
+        if not st.session_state.get(collect_key):
+            st.session_state[collect_key] = True
+            with st.spinner(tx("正在採集賠率快照...", "Collecting odds snapshots...")):
+                collect_result = trigger_odds_collection_for_race(race_date, venue, int(race_no))
+            if collect_result.get("success"):
+                fetch_race_odds_history.clear()
+                _query_odds_history_rows.clear()
+                st.rerun()
+            elif collect_result.get("error") == "outside_key_window" or collect_result.get("skipped"):
+                pass
+        rows = fetch_race_odds_history(race_date, venue, int(race_no))
+    if not rows:
         st.info(texts["realtime_odds_no_data"])
         return
 
@@ -8720,6 +8733,8 @@ def render_smart_betting(show_title: bool = True):
                         _clear_smart_betting_runners_cache()
                         get_cached_race_runners.clear()
                         get_cached_upcoming_races.clear()
+                        fetch_race_odds_history.clear()
+                        _query_odds_history_rows.clear()
                         auto_sync_key = (
                             f"auto_sync_{selected_race.get('race_date')}_"
                             f"{selected_race.get('venue')}_{selected_race.get('race_no')}"
@@ -8884,10 +8899,18 @@ def render_smart_betting(show_title: bool = True):
             odds_raw = runner.get('odds_win')
             try:
                 odds = float(odds_raw) if odds_raw else 0
-            except:
+            except (ValueError, TypeError):
                 odds = 0
             odds_win.append(odds)
-            odds_place.append(odds * 0.3 if odds > 0 else 0)
+
+            place_raw = runner.get('odds_place')
+            try:
+                place_odds = float(place_raw) if place_raw else 0
+            except (ValueError, TypeError):
+                place_odds = 0
+            if place_odds <= 0 and odds > 0:
+                place_odds = odds * 0.3
+            odds_place.append(place_odds)
         
         # 获取连赢和单T赔率（如果有真实数据）
         odds_qin, odds_tri = get_cached_race_pool_odds(
@@ -9344,6 +9367,31 @@ def sync_all_future_via_api() -> bool:
     except Exception as exc:
         print(f"sync_all_future_via_api failed: {exc}")
         return False
+
+
+def trigger_odds_collection_for_race(race_date: str, venue: str, race_no: int) -> Dict:
+    """请求 Node.js 采集单场 WIN/PLA 赔率快照到 odds_history。"""
+    result = {"success": False, "saved": 0, "keyMinute": None, "error": ""}
+    try:
+        API_BASE_URL = st.secrets.get("HKJC_API_URL", "").rstrip("/")
+        if not API_BASE_URL:
+            result["error"] = "HKJC_API_URL not configured"
+            return result
+        response = requests.post(
+            f"{API_BASE_URL}/collect/race",
+            json={"date": race_date, "venue": venue, "raceNo": int(race_no)},
+            timeout=120,
+        )
+        payload = response.json() if response.content else {}
+        result.update({
+            "success": response.status_code == 200 and bool(payload.get("success")),
+            "saved": payload.get("saved", 0),
+            "keyMinute": payload.get("keyMinute"),
+            "error": payload.get("error") or ("" if response.status_code == 200 else response.text[:200]),
+        })
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
 
 
 # ==================== 第4次代码结束 ====================
