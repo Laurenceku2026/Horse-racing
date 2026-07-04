@@ -3,7 +3,7 @@
 功能：
 - 基于AI评分计算胜率、入Q率、入T率
 - 计算各彩池的期望值 (EV)
-- 生成 Top 3 投注建议（独赢、连赢、位置、单T）
+- 生成 Top 3 投注建议（独赢、连赢、位置、单T、三重彩）
 """
 
 import numpy as np
@@ -380,6 +380,60 @@ class BettingStrategyEngine:
         
         recommendations.sort(key=lambda x: x.ev, reverse=True)
         return recommendations[:2]
+
+    def recommend_tce(self, probs: List[HorseProbability], odds_tce: Dict[str, float]) -> List[BettingRecommendation]:
+        """
+        推荐三重彩 (TCE)
+        前三名组合，顺序固定
+        """
+        recommendations = []
+        n = len(probs)
+
+        for i in range(n):
+            for j in range(n):
+                if j == i:
+                    continue
+                for k in range(n):
+                    if k == i or k == j:
+                        continue
+                    combo_key = f"{probs[i].horse_no},{probs[j].horse_no},{probs[k].horse_no}"
+                    odds = odds_tce.get(combo_key)
+                    if odds is None or odds <= 0:
+                        continue
+
+                    combo_prob = (
+                        (probs[i].win_prob / 100)
+                        * (probs[j].win_prob / 100)
+                        * (probs[k].win_prob / 100)
+                    )
+                    ev = self.calculate_ev(combo_prob, odds)
+
+                    if ev > 0.15:
+                        roi = self.calculate_roi(ev)
+                        risk = self._fixed_risk("高")
+                        combo_label = (
+                            f"{probs[i].horse_name} > {probs[j].horse_name} > {probs[k].horse_name}"
+                        )
+                        if self.lang == "en":
+                            description = f"Tierce - {combo_label}"
+                            reason = f"Ordered probability {combo_prob*100:.2f}%, odds {odds}x"
+                        else:
+                            description = f"三重彩 - {combo_label}"
+                            reason = f"順序概率{combo_prob*100:.2f}%，賠率{odds}倍"
+
+                        recommendations.append(BettingRecommendation(
+                            type="TCE",
+                            description=description,
+                            content=combo_label,
+                            odds=odds,
+                            ev=ev,
+                            roi=roi,
+                            risk_level=risk,
+                            reason=reason
+                        ))
+
+        recommendations.sort(key=lambda x: x.ev, reverse=True)
+        return recommendations[:2]
     
     def generate_all_recommendations(
         self,
@@ -389,6 +443,7 @@ class BettingStrategyEngine:
         odds_place: List[float],
         odds_qin: Dict[str, float],
         odds_tri: Dict[str, float],
+        odds_tce: Optional[Dict[str, float]] = None,
         horse_nos: Optional[List] = None,
     ) -> Dict[str, List[BettingRecommendation]]:
         """
@@ -397,7 +452,8 @@ class BettingStrategyEngine:
             'win': [...],
             'place': [...],
             'qin': [...],
-            'tri': [...]
+            'tri': [...],
+            'tce': [...]
         }
         """
         # 1. 计算概率
@@ -408,12 +464,14 @@ class BettingStrategyEngine:
         place_recs = self.recommend_place(probs, odds_place)
         qin_recs = self.recommend_qin(probs, odds_qin)
         tri_recs = self.recommend_tri(probs, odds_tri)
+        tce_recs = self.recommend_tce(probs, odds_tce or {})
         
         return {
             'win': win_recs,
             'place': place_recs,
             'qin': qin_recs,
-            'tri': tri_recs
+            'tri': tri_recs,
+            'tce': tce_recs,
         }
 
 
@@ -493,4 +551,43 @@ def get_odds_tri_from_db(race_date: str, race_no: int) -> Dict[str, float]:
         
     except Exception as e:
         print(f"获取单T赔率失败: {e}")
+        return {}
+
+
+def get_odds_tce_from_db(race_date: str, race_no: int) -> Dict[str, float]:
+    """
+    从 odds_history 获取三重彩赔率
+    返回: {'1,2,3': 850.0, ...}  (顺序固定：冠军,亚军,季军)
+    """
+    try:
+        from supabase import create_client
+        import streamlit as st
+
+        supabase_url = st.secrets.get("SUPABASE_STOCK_URL", "")
+        supabase_key = st.secrets.get("SUPABASE_STOCK_SECRET_KEY", "")
+
+        if not supabase_url or not supabase_key:
+            return {}
+
+        supabase = create_client(supabase_url, supabase_key)
+
+        response = supabase.table('odds_history')\
+            .select('combination, odds_value')\
+            .eq('race_date', race_date)\
+            .eq('race_no', race_no)\
+            .eq('odds_type', 'TCE')\
+            .execute()
+
+        odds_tce = {}
+        if response.data:
+            for item in response.data:
+                combo = item.get('combination')
+                odds = item.get('odds_value')
+                if combo and odds:
+                    odds_tce[combo] = float(odds)
+
+        return odds_tce
+
+    except Exception as e:
+        print(f"获取三重彩赔率失败: {e}")
         return {}

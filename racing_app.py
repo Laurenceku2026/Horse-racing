@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from supabase import create_client, Client
 from bs4 import BeautifulSoup
-from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db
+from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db, get_odds_tce_from_db
 from parlay_recommender import ParlayRecommender, describe_parlay_type, format_parlay_display
 # ==================== 从 scoring_engine 导入 ====================
 SCORING_ENGINE_OK = False
@@ -551,6 +551,7 @@ TEXTS = {
         "win_place_recommend": "🎯 獨贏/位置 推薦",
         "qin_recommend_expander": "🔗 連贏 推薦",
         "tri_recommend_expander": "🎲 單T 推薦",
+        "tce_recommend_expander": "🏆 三重彩 推薦",
         "win_odds_label": "獨贏賠率",
         "place_odds_label": "位置賠率",
         "expected_roi_label": "預期ROI",
@@ -577,6 +578,15 @@ TEXTS = {
         "tri_ev_recommend": "✅ EV > 0.15，建議投注",
         "tri_ev_skip": "❌ EV 不足，暫不建議",
         "tri_missing_odds": "⚠️ 缺少獨贏賠率，以下為估算值",
+        "tce_insufficient_horses": "馬匹數量不足，無法推薦三重彩",
+        "tce_order_hint": "順序：冠軍 > 亞軍 > 季軍（必須按名次順序命中）",
+        "tce_est_odds": "估算賠率: {odds:.1f}倍",
+        "tce_est_odds_pending": "估算賠率: 待補充",
+        "tce_joint_prob": "順序概率",
+        "tce_ev": "期望值(EV)",
+        "tce_ev_recommend": "✅ EV > 0.15，建議投注",
+        "tce_ev_skip": "❌ EV 不足，暫不建議",
+        "tce_missing_odds": "⚠️ 缺少獨贏賠率，以下為估算值",
         "sb_loading_runners": "正在載入出賽馬匹...",
         "sb_scoring_runners": "正在計算勝率...",
         "sb_building_recommendations": "正在生成投注建議...",
@@ -1016,6 +1026,7 @@ Let AI be your racing assistant.
         "win_place_recommend": "🎯 Win/Place Recommendation",
         "qin_recommend_expander": "🔗 Quinella Recommendation",
         "tri_recommend_expander": "🎲 Trio Recommendation",
+        "tce_recommend_expander": "🏆 Tierce Recommendation",
         "win_odds_label": "Win Odds",
         "place_odds_label": "Place Odds",
         "expected_roi_label": "Expected ROI",
@@ -1042,6 +1053,15 @@ Let AI be your racing assistant.
         "tri_ev_recommend": "✅ EV > 0.15, recommended",
         "tri_ev_skip": "❌ EV too low, not recommended",
         "tri_missing_odds": "⚠️ Missing win odds; values below are estimates",
+        "tce_insufficient_horses": "Insufficient horses for tierce recommendation",
+        "tce_order_hint": "Order: 1st > 2nd > 3rd (exact finishing order required)",
+        "tce_est_odds": "Est. odds: {odds:.1f}x",
+        "tce_est_odds_pending": "Est. odds: pending",
+        "tce_joint_prob": "Ordered probability",
+        "tce_ev": "Expected value (EV)",
+        "tce_ev_recommend": "✅ EV > 0.15, recommended",
+        "tce_ev_skip": "❌ EV too low, not recommended",
+        "tce_missing_odds": "⚠️ Missing win odds; values below are estimates",
         "sb_loading_runners": "Loading runners...",
         "sb_scoring_runners": "Scoring runners...",
         "sb_building_recommendations": "Building recommendations...",
@@ -2070,6 +2090,11 @@ def _render_ai_strategy_recommendation_sections(
             "state_key": f"show_tri_rec_{current_race_key}",
             "trial_key": f"rec_tri:{current_race_key}",
         },
+        {
+            "label": t()["tce_recommend_expander"],
+            "state_key": f"show_tce_rec_{current_race_key}",
+            "trial_key": f"rec_tce:{current_race_key}",
+        },
     ]
 
     def _render_win_place_body() -> None:
@@ -2092,6 +2117,7 @@ def _render_ai_strategy_recommendation_sections(
         _render_win_place_body,
         lambda: _render_qin_suggestions(sorted_runners, key_prefix="qin_fold"),
         lambda: _render_tri_suggestions(sorted_runners),
+        lambda: _render_tce_suggestions(sorted_runners),
     ]
 
     closed_sections = []
@@ -7720,8 +7746,12 @@ def _build_parlay_races_data(
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def get_cached_race_pool_odds(race_date: str, race_no: int) -> Tuple[Dict[str, float], Dict[str, float]]:
-    return get_odds_qin_from_db(race_date, race_no), get_odds_tri_from_db(race_date, race_no)
+def get_cached_race_pool_odds(race_date: str, race_no: int) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    return (
+        get_odds_qin_from_db(race_date, race_no),
+        get_odds_tri_from_db(race_date, race_no),
+        get_odds_tce_from_db(race_date, race_no),
+    )
 
 
 def _generate_parlay_combo_results(
@@ -8386,6 +8416,48 @@ def _render_tri_suggestions(sorted_runners: List[Dict]) -> None:
         st.success(texts["tri_ev_recommend"])
     else:
         st.info(texts["tri_ev_skip"])
+
+
+def _render_tce_suggestions(sorted_runners: List[Dict]) -> None:
+    """三重彩 推薦（展開即顯示，順序固定）"""
+    texts = t()
+    if len(sorted_runners) < 3:
+        st.warning(texts["tce_insufficient_horses"])
+        return
+
+    top3 = sorted_runners[:3]
+    h1, h2, h3 = top3[0], top3[1], top3[2]
+    label = f"{_horse_display_label(h1)} > {_horse_display_label(h2)} > {_horse_display_label(h3)}"
+
+    odds1 = float(h1.get("odds_win") or 0)
+    odds2 = float(h2.get("odds_win") or 0)
+    odds3 = float(h3.get("odds_win") or 0)
+
+    if odds1 > 0 and odds2 > 0 and odds3 > 0:
+        base = odds1 * odds2 * odds3
+        estimated_odds = max(base * 0.15, base * 0.08)
+    else:
+        estimated_odds = 0
+        st.caption(texts["tce_missing_odds"])
+
+    prob1 = float(h1.get("win_probability") or 0)
+    prob2 = float(h2.get("win_probability") or 0)
+    prob3 = float(h3.get("win_probability") or 0)
+    joint_prob = prob1 * prob2 * prob3
+    ev = joint_prob * estimated_odds - 1 if estimated_odds > 0 else -1
+
+    st.caption(texts["tce_order_hint"])
+    st.write(f"**{label}**")
+    if estimated_odds > 0:
+        st.write(texts["tce_est_odds"].format(odds=estimated_odds))
+    else:
+        st.write(texts["tce_est_odds_pending"])
+    st.write(f"{texts['tce_joint_prob']}: {joint_prob * 100:.2f}%")
+    st.write(f"{texts['tce_ev']}: {ev:+.2f}")
+    if ev > 0.15:
+        st.success(texts["tce_ev_recommend"])
+    else:
+        st.info(texts["tce_ev_skip"])
 
 
 # ==================== 智能投注主页面 ====================
@@ -9056,7 +9128,7 @@ def render_smart_betting(show_title: bool = True):
             odds_place.append(place_odds)
         
         # 获取连赢和单T赔率（如果有真实数据）
-        odds_qin, odds_tri = get_cached_race_pool_odds(
+        odds_qin, odds_tri, odds_tce = get_cached_race_pool_odds(
             selected_race.get('race_date'), selected_race.get('race_no')
         )
         
@@ -9069,6 +9141,7 @@ def render_smart_betting(show_title: bool = True):
             odds_place=odds_place,
             odds_qin=odds_qin,
             odds_tri=odds_tri,
+            odds_tce=odds_tce,
             horse_nos=horse_nos,
         )
         t4 = time.time()
