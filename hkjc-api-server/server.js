@@ -42,6 +42,73 @@ function getOddsVenueCode(meeting) {
     return venueCode;
 }
 
+const MEETINGS_CACHE_MS = 5 * 60 * 1000;
+let meetingsCache = { at: 0, data: null };
+
+function invalidateMeetingsCache() {
+    meetingsCache = { at: 0, data: null };
+}
+
+function extractRaceMetadata(raceDetails) {
+    if (!raceDetails) {
+        return {};
+    }
+    return {
+        distance: raceDetails.distance || 0,
+        surface:
+            raceDetails.raceTrack?.description_ch ||
+            raceDetails.raceTrack?.description_en ||
+            raceDetails.surface ||
+            '草地',
+        going: raceDetails.go_ch || raceDetails.go_en || raceDetails.going || '好地',
+        race_class:
+            raceDetails.raceClass_ch ||
+            raceDetails.raceClass_en ||
+            raceDetails.raceClass ||
+            '',
+        postTime: raceDetails.postTime || '',
+        raceTrack: raceDetails.raceTrack || null,
+        raceCourse: raceDetails.raceCourse || null,
+        race_course_code: raceDetails.raceCourse?.displayCode || '',
+        total_runners: raceDetails.runners?.length || 0,
+    };
+}
+
+async function enrichMeetings(activeMeetings) {
+    const enriched = [];
+    for (const meeting of activeMeetings) {
+        const venueCode = getOddsVenueCode(meeting);
+        const races = [];
+        for (const race of meeting.races || []) {
+            try {
+                const details = await horseAPI.getRaceWithDateAndVenueCode(
+                    meeting.date,
+                    venueCode,
+                    race.no
+                );
+                const meta = extractRaceMetadata(details);
+                races.push({
+                    ...race,
+                    ...meta,
+                    distance: meta.distance || race.distance || 0,
+                    postTime: meta.postTime || race.postTime || '',
+                    going: meta.going,
+                    surface: meta.surface,
+                    race_class: meta.race_class,
+                });
+            } catch (err) {
+                console.error(
+                    `[meetings] enrich failed ${meeting.date} ${venueCode} R${race.no}: ${err.message}`
+                );
+                races.push(race);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+        enriched.push({ ...meeting, races });
+    }
+    return enriched;
+}
+
 function snapToKeyMinute(rawMinutes) {
     if (rawMinutes > MAX_COLLECT_MINUTES || rawMinutes < MIN_COLLECT_MINUTES) {
         return null;
@@ -433,17 +500,18 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
         }
 
         const parsed = parseWinPlaceOdds(oddsData);
+        const meta = extractRaceMetadata(raceDetails);
 
         const { error: raceError } = await supabase.from('races').upsert(
             {
                 race_date: date,
                 venue,
                 race_no: parseInt(raceNo),
-                distance: raceDetails.distance || 0,
-                surface: raceDetails.surface || '草地',
-                going: raceDetails.going || '好地',
-                race_class: raceDetails.raceClass || '',
-                total_runners: raceDetails.runners?.length || 0,
+                distance: meta.distance || 0,
+                surface: meta.surface || '草地',
+                going: meta.going || '好地',
+                race_class: meta.race_class || '',
+                total_runners: meta.total_runners || raceDetails.runners?.length || 0,
                 race_status: isOverseas ? 'OVERSEAS' : 'RUNNERS',
                 is_overseas: isOverseas,
                 updated_at: new Date().toISOString(),
@@ -468,7 +536,7 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
 
             let jockeyName = '';
             if (runner.jockey) {
-                jockeyName = runner.jockey.name_en || '';
+                jockeyName = runner.jockey.name_ch || runner.jockey.name_en || '';
             }
 
             const horseNameZh = runner.name_ch || '';
@@ -645,10 +713,45 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/meetings', async (req, res) => {
     try {
+        const detailed = req.query.detailed !== '0';
         const activeMeetings = await horseAPI.getActiveMeetings();
-        res.json({ success: true, data: activeMeetings });
+        if (!detailed) {
+            res.json({ success: true, data: activeMeetings, enriched: false });
+            return;
+        }
+
+        const now = Date.now();
+        if (meetingsCache.data && now - meetingsCache.at < MEETINGS_CACHE_MS) {
+            res.json({ success: true, data: meetingsCache.data, enriched: true, cached: true });
+            return;
+        }
+
+        const enriched = await enrichMeetings(activeMeetings);
+        meetingsCache = { at: now, data: enriched };
+        res.json({ success: true, data: enriched, enriched: true, cached: false });
     } catch (error) {
         console.error('获取赛马日失败:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/race/details', async (req, res) => {
+    const date = req.query.date;
+    const venue = req.query.venue;
+    const raceNo = parseInt(req.query.raceNo, 10);
+    if (!date || !venue || !raceNo) {
+        res.status(400).json({ success: false, error: 'date, venue, raceNo required' });
+        return;
+    }
+    try {
+        const raceDetails = await horseAPI.getRaceWithDateAndVenueCode(date, venue, raceNo);
+        if (!raceDetails) {
+            res.status(404).json({ success: false, error: 'race not found' });
+            return;
+        }
+        res.json({ success: true, data: { ...extractRaceMetadata(raceDetails), raw: raceDetails } });
+    } catch (error) {
+        console.error('获取赛事详情失败:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -678,6 +781,7 @@ app.get('/api/collect/status', async (req, res) => {
 
 app.post('/api/sync/race', async (req, res) => {
     const { date, venue, raceNo, isOverseas = false } = req.body;
+    invalidateMeetingsCache();
     const success = await syncSingleRaceToSupabase(date, venue, parseInt(raceNo), isOverseas);
 
     if (success) {
@@ -687,7 +791,57 @@ app.post('/api/sync/race', async (req, res) => {
     }
 });
 
+app.post('/api/sync/meeting', async (req, res) => {
+    const { date, venue } = req.body;
+    if (!date || !venue) {
+        res.status(400).json({ success: false, error: 'date and venue required' });
+        return;
+    }
+
+    invalidateMeetingsCache();
+    try {
+        const activeMeetings = await horseAPI.getActiveMeetings();
+        const meeting = activeMeetings.find(
+            (m) =>
+                m.date === date &&
+                (m.venueCode === venue || getOddsVenueCode(m) === venue)
+        );
+
+        if (!meeting) {
+            res.status(404).json({ success: false, error: `meeting not found: ${date} ${venue}` });
+            return;
+        }
+
+        const venueCode = getOddsVenueCode(meeting);
+        const isOverseas = isOverseasMeeting(meeting);
+        let synced = 0;
+        let failed = 0;
+
+        for (const race of meeting.races || []) {
+            const ok = await syncSingleRaceToSupabase(date, venueCode, race.no, isOverseas);
+            if (ok) {
+                synced += 1;
+            } else {
+                failed += 1;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+
+        res.json({
+            success: true,
+            message: `同步完成: ${date} ${venueCode}`,
+            synced,
+            failed,
+            total: (meeting.races || []).length,
+        });
+    } catch (error) {
+        console.error('同步赛马日失败:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/api/sync/all', async (req, res) => {
+    invalidateMeetingsCache();
     await syncAllFutureRaces();
     res.json({ success: true, message: '全量同步已触发' });
 });

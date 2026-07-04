@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import requests
 import json
+import re
 import time
 import hmac
 import plotly.graph_objects as go
@@ -1149,6 +1150,9 @@ def _format_post_time(value) -> str:
         return ""
     if isinstance(value, str):
         value = value.strip()
+        iso_match = re.search(r"T(\d{2}:\d{2})", value)
+        if iso_match:
+            return iso_match.group(1)
         if "T" in value:
             try:
                 dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -1188,11 +1192,17 @@ def _race_surface_label(race: Dict) -> str:
 
 
 def _race_course_label(race: Dict) -> str:
+    rc = race.get("raceCourse") or {}
+    if isinstance(rc, dict):
+        if get_lang() == "zh":
+            desc = (rc.get("description_ch") or "").strip()
+            if desc:
+                return desc if "賽道" in desc else f"{desc}賽道"
+        else:
+            desc = (rc.get("description_en") or "").strip()
+            if desc:
+                return desc
     code = race.get("race_course_code") or ""
-    if not code:
-        rc = race.get("raceCourse") or {}
-        if isinstance(rc, dict):
-            code = rc.get("displayCode") or ""
     if not code:
         return ""
     code_str = str(code).strip()
@@ -5962,8 +5972,8 @@ def get_upcoming_races_from_api() -> List[Dict]:
             print("⚠️ API地址未配置")
             return []
         
-        url = f"{API_BASE_URL}/meetings"
-        response = requests.get(url, timeout=30)
+        url = f"{API_BASE_URL.rstrip('/')}/meetings?detailed=1"
+        response = requests.get(url, timeout=120)
         
         if response.status_code != 200:
             print(f"❌ API返回错误: {response.status_code}")
@@ -6014,15 +6024,23 @@ def get_upcoming_races_from_api() -> List[Dict]:
                 # 有详细场次信息
                 for race in races_list:
                     race_no = race.get("no", 0)
-                    distance = race.get("distance", 0)
+                    distance = race.get("distance") or 0
                     race_class = (
-                        race.get("className")
+                        race.get("race_class")
+                        or race.get("className")
                         or race.get("raceClass_en")
                         or race.get("raceClass")
                         or ""
                     )
                     race_track_obj = race.get("raceTrack") or {}
                     race_course_obj = race.get("raceCourse") or {}
+                    surface = (
+                        race.get("surface")
+                        or race_track_obj.get("description_ch")
+                        or race_track_obj.get("description_en")
+                        or race.get("race_track")
+                        or ""
+                    )
 
                     upcoming_races.append({
                         "race_date": meeting_date_str,
@@ -6031,18 +6049,19 @@ def get_upcoming_races_from_api() -> List[Dict]:
                         "race_no": race_no,
                         "distance": distance,
                         "race_class": race_class,
-                        "post_time": race.get("postTime", ""),
-                        "race_track": (
-                            race_track_obj.get("description_ch")
-                            or race_track_obj.get("description_en")
-                            or ""
-                        ),
-                        "race_course_code": race_course_obj.get("displayCode") or "",
+                        "post_time": race.get("postTime") or race.get("post_time") or "",
+                        "surface": surface,
+                        "going": race.get("going") or "",
+                        "race_track": surface,
+                        "race_course_code": race_course_obj.get("displayCode") or race.get("race_course_code") or "",
                         "raceTrack": race_track_obj,
                         "raceCourse": race_course_obj,
                         "race_id": f"{meeting_date_str}_{venue_code}_{race_no}",
                     })
-                    print(f"    - 添加第{race_no}场: {distance}米 {race.get('postTime', '')}")
+                    print(
+                        f"    - 添加第{race_no}场: {distance}米 "
+                        f"{race.get('postTime', '')} {surface} {race.get('going', '')}"
+                    )
             else:
                 # 没有详细场次，添加占位记录
                 print(f"    - 无详细场次，添加占位记录")
@@ -8577,9 +8596,18 @@ def render_smart_betting(show_title: bool = True):
         with st.spinner(t()["syncing_schedule"]):
             api_races = get_upcoming_races_from_api()
             if api_races:
+                seen_meetings = set()
+                for race in api_races:
+                    meeting_key = (race.get("race_date"), race.get("venue"))
+                    if not meeting_key[0] or not meeting_key[1] or meeting_key in seen_meetings:
+                        continue
+                    seen_meetings.add(meeting_key)
+                    sync_meeting_via_api(meeting_key[0], meeting_key[1])
                 sync_races_to_db(api_races)
-                st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
+                get_cached_upcoming_races.clear()
+                get_cached_race_runners.clear()
                 st.cache_data.clear()
+                st.success(t()["sync_complete"].format(success=len(api_races), failed=0))
                 st.rerun()
             else:
                 st.warning(t()["no_races"])
@@ -8673,16 +8701,22 @@ def render_smart_betting(show_title: bool = True):
             api_url = st.secrets.get("HKJC_API_URL", "")
             if api_url:
                 try:
-                    sync_url = f"{api_url}/sync/race"
+                    sync_url = f"{api_url.rstrip('/')}/sync/race"
                     response = requests.post(sync_url, json={
                         "date": selected_race.get('race_date'),
                         "venue": selected_race.get('venue'),
                         "raceNo": selected_race.get('race_no')
-                    }, timeout=60)
+                    }, timeout=120)
                     if response.status_code == 200:
                         st.success(t()["data_updated"])
                         _clear_smart_betting_runners_cache()
                         get_cached_race_runners.clear()
+                        get_cached_upcoming_races.clear()
+                        auto_sync_key = (
+                            f"auto_sync_{selected_race.get('race_date')}_"
+                            f"{selected_race.get('venue')}_{selected_race.get('race_no')}"
+                        )
+                        st.session_state.pop(auto_sync_key, None)
                         st.rerun()
                     else:
                         st.warning(t()["update_failed"])
@@ -8700,6 +8734,29 @@ def render_smart_betting(show_title: bool = True):
         selected_race.get('venue'),
         selected_race.get('race_no')
     )
+
+    if not runners and date_mode == DATE_MODE_FUTURE:
+        auto_sync_key = (
+            f"auto_sync_{selected_race.get('race_date')}_"
+            f"{selected_race.get('venue')}_{selected_race.get('race_no')}"
+        )
+        if not st.session_state.get(auto_sync_key):
+            with st.spinner(t()["updating_odds"]):
+                meeting_result = sync_meeting_via_api(
+                    selected_race.get("race_date"),
+                    selected_race.get("venue"),
+                )
+                if not meeting_result.get("success"):
+                    sync_single_race(selected_race)
+                st.session_state[auto_sync_key] = True
+                get_cached_race_runners.clear()
+                get_cached_upcoming_races.clear()
+                st.rerun()
+        runners = get_cached_race_runners(
+            selected_race.get('race_date'),
+            selected_race.get('venue'),
+            selected_race.get('race_no')
+        )
     #------
     if not runners:
         st.warning(t()["no_runners"])
@@ -9224,16 +9281,57 @@ def sync_single_race(race: Dict) -> bool:
         if not API_BASE_URL:
             return False
         
-        sync_url = f"{API_BASE_URL}/sync/race"
+        sync_url = f"{API_BASE_URL.rstrip('/')}/sync/race"
         response = requests.post(sync_url, json={
             "date": race.get('race_date'),
             "venue": race.get('venue'),
             "raceNo": race.get('race_no')
-        }, timeout=60)
+        }, timeout=120)
         
         return response.status_code == 200 and response.json().get("success")
     except Exception as e:
         print(f"同步单场赛事失败: {e}")
+        return False
+
+
+def sync_meeting_via_api(race_date: str, venue: str) -> Dict:
+    """同步整个赛马日出赛名单与赔率到 Supabase。"""
+    result = {"success": False, "synced": 0, "failed": 0, "total": 0, "error": ""}
+    try:
+        API_BASE_URL = st.secrets.get("HKJC_API_URL", "").rstrip("/")
+        if not API_BASE_URL:
+            result["error"] = "HKJC_API_URL not configured"
+            return result
+        response = requests.post(
+            f"{API_BASE_URL}/sync/meeting",
+            json={"date": race_date, "venue": venue},
+            timeout=600,
+        )
+        if response.status_code == 200:
+            payload = response.json()
+            result.update({
+                "success": bool(payload.get("success")),
+                "synced": payload.get("synced", 0),
+                "failed": payload.get("failed", 0),
+                "total": payload.get("total", 0),
+            })
+        else:
+            result["error"] = response.text[:200]
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
+def sync_all_future_via_api() -> bool:
+    """触发 Node.js 全量同步未来赛事。"""
+    try:
+        API_BASE_URL = st.secrets.get("HKJC_API_URL", "").rstrip("/")
+        if not API_BASE_URL:
+            return False
+        response = requests.post(f"{API_BASE_URL}/sync/all", timeout=30)
+        return response.status_code == 200 and response.json().get("success")
+    except Exception as exc:
+        print(f"sync_all_future_via_api failed: {exc}")
         return False
 
 
