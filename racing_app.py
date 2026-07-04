@@ -1135,6 +1135,130 @@ def _weekday_label(date_str: str) -> str:
     return weekdays[wd] if wd < len(weekdays) else ""
 
 
+def _format_race_date_short(date_str: str) -> str:
+    if not date_str:
+        return ""
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d").strftime("%d/%m")
+    except ValueError:
+        return date_str
+
+
+def _format_post_time(value) -> str:
+    if not value:
+        return ""
+    if isinstance(value, str):
+        value = value.strip()
+        if "T" in value:
+            try:
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return dt.strftime("%H:%M")
+            except ValueError:
+                pass
+        if len(value) >= 5 and value[2:3] == ":":
+            return value[:5]
+    return str(value)
+
+
+def _normalize_surface_label(label: str) -> str:
+    if not label:
+        return ""
+    if get_lang() != "zh":
+        return label
+    mapping = {
+        "Turf": "草地",
+        "All Weather Track": "全天候跑道",
+        "AWT": "全天候跑道",
+    }
+    return mapping.get(label, label)
+
+
+def _race_surface_label(race: Dict) -> str:
+    surface = race.get("surface") or race.get("race_track") or ""
+    if surface:
+        return _normalize_surface_label(str(surface))
+    rt = race.get("raceTrack") or {}
+    if isinstance(rt, dict):
+        if get_lang() == "zh":
+            desc = rt.get("description_ch") or rt.get("description_en") or ""
+        else:
+            desc = rt.get("description_en") or rt.get("description_ch") or ""
+        return _normalize_surface_label(desc)
+    return ""
+
+
+def _race_course_label(race: Dict) -> str:
+    code = race.get("race_course_code") or ""
+    if not code:
+        rc = race.get("raceCourse") or {}
+        if isinstance(rc, dict):
+            code = rc.get("displayCode") or ""
+    if not code:
+        return ""
+    code_str = str(code).strip()
+    if get_lang() == "zh":
+        if code_str.endswith("賽道"):
+            return code_str
+        return f"{code_str}賽道"
+    if code_str.lower().startswith("course"):
+        return code_str
+    return f"Course {code_str}"
+
+
+def _format_race_select_label(race: Dict, *, include_date: bool = True) -> str:
+    """Format race dropdown label, e.g. 第1場 （04/07 (六), 16:00, 1200米, 草地, A賽道, 好地）"""
+    race_no = race.get("race_no", 0)
+    race_date = race.get("race_date", "")
+    parts: List[str] = []
+
+    if include_date and race_date:
+        short_date = _format_race_date_short(race_date)
+        weekday = _weekday_label(race_date)
+        if short_date and weekday:
+            parts.append(f"{short_date} ({weekday})")
+        elif short_date:
+            parts.append(short_date)
+
+    post_time = _format_post_time(
+        race.get("post_time")
+        or race.get("postTime")
+        or race.get("scheduledStart")
+        or race.get("startTime")
+        or race.get("race_time")
+    )
+    if post_time:
+        parts.append(post_time)
+
+    distance = race.get("distance") or race.get("distanceMeters") or 0
+    try:
+        distance = int(distance)
+    except (TypeError, ValueError):
+        distance = 0
+    if distance > 0:
+        parts.append(f"{distance}米" if get_lang() == "zh" else f"{distance}m")
+
+    surface = _race_surface_label(race)
+    if surface:
+        parts.append(surface)
+
+    course = _race_course_label(race)
+    if course:
+        parts.append(course)
+
+    going = race.get("going") or ""
+    if going:
+        parts.append(str(going))
+
+    sep = "，" if get_lang() == "zh" else ", "
+    if get_lang() == "zh":
+        if parts:
+            return f"第{race_no}場 （{sep.join(parts)}）"
+        return f"第{race_no}場"
+    if parts:
+        return f"Race {race_no} ({sep.join(parts)})"
+    return f"Race {race_no}"
+
+
 DATE_MODE_FUTURE = "未來賽事"
 DATE_MODE_HISTORY = "歷史賽事"
 
@@ -5891,8 +6015,15 @@ def get_upcoming_races_from_api() -> List[Dict]:
                 for race in races_list:
                     race_no = race.get("no", 0)
                     distance = race.get("distance", 0)
-                    race_class = race.get("className", "")
-                    
+                    race_class = (
+                        race.get("className")
+                        or race.get("raceClass_en")
+                        or race.get("raceClass")
+                        or ""
+                    )
+                    race_track_obj = race.get("raceTrack") or {}
+                    race_course_obj = race.get("raceCourse") or {}
+
                     upcoming_races.append({
                         "race_date": meeting_date_str,
                         "venue": venue_code,
@@ -5900,9 +6031,18 @@ def get_upcoming_races_from_api() -> List[Dict]:
                         "race_no": race_no,
                         "distance": distance,
                         "race_class": race_class,
-                        "race_id": f"{meeting_date_str}_{venue_code}_{race_no}"
+                        "post_time": race.get("postTime", ""),
+                        "race_track": (
+                            race_track_obj.get("description_ch")
+                            or race_track_obj.get("description_en")
+                            or ""
+                        ),
+                        "race_course_code": race_course_obj.get("displayCode") or "",
+                        "raceTrack": race_track_obj,
+                        "raceCourse": race_course_obj,
+                        "race_id": f"{meeting_date_str}_{venue_code}_{race_no}",
                     })
-                    print(f"    - 添加第{race_no}场: {distance}米")
+                    print(f"    - 添加第{race_no}场: {distance}米 {race.get('postTime', '')}")
             else:
                 # 没有详细场次，添加占位记录
                 print(f"    - 无详细场次，添加占位记录")
@@ -5930,6 +6070,56 @@ def get_upcoming_races_from_api() -> List[Dict]:
     except Exception as e:
         print(f"❌ 获取未来赛事失败: {e}")
         return []
+#-----------
+def _fetch_races_metadata_map(min_date: str, max_date: str) -> Dict[str, Dict]:
+    """Fetch surface/going metadata from races table for enrichment."""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        url = (
+            f"{SUPABASE_URL}/rest/v1/races"
+            f"?race_date=gte.{min_date}&race_date=lte.{max_date}"
+            f"&select=race_date,venue,race_no,surface,going,distance,race_class"
+        )
+        response = requests.get(url, headers=headers, timeout=30)
+        if response.status_code != 200:
+            return {}
+        meta: Dict[str, Dict] = {}
+        for row in response.json():
+            key = f"{row.get('race_date')}_{row.get('venue')}_{row.get('race_no')}"
+            meta[key] = row
+        return meta
+    except Exception as exc:
+        print(f"_fetch_races_metadata_map failed: {exc}")
+        return {}
+
+
+def _enrich_upcoming_races_from_db(races: List[Dict]) -> List[Dict]:
+    """Merge surface/going from Supabase races table (synced by Node.js API)."""
+    if not races:
+        return races
+    dates = [r.get("race_date") for r in races if r.get("race_date")]
+    if not dates:
+        return races
+    meta = _fetch_races_metadata_map(min(dates), max(dates))
+    if not meta:
+        return races
+
+    enriched: List[Dict] = []
+    for race in races:
+        merged = dict(race)
+        key = f"{merged.get('race_date')}_{merged.get('venue')}_{merged.get('race_no')}"
+        db_row = meta.get(key)
+        if db_row:
+            if db_row.get("surface"):
+                merged["surface"] = db_row["surface"]
+            if db_row.get("going"):
+                merged["going"] = db_row["going"]
+            if db_row.get("distance") and not merged.get("distance"):
+                merged["distance"] = db_row["distance"]
+            if db_row.get("race_class") and not merged.get("race_class"):
+                merged["race_class"] = db_row["race_class"]
+        enriched.append(merged)
+    return enriched
 #----------
 def get_upcoming_races_from_db() -> List[Dict]:
     """从本地数据库获取未来赛程（备用数据源）"""
@@ -5970,6 +6160,11 @@ def sync_races_to_db(races: List[Dict]) -> bool:
                     "race_class": race.get('race_class', ''),
                     "updated_at": datetime.now().isoformat()
                 }
+                surface = race.get("surface") or race.get("race_track")
+                if surface:
+                    update_data["surface"] = surface
+                if race.get("going"):
+                    update_data["going"] = race["going"]
                 requests.patch(update_url, headers=headers, json=update_data)
             else:
                 # 不存在，插入
@@ -5983,6 +6178,11 @@ def sync_races_to_db(races: List[Dict]) -> bool:
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat()
                 }
+                surface = race.get("surface") or race.get("race_track")
+                if surface:
+                    insert_data["surface"] = surface
+                if race.get("going"):
+                    insert_data["going"] = race["going"]
                 insert_url = f"{SUPABASE_URL}/rest/v1/races"
                 response = requests.post(insert_url, headers=headers, json=insert_data)
                 if response.status_code in [200, 201]:
@@ -6006,6 +6206,7 @@ def get_upcoming_races() -> List[Dict]:
     races = get_upcoming_races_from_api()
     
     if races:
+        races = _enrich_upcoming_races_from_db(races)
         # 同步到数据库作为备份
         sync_races_to_db(races)
         return races
@@ -8408,6 +8609,7 @@ def render_smart_betting(show_title: bool = True):
         selected_date = selected_date_str.split(" ")[0]
         
         races = [r for r in valid_races if r.get('race_date') == selected_date]
+        races.sort(key=lambda x: x.get("race_no", 0))
     
     else:
         st.info(t()["historical_mode_info"])
@@ -8436,35 +8638,7 @@ def render_smart_betting(show_title: bool = True):
         st.warning(t()["no_race_detail_for_date"])
         return
     
-    race_options = []
-    for r in races:
-        distance = r.get('distance', r.get('distanceMeters', 0))
-        race_class = r.get('race_class', '')
-        race_no = r.get('race_no', 0)
-        race_time = r.get('scheduledStart', r.get('startTime', r.get('race_time', '')))
-        
-        if distance and distance > 0:
-            if race_time:
-                race_options.append(tx(
-                    f"第{race_no}場 - {distance}米 ({race_class}) {race_time}",
-                    f"Race {race_no} - {distance}m ({race_class}) {race_time}",
-                ))
-            else:
-                race_options.append(tx(
-                    f"第{race_no}場 - {distance}米 ({race_class})",
-                    f"Race {race_no} - {distance}m ({race_class})",
-                ))
-        else:
-            if race_time:
-                race_options.append(tx(
-                    f"第{race_no}場 ({race_class}) {race_time}",
-                    f"Race {race_no} ({race_class}) {race_time}",
-                ))
-            else:
-                race_options.append(tx(
-                    f"第{race_no}場 ({race_class})",
-                    f"Race {race_no} ({race_class})",
-                ))
+    race_options = [_format_race_select_label(r) for r in races]
     
     selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     #---------
