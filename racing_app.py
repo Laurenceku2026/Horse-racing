@@ -9083,7 +9083,7 @@ def render_smart_betting(show_title: bool = True):
     st.markdown(f"#### 🏇 {t()['race_table_title'].format(race_no=selected_race.get('race_no'))} ({model_choice})")
     #-----------
     race_data = []
-    for row_idx, runner in enumerate(sorted_runners, start=1):
+    for runner in sorted_runners:
         horse_name = _horse_display_label(runner)
         # 安全处理赔率
         odds_win_raw = runner.get('odds_win')
@@ -9121,7 +9121,7 @@ def render_smart_betting(show_title: bool = True):
             ev_display = "-"
         
         race_data.append({
-            t()["row_index"]: row_idx,
+            t()["horse_no"]: runner.get("horse_no", "-"),
             t()["horse_name_no"]: horse_name,
             t()["draw"]: runner.get('draw', '-'),
             t()["actual_weight"]: runner.get('actual_weight', '-'),
