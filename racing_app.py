@@ -384,7 +384,7 @@ TEXTS = {
         "backtest_result_invalid": "回測結果無效或無投注記錄",
         "disclaimer_backtest": "📌 回測結果基於歷史數據，不構成投資建議",
         "top1_fixed_backtest": "🎯 第一名固定策略回測",
-        "top1_fixed_backtest_caption": "每场买模型胜率第1名的独赢+位置；可选孖T(R6-7)、三T(R5-7)、六环彩(R6-11)；Trio 为 Top1 必选 + 按胜率加权随机2匹",
+        "top1_fixed_backtest_caption": "每场买模型胜率第1名的独赢+位置；可选孖T(R6-7)、三T(R5-7)、六环彩(R6-11)；Trio 为 Top1 必选 + 按胜率加权随机2匹（独立日期，默认最近两周）",
         "top1_stake_label": "每注金额 (HK$)",
         "top1_random_seed_label": "随机种子",
         "top1_use_date_seed": "以赛日日期作为随机种子",
@@ -888,7 +888,7 @@ Let AI be your racing assistant.
         "backtest_result_invalid": "Invalid backtest result or no betting records",
         "disclaimer_backtest": "📌 Backtest results are based on historical data and do not guarantee future performance.",
         "top1_fixed_backtest": "🎯 Top1 Fixed Strategy Backtest",
-        "top1_fixed_backtest_caption": "WIN+PLACE on rank #1 every race; optional Double Trio (R6-7), Triple Trio (R5-7), Six Up (R6-11); trio = Top1 + 2 weighted-random picks",
+        "top1_fixed_backtest_caption": "WIN+PLACE on rank #1 every race; optional Double Trio (R6-7), Triple Trio (R5-7), Six Up (R6-11); trio = Top1 + 2 weighted-random picks (separate dates, default last 2 weeks)",
         "top1_stake_label": "Stake per bet (HK$)",
         "top1_random_seed_label": "Random seed",
         "top1_use_date_seed": "Use meeting date as random seed",
@@ -7458,10 +7458,12 @@ def get_trainer_base_scores() -> Dict[str, int]:
     }
 #-------------
 def get_model_predictions(race_date: str, venue: str, race_no: int, 
-                          runners: List[Dict], model_type: str, model=None) -> List[float]:
+                          runners: List[Dict], model_type: str, model=None,
+                          perf_cache: Optional[Dict[str, List[Dict]]] = None) -> List[float]:
     """
     获取 ML 模型预测的胜率
     支持二分类和三分类模型
+    perf_cache: 可选，回测时传入本地 horse_cache，避免每场重复查库
     """
     from scoring_engine import get_ml_config
     ml_config = get_ml_config()
@@ -7478,7 +7480,8 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
     if not horse_ids:
         return [0.34] * len(runners)
     
-    perf_cache = se_get_horses_performances_batch(tuple(set(horse_ids)))
+    if perf_cache is None:
+        perf_cache = se_get_horses_performances_batch(tuple(set(horse_ids)))
     horse_birth_years = load_horse_birth_years()
     jockey_win_rates = get_cached_jockey_win_rates()
     trainer_base_scores = get_cached_trainer_base_scores_for_ml()
@@ -10871,20 +10874,11 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
     y_list = []
     group_weights = []
     
-    # ==================== 1. 获取马匹出生年份 ====================
-    horse_birth_years = {}
-    try:
-        headers = get_supabase_headers(use_secret=True)
-        horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=horse_id,birth_year"
-        response = requests.get(horses_url, headers=headers)
-        if response.status_code == 200:
-            for h in response.json():
-                horse_birth_years[h.get('horse_id')] = h.get('birth_year')
-    except Exception as e:
-        print(f"获取马匹出生年份失败: {e}")
+    # ==================== 1. 获取马匹出生年份（内存缓存） ====================
+    horse_birth_years = load_horse_birth_years()
     
-    # ==================== 2. 获取骑师胜率 ====================
-    jockey_win_rates = get_jockey_win_rates_from_db()
+    # ==================== 2. 获取骑师胜率（Streamlit 缓存） ====================
+    jockey_win_rates = get_cached_jockey_win_rates()
     
     # ==================== 3. 练马师基础评分 ====================
     trainer_base_scores = {
@@ -11520,9 +11514,12 @@ def _prepare_ml_runners_for_strategy(
     race_no: int,
     model_type: str,
     model,
+    perf_cache: Optional[Dict[str, List[Dict]]] = None,
 ) -> List[Dict]:
     """为策略回测准备带 ML 胜率与赔率的出马列表。"""
-    ml_probs = get_model_predictions(race_date, venue, race_no, runners_data, model_type, model)
+    ml_probs = get_model_predictions(
+        race_date, venue, race_no, runners_data, model_type, model, perf_cache=perf_cache
+    )
     prepared = []
     for i, row in enumerate(runners_data):
         item = dict(row)
@@ -11706,20 +11703,23 @@ def _score_races_for_day_ml(
     all_performances: List[Dict],
     model_type: str,
     model,
+    horse_cache: Optional[Dict[str, List[Dict]]] = None,
 ) -> Dict[int, List[Dict]]:
     scored: Dict[int, List[Dict]] = {}
     for race in day_races:
         race_date = race["race_date"]
         venue = race["venue"]
         race_no = race["race_no"]
-        runners_data = [
-            p for p in all_performances
-            if p["race_date"] == race_date and p["venue"] == venue and p["race_no"] == race_no
-        ]
+        runners_data = race.get("_runners_data")
+        if runners_data is None:
+            runners_data = [
+                p for p in all_performances
+                if p["race_date"] == race_date and p["venue"] == venue and p["race_no"] == race_no
+            ]
         if not runners_data:
             continue
         ml_runners = _prepare_ml_runners_for_strategy(
-            runners_data, race_date, venue, race_no, model_type, model
+            runners_data, race_date, venue, race_no, model_type, model, perf_cache=horse_cache
         )
         scored[race_no] = ml_runners
     return scored
@@ -13077,15 +13077,38 @@ def _display_model_backtest_results(results: List[Dict]) -> None:
                 st.info(texts["backtest_no_detail"])
 
 
-def _attach_runners_data_to_day_races(day_races: List[Dict], all_performances: List[Dict]) -> None:
+def _get_backtest_performances_with_lookback(
+    start_date: str,
+    end_date: str,
+    lookback_days: int = 730,
+) -> List[Dict]:
+    """拉取回测区间 + 训练回看窗口内的往绩，避免 ML 训练/预测缺历史。"""
+    try:
+        train_start = (
+            datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=lookback_days)
+        ).strftime("%Y-%m-%d")
+    except ValueError:
+        train_start = start_date
+    return get_performances_batch(train_start, end_date)
+
+
+def _build_race_performance_index(
+    all_performances: List[Dict],
+) -> Dict[Tuple[str, str, int], List[Dict]]:
+    index: Dict[Tuple[str, str, int], List[Dict]] = {}
+    for row in all_performances:
+        key = (row["race_date"], row.get("venue", "ST"), int(row["race_no"]))
+        index.setdefault(key, []).append(row)
+    return index
+
+
+def _attach_runners_data_to_day_races(
+    day_races: List[Dict],
+    perf_index: Dict[Tuple[str, str, int], List[Dict]],
+) -> None:
     for race in day_races:
-        race_date = race["race_date"]
-        venue = race["venue"]
-        race_no = race["race_no"]
-        race["_runners_data"] = [
-            p for p in all_performances
-            if p["race_date"] == race_date and p["venue"] == venue and p["race_no"] == race_no
-        ]
+        key = (race["race_date"], race.get("venue", "ST"), int(race["race_no"]))
+        race["_runners_data"] = perf_index.get(key, [])
 
 
 def _score_races_for_day_rule(
@@ -13168,8 +13191,8 @@ def run_top1_fixed_strategy_backtest(
     include_double_trio: bool = True,
     include_triple_trio: bool = True,
     include_six_up: bool = True,
+    fast_mode: bool = True,
 ) -> Top1FixedBacktestResult:
-    lang = st.session_state.get("lang", "zh")
     texts = t()
     model_names = {
         "rule": texts["rating_system"],
@@ -13208,7 +13231,7 @@ def run_top1_fixed_strategy_backtest(
         )
 
     with st.spinner(texts["top1_backtest_running"].format(model=model_label)):
-        all_performances = get_performances_batch(start_date, end_date)
+        all_performances = _get_backtest_performances_with_lookback(start_date, end_date)
     if not all_performances:
         st.error(texts["no_data_fetched"])
         return Top1FixedBacktestResult(
@@ -13225,8 +13248,12 @@ def run_top1_fixed_strategy_backtest(
         )
 
     horse_cache = build_horse_performances_cache(all_performances)
-    races = get_races_from_performances(all_performances)
-    if not races:
+    perf_index = _build_race_performance_index(all_performances)
+    all_races = get_races_from_performances(all_performances)
+    backtest_races = [
+        race for race in all_races if start_date <= race["race_date"] <= end_date
+    ]
+    if not backtest_races:
         st.warning(texts["no_races_found"])
         return Top1FixedBacktestResult(
             model_label=model_label,
@@ -13241,7 +13268,7 @@ def run_top1_fixed_strategy_backtest(
             include_six_up=include_six_up,
         )
 
-    day_race_groups = _group_race_days(races)
+    day_race_groups = _group_race_days(backtest_races)
     sorted_day_keys = sorted(day_race_groups.keys())
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -13277,24 +13304,22 @@ def run_top1_fixed_strategy_backtest(
         progress_msg = (
             f"Top1 {model_label}: {race_date} {venue} "
             f"({day_counter['idx']}/{len(sorted_day_keys)})"
-            if lang == "zh"
-            else f"Top1 {model_label}: {race_date} {venue} "
-            f"({day_counter['idx']}/{len(sorted_day_keys)})"
         )
         status_text.text(progress_msg)
         progress_bar.progress(day_counter["idx"] / max(len(sorted_day_keys), 1))
 
-        _attach_runners_data_to_day_races(day_races, all_performances)
+        _attach_runners_data_to_day_races(day_races, perf_index)
         if model_type == "rule":
             return _score_races_for_day_rule(day_races, horse_cache, horse_birth_years, weights_cfg)
 
-        train_X, train_y = prepare_training_data_by_date(race_date, all_performances, horse_cache)
-        if train_X is None or len(train_X) < 50:
-            return {}
-
-        cache_key = f"top1_{model_type}_{race_date}_{weight_hash}"
-        model = model_cache.get(race_date)
+        train_key = race_date[:7] if fast_mode else race_date
+        model = model_cache.get(train_key)
         if model is None:
+            train_X, train_y = prepare_training_data_by_date(race_date, all_performances, horse_cache)
+            if train_X is None or len(train_X) < 50:
+                return {}
+
+            cache_key = f"top1_{model_type}_{train_key}_{weight_hash}"
             cached_model = get_cached_model(cache_key)
             if cached_model is not None:
                 model = cached_model
@@ -13302,10 +13327,13 @@ def run_top1_fixed_strategy_backtest(
                 model = get_or_train_model(train_X, train_y, model_type, cache_key)
                 if model is not None:
                     set_cached_model(cache_key, model)
-            model_cache[race_date] = model
+            model_cache[train_key] = model
+
         if model is None:
             return {}
-        return _score_races_for_day_ml(day_races, all_performances, model_type, model)
+        return _score_races_for_day_ml(
+            day_races, all_performances, model_type, model, horse_cache=horse_cache
+        )
 
     result = run_top1_fixed_backtest_core(
         start_date=start_date,
@@ -13531,15 +13559,27 @@ def render_backtest_page(show_title: bool = True):
         top1_model_options.append("XGBoost")
     default_top1_model_idx = top1_model_options.index("LightGBM") if "LightGBM" in top1_model_options else 0
 
-    top1_c1, top1_c2, top1_c3, top1_c4 = st.columns(4)
-    with top1_c1:
+    top1_date1, top1_date2, top1_model_col, top1_stake_col = st.columns(4)
+    with top1_date1:
+        top1_backtest_start = st.date_input(
+            t()["start_date"],
+            value=datetime.now() - timedelta(days=14),
+            key="top1_backtest_start",
+        )
+    with top1_date2:
+        top1_backtest_end = st.date_input(
+            t()["end_date"],
+            value=datetime.now(),
+            key="top1_backtest_end",
+        )
+    with top1_model_col:
         top1_model_label = st.selectbox(
             t()["ai_model"],
             options=top1_model_options,
             index=default_top1_model_idx,
             key="top1_backtest_model",
         )
-    with top1_c2:
+    with top1_stake_col:
         top1_stake = st.number_input(
             t()["top1_stake_label"],
             min_value=10,
@@ -13548,6 +13588,8 @@ def render_backtest_page(show_title: bool = True):
             step=10,
             key="top1_backtest_stake",
         )
+
+    top1_c3, top1_c4, top1_c5, top1_c6 = st.columns(4)
     with top1_c3:
         top1_seed = st.text_input(
             t()["top1_random_seed_label"],
@@ -13559,6 +13601,13 @@ def render_backtest_page(show_title: bool = True):
             t()["top1_use_date_seed"],
             value=False,
             key="top1_backtest_use_date_seed",
+        )
+    with top1_c5:
+        top1_fast_mode = st.checkbox(
+            t()["fast_mode_label"],
+            value=True,
+            key="top1_backtest_fast_mode",
+            help=t()["fast_mode_help"],
         )
 
     top1_chk1, top1_chk2, top1_chk3, top1_chk4 = st.columns(4)
@@ -13596,11 +13645,11 @@ def render_backtest_page(show_title: bool = True):
 
     if run_top1_backtest_btn:
         if not require_trial(
-            f"top1_fixed_backtest:{backtest_start}:{backtest_end}:{top1_model_label}",
+            f"top1_fixed_backtest:{top1_backtest_start}:{top1_backtest_end}:{top1_model_label}",
             dedupe=False,
         ):
             pass
-        elif backtest_start > backtest_end:
+        elif top1_backtest_start > top1_backtest_end:
             st.error(t()["invalid_date_range"])
         else:
             top1_model_type = "rule"
@@ -13610,8 +13659,8 @@ def render_backtest_page(show_title: bool = True):
                 top1_model_type = "xgboost"
 
             top1_result = run_top1_fixed_strategy_backtest(
-                start_date=backtest_start.strftime("%Y-%m-%d"),
-                end_date=backtest_end.strftime("%Y-%m-%d"),
+                start_date=top1_backtest_start.strftime("%Y-%m-%d"),
+                end_date=top1_backtest_end.strftime("%Y-%m-%d"),
                 model_type=top1_model_type,
                 stake_per_bet=float(top1_stake),
                 random_seed=str(top1_seed).strip() or "7",
@@ -13620,6 +13669,7 @@ def render_backtest_page(show_title: bool = True):
                 include_double_trio=top1_include_double_trio,
                 include_triple_trio=top1_include_triple_trio,
                 include_six_up=top1_include_six_up,
+                fast_mode=top1_fast_mode,
             )
             st.session_state.top1_fixed_backtest_result = top1_result
             _display_top1_fixed_backtest_results(top1_result)
