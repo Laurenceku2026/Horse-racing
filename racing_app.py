@@ -353,7 +353,8 @@ TEXTS = {
         "click_open": "點擊打開",
         "click_open_recommend": "點擊打開推薦",
         "collapse_section": "▼ 收起",
-        "reopen_section": "▶ 再次展開",
+        "reopen_section": "▶ 展開",
+        "expand_section_short": "▶ 展開",
         "realtime_odds_no_data": "本場在賠率快照庫中無 WIN/PLA 時間序列。自動採集僅在開賽前約 90 分鐘內執行；若該賽日當時未採集，歷史賽事將無走勢數據（僅出馬表中的終場賠率）。",
         "realtime_odds_latest": "最新賠率快照",
         "realtime_odds_trend": "賠率走勢（距開賽分鐘）",
@@ -830,7 +831,8 @@ Let AI be your racing assistant.
         "click_open": "Click to open",
         "click_open_recommend": "Click to open recommendation",
         "collapse_section": "▼ Collapse",
-        "reopen_section": "▶ Expand again",
+        "reopen_section": "▶ Expand",
+        "expand_section_short": "▶ Expand",
         "realtime_odds_no_data": "No WIN/PLA time-series snapshots for this race. Collection runs only in the ~90 minutes before post time; past race days have no trend data unless captured at the time (final odds may still appear in the runner table).",
         "realtime_odds_latest": "Latest Odds Snapshots",
         "realtime_odds_trend": "Odds Trend (minutes before post)",
@@ -2058,7 +2060,7 @@ def _section_anchor_id(state_key: str) -> str:
 
 
 def _scroll_to_section_anchor(state_key: str) -> None:
-    """展開後滾動到區塊頂部，避免視口停在下方其他模塊。"""
+    """展開後滾動到區塊標題，保留標題在視口內。"""
     flag = f"scroll_to_{state_key}"
     if not st.session_state.pop(flag, False):
         return
@@ -2073,18 +2075,34 @@ def _scroll_to_section_anchor(state_key: str) -> None:
                 const doc = window.parent.document;
                 const el = doc.getElementById("{anchor_id}");
                 if (!el) return false;
-                el.scrollIntoView({{behavior: "smooth", block: "start"}});
+                el.scrollIntoView({{behavior: "smooth", block: "nearest", inline: "nearest"}});
                 return true;
             }}
             let n = 0;
             const timer = setInterval(function() {{
-                if (tryScroll() || ++n > 24) clearInterval(timer);
-            }}, 120);
+                if (tryScroll() || ++n > 30) clearInterval(timer);
+            }}, 150);
         }})();
         </script>
         """,
         height=0,
     )
+
+
+def _render_section_header_row(
+    title: str,
+    anchor_id: str,
+    *,
+    use_heading: bool = True,
+) -> None:
+    st.markdown(
+        f'<div id="{anchor_id}" style="scroll-margin-top: 5rem;"></div>',
+        unsafe_allow_html=True,
+    )
+    if use_heading:
+        st.markdown(f"#### {title}")
+    else:
+        st.markdown(f"**{title}**")
 
 
 def render_collapsible_trial_section(
@@ -2097,71 +2115,63 @@ def render_collapsible_trial_section(
     use_heading: bool = True,
     show_expand_hint: bool = False,
 ) -> None:
-    """可折疊區塊：首次展開扣次；折起後再開不扣次；內容在同一位置顯示。"""
+    """可折疊區塊：標題始終可見；收起/展開按鈕緊挨標題。"""
     unlock_key = _section_unlock_key(state_key)
     expanded = bool(st.session_state.get(state_key))
     unlocked = bool(st.session_state.get(unlock_key))
-    expand_text = expand_label or title
+    anchor_id = _section_anchor_id(state_key)
+    expand_hint = expand_label if expand_label and expand_label != title else None
 
-    if not expanded:
-        if show_expand_hint:
+    def _mark_scroll() -> None:
+        st.session_state[f"scroll_to_{state_key}"] = True
+
+    def _collapse() -> None:
+        st.session_state[state_key] = False
+
+    def _reopen() -> None:
+        st.session_state[state_key] = True
+        _mark_scroll()
+
+    def _first_open() -> None:
+        if require_trial(trial_key):
+            st.session_state[state_key] = True
+            st.session_state[unlock_key] = True
+            _mark_scroll()
+
+    title_col, btn_col, _spacer = st.columns([6, 1.4, 4.6], vertical_alignment="center")
+    with title_col:
+        _render_section_header_row(title, anchor_id, use_heading=use_heading)
+        if expand_hint and not expanded:
+            st.caption(expand_hint)
+        elif show_expand_hint and not expanded and not unlocked:
             st.caption(t()["click_open"])
 
-        def _mark_scroll() -> None:
-            st.session_state[f"scroll_to_{state_key}"] = True
-
-        if unlocked:
-            def _reopen() -> None:
-                st.session_state[state_key] = True
-                _mark_scroll()
-
-            st.button(
-                f"{t()['reopen_section']} · {expand_text}",
-                key=f"reopen_{state_key}",
-                use_container_width=True,
-                type="secondary",
-                on_click=_reopen,
-            )
-        else:
-
-            def _first_open() -> None:
-                if require_trial(trial_key):
-                    st.session_state[state_key] = True
-                    st.session_state[unlock_key] = True
-                    _mark_scroll()
-
-            st.button(
-                expand_text,
-                key=f"trial_btn_{state_key}",
-                use_container_width=True,
-                type="secondary",
-                on_click=_first_open,
-            )
-        return
-
-    anchor_id = _section_anchor_id(state_key)
-    st.markdown(f'<div id="{anchor_id}"></div>', unsafe_allow_html=True)
-    _scroll_to_section_anchor(state_key)
-
-    header_col, btn_col = st.columns([5, 1])
-    with header_col:
-        if use_heading:
-            st.markdown(f"#### {title}")
-        else:
-            st.markdown(f"**{title}**")
     with btn_col:
+        if expanded:
+            st.button(
+                t()["collapse_section"],
+                key=f"collapse_{state_key}",
+                on_click=_collapse,
+                use_container_width=True,
+            )
+        elif unlocked:
+            st.button(
+                t()["reopen_section"],
+                key=f"reopen_{state_key}",
+                on_click=_reopen,
+                use_container_width=True,
+            )
+        else:
+            st.button(
+                t()["expand_section_short"],
+                key=f"trial_btn_{state_key}",
+                on_click=_first_open,
+                use_container_width=True,
+            )
 
-        def _collapse() -> None:
-            st.session_state[state_key] = False
-
-        st.button(
-            t()["collapse_section"],
-            key=f"collapse_{state_key}",
-            use_container_width=True,
-            on_click=_collapse,
-        )
-
-    render_content()
+    if expanded:
+        render_content()
+        _scroll_to_section_anchor(state_key)
 
 
 def trial_gated_toggle_button(
