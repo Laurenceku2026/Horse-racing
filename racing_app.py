@@ -1215,8 +1215,42 @@ def _race_course_label(race: Dict) -> str:
     return f"Course {code_str}"
 
 
+def _is_local_venue(venue: Optional[str]) -> bool:
+    return (venue or "ST").strip().upper() in ("ST", "HV")
+
+
+def _venue_display_label(race: Dict) -> str:
+    """赛马场/赛事来源显示名（ST=沙田, HV=跑马地, S*=海外转播）"""
+    venue = (race.get("venue") or "ST").strip().upper()
+    venue_name = (race.get("venue_name") or "").strip()
+    if get_lang() == "zh":
+        local_names = {"ST": "沙田", "HV": "跑馬地"}
+        if venue in local_names:
+            return local_names[venue]
+        if venue.startswith("S") or venue in ("OS", "AU", "UK", "FR", "JP"):
+            return f"海外({venue})"
+        if venue_name:
+            return venue_name
+        return venue
+    local_names = {"ST": "Sha Tin", "HV": "Happy Valley"}
+    if venue in local_names:
+        return local_names[venue]
+    if venue.startswith("S") or venue in ("OS", "AU", "UK", "FR", "JP"):
+        return f"Overseas ({venue})"
+    return venue_name or venue
+
+
+def _race_list_sort_key(race: Dict):
+    venue = (race.get("venue") or "ST").strip().upper()
+    local_rank = {"ST": 0, "HV": 1}.get(venue, 2)
+    post_time = _format_post_time(
+        race.get("post_time") or race.get("postTime") or race.get("race_time") or ""
+    )
+    return (local_rank, race.get("race_no", 0), post_time)
+
+
 def _format_race_select_label(race: Dict, *, include_date: bool = True) -> str:
-    """Format race dropdown label, e.g. 第1場 （04/07 (六), 16:00, 1200米, 草地, A賽道, 好地）"""
+    """Format race dropdown label, e.g. 第1場 （04/07 (六), 沙田, 16:00, 1200米, 草地, C+3賽道, 好地）"""
     race_no = race.get("race_no", 0)
     race_date = race.get("race_date", "")
     parts: List[str] = []
@@ -1228,6 +1262,10 @@ def _format_race_select_label(race: Dict, *, include_date: bool = True) -> str:
             parts.append(f"{short_date} ({weekday})")
         elif short_date:
             parts.append(short_date)
+
+    venue_label = _venue_display_label(race)
+    if venue_label:
+        parts.append(venue_label)
 
     post_time = _format_post_time(
         race.get("post_time")
@@ -8052,11 +8090,46 @@ def _render_odds_detail_table(pool_rows: List[Dict], runners: List[Dict], odds_t
 def _odds_analysis_heading(selected_race: Dict, selected_date: str) -> str:
     race_date = selected_race.get("race_date") or selected_date
     race_no = selected_race.get("race_no", "-")
-    venue = selected_race.get("venue", "ST")
+    venue_label = _venue_display_label(selected_race)
     return tx(
-        f"📈 實時賠率分析（{race_date} 第{race_no}場 {venue}）",
-        f"📈 Real-time Odds Analysis ({race_date} R{race_no} {venue})",
+        f"📈 實時賠率分析（{race_date} 第{race_no}場 {venue_label}）",
+        f"📈 Real-time Odds Analysis ({race_date} R{race_no} {venue_label})",
     )
+
+
+def _run_odds_snapshot_collect(
+    race_date: str,
+    venue: str,
+    race_no: int,
+    *,
+    show_success: bool = True,
+) -> List[Dict]:
+    """调用 Node API 采集 WIN/PLA 快照并刷新 odds_history 缓存。"""
+    collect_result = trigger_odds_collection_for_race(race_date, venue, int(race_no))
+    fetch_race_odds_history.clear()
+    _query_odds_history_rows.clear()
+    rows = fetch_race_odds_history(race_date, venue, int(race_no))
+    if show_success and collect_result.get("success") and rows:
+        saved = collect_result.get("saved") or 0
+        key_min = collect_result.get("keyMinute")
+        if saved > 0 and key_min is not None:
+            st.success(
+                tx(
+                    f"已採集 T-{key_min} 賠率快照（{saved} 条）",
+                    f"Collected T-{key_min} snapshots ({saved} rows)",
+                )
+            )
+        elif rows:
+            st.info(tx("已有赔率走勢数据（本次未新增快照）。", "Trend data loaded (no new snapshots this run)."))
+    elif show_success and not collect_result.get("success"):
+        fail_reason = collect_result.get("error") or collect_result.get("reason") or "unknown"
+        st.warning(
+            tx(
+                f"採集未成功：{fail_reason}",
+                f"Collection failed: {fail_reason}",
+            )
+        )
+    return rows
 
 
 def _render_realtime_odds_analysis(
@@ -8079,23 +8152,50 @@ def _render_realtime_odds_analysis(
 
     race_date = selected_race.get("race_date") or selected_date
     venue = selected_race.get("venue", "ST")
-    race_no = selected_race.get("race_no")
-    rows = fetch_race_odds_history(race_date, venue, int(race_no))
+    race_no = int(selected_race.get("race_no"))
+    rows = fetch_race_odds_history(race_date, venue, race_no)
+    unique_mins = len(
+        {
+            r.get("minutes_before_race")
+            for r in _dedupe_odds_snapshots(rows)
+            if r.get("minutes_before_race") is not None
+        }
+    ) if rows else 0
+
+    st.caption(
+        tx(
+            f"已加载 {unique_mins} 个时间点走勢快照（目标约 26 个，开赛前 98 分钟内自动采集）",
+            f"Loaded {unique_mins} trend snapshots (target ~26; auto-collect within 98 min of post time)",
+        )
+    )
+
+    if st.button(
+        tx("🔄 立即採集賠率快照", "🔄 Collect odds snapshots now"),
+        key=f"manual_collect_odds_{race_ui_key}",
+        use_container_width=True,
+    ):
+        with st.spinner(tx("正在採集賠率快照...", "Collecting odds snapshots...")):
+            rows = _run_odds_snapshot_collect(race_date, venue, race_no)
+        if rows:
+            st.rerun()
+
     if not rows:
-        collect_key = f"odds_history_collect_{race_ui_key}"
-        if not st.session_state.get(collect_key):
-            st.session_state[collect_key] = True
-            with st.spinner(tx("正在採集賠率快照...", "Collecting odds snapshots...")):
-                collect_result = trigger_odds_collection_for_race(race_date, venue, int(race_no))
-            if collect_result.get("success"):
-                fetch_race_odds_history.clear()
-                _query_odds_history_rows.clear()
+        auto_collect_key = f"auto_odds_collect_{race_ui_key}"
+        if not st.session_state.get(auto_collect_key):
+            st.session_state[auto_collect_key] = True
+            with st.spinner(tx("正在自動採集賠率快照...", "Auto-collecting odds snapshots...")):
+                rows = _run_odds_snapshot_collect(race_date, venue, race_no, show_success=True)
+            if rows:
                 st.rerun()
-            elif collect_result.get("error") == "outside_key_window" or collect_result.get("skipped"):
-                pass
-        rows = fetch_race_odds_history(race_date, venue, int(race_no))
+
     if not rows:
         st.info(texts["realtime_odds_no_data"])
+        st.caption(
+            tx(
+                "提示：请先点上方「立即採集」或「刷新单场数据」；走勢仅记录开赛前约 98 分钟内的 WIN/PLA 快照。",
+                "Tip: use Collect above or Refresh single race; trends need snapshots within ~98 min of post time.",
+            )
+        )
         return
 
     win_rows = _odds_rows_for_pool(rows, "WIN")
@@ -8658,7 +8758,18 @@ def render_smart_betting(show_title: bool = True):
         selected_date = selected_date_str.split(" ")[0]
         
         races = [r for r in valid_races if r.get('race_date') == selected_date]
-        races.sort(key=lambda x: x.get("race_no", 0))
+        races.sort(key=_race_list_sort_key)
+        overseas_count = sum(
+            1 for r in races
+            if (r.get("venue") or "").strip().upper() not in ("ST", "HV")
+        )
+        if overseas_count:
+            st.caption(
+                tx(
+                    f"💡 同赛日含 {overseas_count} 场海外转播赛事（场次编号可能与本地重复，请留意「沙田/跑馬地/海外」标识）",
+                    f"💡 This card includes {overseas_count} overseas simulcast race(s); race numbers may repeat—check venue labels.",
+                )
+            )
     
     else:
         st.info(t()["historical_mode_info"])
@@ -8676,7 +8787,7 @@ def render_smart_betting(show_title: bool = True):
         selected_date_str = st.selectbox(t()["select_history_race_day"], date_options, key="selected_history_date")
         selected_date = selected_date_str.split(" ")[0]
         races = [r for r in historical_races if r.get("race_date") == selected_date]
-        races.sort(key=lambda x: x.get("race_no", 0))
+        races.sort(key=_race_list_sort_key)
 
     prediction_cutoff_date = selected_date if date_mode == DATE_MODE_HISTORY else None
     #-------------
@@ -8691,9 +8802,10 @@ def render_smart_betting(show_title: bool = True):
     
     selected_idx = st.selectbox(t()["select_race"], range(len(race_options)), format_func=lambda x: race_options[x], key="selected_race")
     #---------
-    #-------------
-    # ⭐ 检查场次是否变化，如果变化则重置所有折叠状态（闭合）并重置付费标记
-    current_race_key = f"{selected_date}_{selected_idx}"
+    selected_race = races[selected_idx]
+    current_race_key = (
+        f"{selected_race.get('race_date')}_{selected_race.get('venue')}_{selected_race.get('race_no')}"
+    )
     if st.session_state.get("prev_selected_race") != current_race_key:
         st.session_state.expand_win = False
         st.session_state.expand_qin = False
@@ -8710,7 +8822,14 @@ def render_smart_betting(show_title: bool = True):
         st.session_state.paid_scoring_weights = False
         st.session_state.prev_selected_race = current_race_key
     #----------
-    selected_race = races[selected_idx]
+
+    if not _is_local_venue(selected_race.get("venue")):
+        st.warning(
+            tx(
+                "⚠️ 海外转播赛事：历史数据库以香港本地马匹为主，海外马通常无本地往绩，评分与 AI 推荐准确度有限，请主要参考赔率。",
+                "⚠️ Overseas simulcast: the history DB covers HK horses; overseas runners often lack local form—treat scores/recommendations with caution.",
+            )
+        )
     
     col1, col2 = st.columns([1, 4])
     with col1:
@@ -9012,21 +9131,23 @@ def render_smart_betting(show_title: bool = True):
     st.markdown(f"## {_model_section_title(t()['parlay_recommendation'], model_choice)}")
     st.caption(t()["parlay_description"])
     
-    # 获取当前赛日的所有赛事（用于过关推荐）
-    current_races_for_parlay = races  # races 是前面定义的当前赛日所有赛事
+    # 获取当前赛日的所有赛事（用于过关推荐；默认仅本地 ST/HV）
+    current_races_for_parlay = [r for r in races if _is_local_venue(r.get("venue"))]
+    if not current_races_for_parlay:
+        current_races_for_parlay = races
+    elif len(current_races_for_parlay) < len(races):
+        st.caption(
+            tx(
+                "💡 過關推薦默认仅含沙田/跑馬地本地赛事（不含海外转播）",
+                "💡 Parlay defaults to local ST/HV races only (excludes overseas simulcasts)",
+            )
+        )
     
     if current_races_for_parlay and len(current_races_for_parlay) >= 2:
         # 让用户選擇要過關的場次
         st.markdown(f"**{t()['parlay_select_races_title']}**")
         
-        parlay_race_options = []
-        for r in current_races_for_parlay:
-            distance = r.get('distance', 0)
-            race_class = r.get('race_class', '')
-            parlay_race_options.append(tx(
-                f"第{r.get('race_no')}場 - {distance}米 ({race_class})",
-                f"Race {r.get('race_no')} - {distance}m ({race_class})",
-            ))
+        parlay_race_options = [_format_race_select_label(r, include_date=False) for r in current_races_for_parlay]
         
         # 多选框
         selected_parlay_indices = st.multiselect(
