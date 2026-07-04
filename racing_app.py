@@ -21,6 +21,7 @@ from supabase import create_client, Client
 from bs4 import BeautifulSoup
 from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db, get_odds_tce_from_db
 from parlay_recommender import ParlayRecommender, describe_parlay_type, format_parlay_display
+from top1_fixed_backtest_engine import run_top1_fixed_backtest_core, Top1FixedBacktestResult
 # ==================== 从 scoring_engine 导入 ====================
 SCORING_ENGINE_OK = False
 try:
@@ -382,6 +383,32 @@ TEXTS = {
         "run_strategy_backtest": "▶️ 運行策略回測",
         "backtest_result_invalid": "回測結果無效或無投注記錄",
         "disclaimer_backtest": "📌 回測結果基於歷史數據，不構成投資建議",
+        "top1_fixed_backtest": "🎯 第一名固定策略回測",
+        "top1_fixed_backtest_caption": "每场买模型胜率第1名的独赢+位置；可选孖T(R6-7)、三T(R5-7)、六环彩(R6-11)；Trio 为 Top1 必选 + 按胜率加权随机2匹",
+        "top1_stake_label": "每注金额 (HK$)",
+        "top1_random_seed_label": "随机种子",
+        "top1_use_date_seed": "以赛日日期作为随机种子",
+        "top1_include_win_place": "独赢 + 位置（每场）",
+        "top1_include_double_trio": "孖T（第6、7场）",
+        "top1_include_triple_trio": "三T（第5、6、7场）",
+        "top1_include_six_up": "六环彩（第6–11场）",
+        "run_top1_fixed_backtest": "▶️ 运行第一名固定策略回测",
+        "top1_backtest_running": "正在运行第一名固定策略回测 ({model})...",
+        "top1_summary_title": "汇总",
+        "top1_detail_title": "明细（推荐 vs 实际）",
+        "top1_col_pool": "彩池",
+        "top1_col_date": "赛日",
+        "top1_col_venue": "场地",
+        "top1_col_race": "场次",
+        "top1_col_recommended": "推荐",
+        "top1_col_actual": "实际",
+        "top1_col_hit": "命中",
+        "top1_col_stake": "投注",
+        "top1_col_return": "回报",
+        "top1_col_note": "备注",
+        "top1_hit_rate": "命中率",
+        "top1_race_days": "赛日数",
+        "top1_skipped": "跳过说明",
         
         # ==================== 消息提示 ====================
         "upgrade_pro": "💎 升級專業版",
@@ -860,6 +887,32 @@ Let AI be your racing assistant.
         "run_strategy_backtest": "▶️ Run Strategy Backtest",
         "backtest_result_invalid": "Invalid backtest result or no betting records",
         "disclaimer_backtest": "📌 Backtest results are based on historical data and do not guarantee future performance.",
+        "top1_fixed_backtest": "🎯 Top1 Fixed Strategy Backtest",
+        "top1_fixed_backtest_caption": "WIN+PLACE on rank #1 every race; optional Double Trio (R6-7), Triple Trio (R5-7), Six Up (R6-11); trio = Top1 + 2 weighted-random picks",
+        "top1_stake_label": "Stake per bet (HK$)",
+        "top1_random_seed_label": "Random seed",
+        "top1_use_date_seed": "Use meeting date as random seed",
+        "top1_include_win_place": "Win + Place (every race)",
+        "top1_include_double_trio": "Double Trio (R6 & R7)",
+        "top1_include_triple_trio": "Triple Trio (R5–R7)",
+        "top1_include_six_up": "Six Up (R6–R11)",
+        "run_top1_fixed_backtest": "▶️ Run Top1 Fixed Strategy Backtest",
+        "top1_backtest_running": "Running Top1 fixed strategy backtest ({model})...",
+        "top1_summary_title": "Summary",
+        "top1_detail_title": "Details (recommended vs actual)",
+        "top1_col_pool": "Pool",
+        "top1_col_date": "Date",
+        "top1_col_venue": "Venue",
+        "top1_col_race": "Race",
+        "top1_col_recommended": "Recommended",
+        "top1_col_actual": "Actual",
+        "top1_col_hit": "Hit",
+        "top1_col_stake": "Stake",
+        "top1_col_return": "Return",
+        "top1_col_note": "Note",
+        "top1_hit_rate": "Hit rate",
+        "top1_race_days": "Race days",
+        "top1_skipped": "Skipped",
         
         # ==================== Messages ====================
         "upgrade_pro": "💎 Upgrade to Pro",
@@ -13024,6 +13077,325 @@ def _display_model_backtest_results(results: List[Dict]) -> None:
                 st.info(texts["backtest_no_detail"])
 
 
+def _attach_runners_data_to_day_races(day_races: List[Dict], all_performances: List[Dict]) -> None:
+    for race in day_races:
+        race_date = race["race_date"]
+        venue = race["venue"]
+        race_no = race["race_no"]
+        race["_runners_data"] = [
+            p for p in all_performances
+            if p["race_date"] == race_date and p["venue"] == venue and p["race_no"] == race_no
+        ]
+
+
+def _score_races_for_day_rule(
+    day_races: List[Dict],
+    horse_cache: Dict,
+    horse_birth_years: Dict,
+    weights_cfg: Dict,
+) -> Dict[int, List[Dict]]:
+    from scoring_engine import score_runners_for_prediction
+
+    scored: Dict[int, List[Dict]] = {}
+    for race in day_races:
+        race_date = race["race_date"]
+        venue = race["venue"]
+        race_no = race["race_no"]
+        distance = race.get("distance", 1200)
+        runners_data = race.get("_runners_data") or []
+        if not runners_data:
+            continue
+
+        runners_input = []
+        for r in runners_data:
+            horse_id = r.get("horse_id")
+            if not horse_id:
+                continue
+            horse_name_zh = r.get("horse_name", "")
+            runners_input.append(
+                {
+                    "horse_id": horse_id,
+                    "horse_name": horse_name_zh,
+                    "horse_name_zh": horse_name_zh,
+                    "horse_name_en": r.get("horse_name_en", ""),
+                    "horse_no": r.get("horse_no"),
+                    "draw": r.get("draw"),
+                    "actual_weight": r.get("actual_weight"),
+                    "jockey": r.get("jockey"),
+                    "trainer": r.get("trainer"),
+                    "odds_win": r.get("odds"),
+                    "body_weight": r.get("body_weight"),
+                    "incident": r.get("incident", ""),
+                    "running_position": r.get("running_position", ""),
+                }
+            )
+
+        runners = score_runners_for_prediction(
+            race_date,
+            venue,
+            distance,
+            runners_input,
+            horse_cache,
+            horse_birth_years,
+            weights_cfg,
+        )
+        if runners:
+            scored[race_no] = runners
+    return scored
+
+
+def _top1_pool_label(pool_code: str) -> str:
+    lang = st.session_state.get("lang", "zh")
+    labels = {
+        "WIN": ("独赢", "Win"),
+        "PLA": ("位置", "Place"),
+        "DT": ("孖T", "Double Trio"),
+        "TT": ("三T", "Triple Trio"),
+        "SixUP": ("六环彩", "Six Up"),
+    }
+    zh, en = labels.get(pool_code, (pool_code, pool_code))
+    return zh if lang == "zh" else en
+
+
+def run_top1_fixed_strategy_backtest(
+    start_date: str,
+    end_date: str,
+    model_type: str = "lightgbm",
+    stake_per_bet: float = 10.0,
+    random_seed: str = "7",
+    use_date_as_seed: bool = False,
+    include_win_place: bool = True,
+    include_double_trio: bool = True,
+    include_triple_trio: bool = True,
+    include_six_up: bool = True,
+) -> Top1FixedBacktestResult:
+    lang = st.session_state.get("lang", "zh")
+    texts = t()
+    model_names = {
+        "rule": texts["rating_system"],
+        "lightgbm": "LightGBM",
+        "xgboost": "XGBoost",
+    }
+    model_label = model_names.get(model_type, model_type)
+
+    if model_type == "lightgbm" and not LGB_AVAILABLE:
+        st.error(texts["lightgbm_not_installed"])
+        return Top1FixedBacktestResult(
+            model_label=model_label,
+            start_date=start_date,
+            end_date=end_date,
+            stake_per_bet=stake_per_bet,
+            random_seed=random_seed,
+            use_date_as_seed=use_date_as_seed,
+            include_win_place=include_win_place,
+            include_double_trio=include_double_trio,
+            include_triple_trio=include_triple_trio,
+            include_six_up=include_six_up,
+        )
+    if model_type == "xgboost" and not XGB_AVAILABLE:
+        st.error(texts["xgboost_not_installed"])
+        return Top1FixedBacktestResult(
+            model_label=model_label,
+            start_date=start_date,
+            end_date=end_date,
+            stake_per_bet=stake_per_bet,
+            random_seed=random_seed,
+            use_date_as_seed=use_date_as_seed,
+            include_win_place=include_win_place,
+            include_double_trio=include_double_trio,
+            include_triple_trio=include_triple_trio,
+            include_six_up=include_six_up,
+        )
+
+    with st.spinner(texts["top1_backtest_running"].format(model=model_label)):
+        all_performances = get_performances_batch(start_date, end_date)
+    if not all_performances:
+        st.error(texts["no_data_fetched"])
+        return Top1FixedBacktestResult(
+            model_label=model_label,
+            start_date=start_date,
+            end_date=end_date,
+            stake_per_bet=stake_per_bet,
+            random_seed=random_seed,
+            use_date_as_seed=use_date_as_seed,
+            include_win_place=include_win_place,
+            include_double_trio=include_double_trio,
+            include_triple_trio=include_triple_trio,
+            include_six_up=include_six_up,
+        )
+
+    horse_cache = build_horse_performances_cache(all_performances)
+    races = get_races_from_performances(all_performances)
+    if not races:
+        st.warning(texts["no_races_found"])
+        return Top1FixedBacktestResult(
+            model_label=model_label,
+            start_date=start_date,
+            end_date=end_date,
+            stake_per_bet=stake_per_bet,
+            random_seed=random_seed,
+            use_date_as_seed=use_date_as_seed,
+            include_win_place=include_win_place,
+            include_double_trio=include_double_trio,
+            include_triple_trio=include_triple_trio,
+            include_six_up=include_six_up,
+        )
+
+    day_race_groups = _group_race_days(races)
+    sorted_day_keys = sorted(day_race_groups.keys())
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    day_counter = {"idx": 0}
+
+    weights_cfg = None
+    horse_birth_years = {}
+    if model_type == "rule":
+        from scoring_engine import get_scoring_config, load_horse_birth_years
+
+        config = get_scoring_config()
+        weights_cfg = {
+            "level1": config.get("level1", {}),
+            "basic": config.get("basic", {}),
+            "race": config.get("race", {}),
+            "odds": config.get("odds", {}),
+            "status": config.get("status", {}),
+        }
+        try:
+            horse_birth_years = load_horse_birth_years()
+        except Exception:
+            horse_birth_years = {}
+
+    model_cache: Dict[str, object] = {}
+    weight_hash = None
+    if model_type != "rule":
+        from scoring_engine import get_cached_model, get_current_weights_hash, set_cached_model
+
+        weight_hash = get_current_weights_hash()
+
+    def score_day_races(race_date: str, venue: str, day_races: List[Dict]) -> Dict[int, List[Dict]]:
+        day_counter["idx"] += 1
+        progress_msg = (
+            f"Top1 {model_label}: {race_date} {venue} "
+            f"({day_counter['idx']}/{len(sorted_day_keys)})"
+            if lang == "zh"
+            else f"Top1 {model_label}: {race_date} {venue} "
+            f"({day_counter['idx']}/{len(sorted_day_keys)})"
+        )
+        status_text.text(progress_msg)
+        progress_bar.progress(day_counter["idx"] / max(len(sorted_day_keys), 1))
+
+        _attach_runners_data_to_day_races(day_races, all_performances)
+        if model_type == "rule":
+            return _score_races_for_day_rule(day_races, horse_cache, horse_birth_years, weights_cfg)
+
+        train_X, train_y = prepare_training_data_by_date(race_date, all_performances, horse_cache)
+        if train_X is None or len(train_X) < 50:
+            return {}
+
+        cache_key = f"top1_{model_type}_{race_date}_{weight_hash}"
+        model = model_cache.get(race_date)
+        if model is None:
+            cached_model = get_cached_model(cache_key)
+            if cached_model is not None:
+                model = cached_model
+            else:
+                model = get_or_train_model(train_X, train_y, model_type, cache_key)
+                if model is not None:
+                    set_cached_model(cache_key, model)
+            model_cache[race_date] = model
+        if model is None:
+            return {}
+        return _score_races_for_day_ml(day_races, all_performances, model_type, model)
+
+    result = run_top1_fixed_backtest_core(
+        start_date=start_date,
+        end_date=end_date,
+        model_label=model_label,
+        stake_per_bet=stake_per_bet,
+        random_seed=random_seed,
+        use_date_as_seed=use_date_as_seed,
+        include_win_place=include_win_place,
+        include_double_trio=include_double_trio,
+        include_triple_trio=include_triple_trio,
+        include_six_up=include_six_up,
+        day_race_groups=day_race_groups,
+        score_day_races=score_day_races,
+        should_cancel=lambda: st.session_state.get("stop_backtest", False),
+    )
+
+    progress_bar.empty()
+    status_text.empty()
+    if result.cancelled:
+        st.warning(texts["backtest_cancelled"])
+    return result
+
+
+def _display_top1_fixed_backtest_results(result: Top1FixedBacktestResult) -> None:
+    if not result:
+        return
+    texts = t()
+    st.markdown(f"#### {texts['top1_summary_title']} · {result.model_label}")
+    st.caption(
+        f"{result.start_date} → {result.end_date} · "
+        f"{texts['top1_race_days']}: {result.race_days} · "
+        f"{texts['top1_stake_label']}: HK${result.stake_per_bet:.0f}"
+    )
+
+    pool_rows = []
+    pool_defs = [
+        ("WIN", result.win_stats, result.include_win_place),
+        ("PLA", result.place_stats, result.include_win_place),
+        ("DT", result.double_trio_stats, result.include_double_trio),
+        ("TT", result.triple_trio_stats, result.include_triple_trio),
+        ("SixUP", result.six_up_stats, result.include_six_up),
+    ]
+    for pool_code, stats, enabled in pool_defs:
+        if not enabled:
+            continue
+        pool_rows.append(
+            {
+                texts["top1_col_pool"]: _top1_pool_label(pool_code),
+                texts["metric_total_bets"]: stats.bets,
+                texts["metric_hit_bets"]: stats.hits,
+                texts["top1_hit_rate"]: f"{stats.hit_rate:.1f}%",
+                texts["metric_total_stake"]: f"HK${stats.stake:,.0f}",
+                texts["metric_total_return"]: f"HK${stats.return_amount:,.0f}",
+                "ROI": f"{stats.roi:+.1f}%",
+            }
+        )
+
+    if pool_rows:
+        st.dataframe(pd.DataFrame(pool_rows), use_container_width=True, hide_index=True)
+
+    detail_rows = []
+    for detail in result.details:
+        detail_rows.append(
+            {
+                texts["top1_col_pool"]: _top1_pool_label(detail.pool),
+                texts["top1_col_date"]: detail.race_date,
+                texts["top1_col_venue"]: detail.venue,
+                texts["top1_col_race"]: detail.race_label,
+                texts["top1_col_recommended"]: detail.recommended,
+                texts["top1_col_actual"]: detail.actual,
+                texts["top1_col_hit"]: "✅" if detail.hit else "❌",
+                texts["top1_col_stake"]: f"HK${detail.stake:.0f}",
+                texts["top1_col_return"]: f"HK${detail.return_amount:.0f}",
+                texts["top1_col_note"]: detail.note,
+            }
+        )
+
+    if detail_rows:
+        with st.expander(texts["top1_detail_title"], expanded=True):
+            st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True, height=420)
+    else:
+        st.info(texts["backtest_no_detail"])
+
+    if result.skipped_notes:
+        with st.expander(texts["top1_skipped"], expanded=False):
+            for note in result.skipped_notes:
+                st.caption(note)
+
+
 def render_backtest_page(show_title: bool = True):
     """回测页面：模型对比 + 单场回测 + 全天回测"""
     if show_title:
@@ -13146,6 +13518,113 @@ def render_backtest_page(show_title: bool = True):
                     _display_model_backtest_results(results)
     elif st.session_state.get("backtest_completed") and st.session_state.get("backtest_results"):
         _display_model_backtest_results(st.session_state.backtest_results)
+
+    st.markdown("---")
+    st.markdown(f"## {t()['top1_fixed_backtest']}")
+    st.caption(t()["top1_fixed_backtest_caption"])
+
+    if "top1_fixed_backtest_result" not in st.session_state:
+        st.session_state.top1_fixed_backtest_result = None
+
+    top1_model_options = [t()["rating_system"], "LightGBM"]
+    if XGB_AVAILABLE:
+        top1_model_options.append("XGBoost")
+    default_top1_model_idx = top1_model_options.index("LightGBM") if "LightGBM" in top1_model_options else 0
+
+    top1_c1, top1_c2, top1_c3, top1_c4 = st.columns(4)
+    with top1_c1:
+        top1_model_label = st.selectbox(
+            t()["ai_model"],
+            options=top1_model_options,
+            index=default_top1_model_idx,
+            key="top1_backtest_model",
+        )
+    with top1_c2:
+        top1_stake = st.number_input(
+            t()["top1_stake_label"],
+            min_value=10,
+            max_value=5000,
+            value=10,
+            step=10,
+            key="top1_backtest_stake",
+        )
+    with top1_c3:
+        top1_seed = st.text_input(
+            t()["top1_random_seed_label"],
+            value="7",
+            key="top1_backtest_seed",
+        )
+    with top1_c4:
+        top1_use_date_seed = st.checkbox(
+            t()["top1_use_date_seed"],
+            value=False,
+            key="top1_backtest_use_date_seed",
+        )
+
+    top1_chk1, top1_chk2, top1_chk3, top1_chk4 = st.columns(4)
+    with top1_chk1:
+        top1_include_win_place = st.checkbox(
+            t()["top1_include_win_place"],
+            value=True,
+            key="top1_include_win_place",
+        )
+    with top1_chk2:
+        top1_include_double_trio = st.checkbox(
+            t()["top1_include_double_trio"],
+            value=True,
+            key="top1_include_double_trio",
+        )
+    with top1_chk3:
+        top1_include_triple_trio = st.checkbox(
+            t()["top1_include_triple_trio"],
+            value=True,
+            key="top1_include_triple_trio",
+        )
+    with top1_chk4:
+        top1_include_six_up = st.checkbox(
+            t()["top1_include_six_up"],
+            value=True,
+            key="top1_include_six_up",
+        )
+
+    run_top1_backtest_btn = st.button(
+        t()["run_top1_fixed_backtest"],
+        type="primary",
+        use_container_width=True,
+        key="run_top1_fixed_backtest_btn",
+    )
+
+    if run_top1_backtest_btn:
+        if not require_trial(
+            f"top1_fixed_backtest:{backtest_start}:{backtest_end}:{top1_model_label}",
+            dedupe=False,
+        ):
+            pass
+        elif backtest_start > backtest_end:
+            st.error(t()["invalid_date_range"])
+        else:
+            top1_model_type = "rule"
+            if top1_model_label == "LightGBM":
+                top1_model_type = "lightgbm"
+            elif top1_model_label == "XGBoost":
+                top1_model_type = "xgboost"
+
+            top1_result = run_top1_fixed_strategy_backtest(
+                start_date=backtest_start.strftime("%Y-%m-%d"),
+                end_date=backtest_end.strftime("%Y-%m-%d"),
+                model_type=top1_model_type,
+                stake_per_bet=float(top1_stake),
+                random_seed=str(top1_seed).strip() or "7",
+                use_date_as_seed=top1_use_date_seed,
+                include_win_place=top1_include_win_place,
+                include_double_trio=top1_include_double_trio,
+                include_triple_trio=top1_include_triple_trio,
+                include_six_up=top1_include_six_up,
+            )
+            st.session_state.top1_fixed_backtest_result = top1_result
+            _display_top1_fixed_backtest_results(top1_result)
+    elif st.session_state.get("top1_fixed_backtest_result"):
+        _display_top1_fixed_backtest_results(st.session_state.top1_fixed_backtest_result)
 
     st.markdown("---")
     #-------------
