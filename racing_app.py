@@ -8097,15 +8097,37 @@ def _odds_analysis_heading(selected_race: Dict, selected_date: str) -> str:
     )
 
 
+def _format_collect_error_message(result: Dict) -> str:
+    reason = (result.get("reason") or result.get("error") or "").strip()
+    raw = result.get("rawMinutes")
+    raw_text = f"{raw:.0f}" if isinstance(raw, (int, float)) else ""
+
+    if reason == "outside_key_window":
+        return tx(
+            f"距開賽约 {raw_text} 分钟，尚未进入自动采集窗口（开赛前 98 分钟内）。"
+            "请点「立即採集」强制保存当前快照，或稍后再试。",
+            f"About {raw_text} min to post; auto-collect runs within 98 min of post time. "
+            "Use Collect now to force-save current odds, or try again later.",
+        )
+    if reason == "no_odds_data":
+        return tx("HKJC 尚未提供本场 WIN/PLA 赔率。", "HKJC WIN/PLA odds not available yet.")
+    if reason:
+        return reason
+    if result.get("error"):
+        return str(result["error"])
+    return tx("未知错误，请确认 Render API 已部署最新版本。", "Unknown error; ensure Render API is up to date.")
+
+
 def _run_odds_snapshot_collect(
     race_date: str,
     venue: str,
     race_no: int,
     *,
     show_success: bool = True,
+    force: bool = False,
 ) -> List[Dict]:
     """调用 Node API 采集 WIN/PLA 快照并刷新 odds_history 缓存。"""
-    collect_result = trigger_odds_collection_for_race(race_date, venue, int(race_no))
+    collect_result = trigger_odds_collection_for_race(race_date, venue, int(race_no), force=force)
     fetch_race_odds_history.clear()
     _query_odds_history_rows.clear()
     rows = fetch_race_odds_history(race_date, venue, int(race_no))
@@ -8122,11 +8144,10 @@ def _run_odds_snapshot_collect(
         elif rows:
             st.info(tx("已有赔率走勢数据（本次未新增快照）。", "Trend data loaded (no new snapshots this run)."))
     elif show_success and not collect_result.get("success"):
-        fail_reason = collect_result.get("error") or collect_result.get("reason") or "unknown"
         st.warning(
             tx(
-                f"採集未成功：{fail_reason}",
-                f"Collection failed: {fail_reason}",
+                f"採集未成功：{_format_collect_error_message(collect_result)}",
+                f"Collection failed: {_format_collect_error_message(collect_result)}",
             )
         )
     return rows
@@ -8175,7 +8196,7 @@ def _render_realtime_odds_analysis(
         use_container_width=True,
     ):
         with st.spinner(tx("正在採集賠率快照...", "Collecting odds snapshots...")):
-            rows = _run_odds_snapshot_collect(race_date, venue, race_no)
+            rows = _run_odds_snapshot_collect(race_date, venue, race_no, force=True)
         if rows:
             st.rerun()
 
@@ -9490,9 +9511,17 @@ def sync_all_future_via_api() -> bool:
         return False
 
 
-def trigger_odds_collection_for_race(race_date: str, venue: str, race_no: int) -> Dict:
+def trigger_odds_collection_for_race(race_date: str, venue: str, race_no: int, *, force: bool = False) -> Dict:
     """请求 Node.js 采集单场 WIN/PLA 赔率快照到 odds_history。"""
-    result = {"success": False, "saved": 0, "keyMinute": None, "error": ""}
+    result = {
+        "success": False,
+        "saved": 0,
+        "keyMinute": None,
+        "reason": "",
+        "skipped": False,
+        "rawMinutes": None,
+        "error": "",
+    }
     try:
         API_BASE_URL = st.secrets.get("HKJC_API_URL", "").rstrip("/")
         if not API_BASE_URL:
@@ -9500,7 +9529,12 @@ def trigger_odds_collection_for_race(race_date: str, venue: str, race_no: int) -
             return result
         response = requests.post(
             f"{API_BASE_URL}/collect/race",
-            json={"date": race_date, "venue": venue, "raceNo": int(race_no)},
+            json={
+                "date": race_date,
+                "venue": venue,
+                "raceNo": int(race_no),
+                "force": force,
+            },
             timeout=120,
         )
         payload = response.json() if response.content else {}
@@ -9508,7 +9542,11 @@ def trigger_odds_collection_for_race(race_date: str, venue: str, race_no: int) -
             "success": response.status_code == 200 and bool(payload.get("success")),
             "saved": payload.get("saved", 0),
             "keyMinute": payload.get("keyMinute"),
-            "error": payload.get("error") or ("" if response.status_code == 200 else response.text[:200]),
+            "reason": payload.get("reason") or "",
+            "skipped": payload.get("skipped", False),
+            "rawMinutes": payload.get("rawMinutes"),
+            "error": payload.get("error")
+            or ("" if response.status_code == 200 else response.text[:200]),
         })
     except Exception as exc:
         result["error"] = str(exc)

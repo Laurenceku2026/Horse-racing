@@ -138,20 +138,27 @@ function snapToKeyMinute(rawMinutes) {
     return bestDiff <= SNAP_TOLERANCE ? best : null;
 }
 
+function resolveSnapshotMinute(minutesToStart, strictKeyWindow = false) {
+    if (minutesToStart > MAX_COLLECT_MINUTES || minutesToStart < MIN_COLLECT_MINUTES) {
+        if (!strictKeyWindow && minutesToStart > 0) {
+            return Math.max(0, Math.round(minutesToStart));
+        }
+        return null;
+    }
+    let keyMinute = snapToKeyMinute(minutesToStart);
+    if (keyMinute === null && !strictKeyWindow) {
+        keyMinute = Math.min(90, Math.max(0, Math.round(minutesToStart)));
+    }
+    return keyMinute;
+}
+
 function resolveKeyMinuteForSnapshot(postTimeIso) {
     if (!postTimeIso) {
         return null;
     }
     const postTime = new Date(postTimeIso);
     const minutesToStart = (postTime - new Date()) / 1000 / 60;
-    if (minutesToStart > MAX_COLLECT_MINUTES || minutesToStart < MIN_COLLECT_MINUTES) {
-        return null;
-    }
-    let keyMinute = snapToKeyMinute(minutesToStart);
-    if (keyMinute === null) {
-        keyMinute = Math.min(90, Math.max(0, Math.round(minutesToStart)));
-    }
-    return keyMinute;
+    return resolveSnapshotMinute(minutesToStart, false);
 }
 
 async function saveParsedOddsSnapshots(raceCtx, parsed, runners, keyMinute) {
@@ -325,8 +332,9 @@ async function getRacesNeedingOdds() {
     }
 }
 
-async function collectOddsForRace(race) {
-    const keyMinute = snapToKeyMinute(race.minutesToStart);
+async function collectOddsForRace(race, options = {}) {
+    const strictKeyWindow = options.strictKeyWindow !== false && !options.force;
+    const keyMinute = resolveSnapshotMinute(race.minutesToStart, strictKeyWindow);
     if (keyMinute === null) {
         console.log(
             `[跳过] 非关键窗口: ${race.date} ${race.venue} R${race.raceNo} raw=${race.minutesToStart.toFixed(1)}min`
@@ -503,7 +511,7 @@ async function runAutoOddsCollection(source = 'auto') {
             rowsSaved += finalRes.saved || 0;
             rowsSkipped += finalRes.skipped || 0;
         }
-        const result = await collectOddsForRace(race);
+        const result = await collectOddsForRace(race, { strictKeyWindow: true });
         details.push(result);
         if (result.skipped && !result.success) {
             racesSkipped += 1;
@@ -959,7 +967,7 @@ app.post('/api/collect/race', async (req, res) => {
             await updateFinalOdds(race);
         }
 
-        const result = await collectOddsForRace(race);
+        const result = await collectOddsForRace(race, { force: Boolean(req.body.force) });
         res.json({ success: Boolean(result.success), ...result });
     } catch (error) {
         console.error('单场赔率采集失败:', error);
