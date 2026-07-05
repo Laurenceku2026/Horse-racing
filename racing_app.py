@@ -157,6 +157,7 @@ ADMIN_USERNAME = "Laurence_ku"
 ADMIN_PASSWORD = "Ku_product$2026"
 ADMIN_EMAIL = "Techlife2027@gmail.com"
 SCHEMA_NAME = "racing"  # 独立schema名称
+SMART_BETTING_ML_TRAINING_WINDOW_DAYS = 730
 
 # 默认评分权重
 DEFAULT_WEIGHTS = {
@@ -436,7 +437,7 @@ TEXTS = {
         "rank_calib_col_actual": "实际前4",
         "rank_calib_race_label": "第{race_no}场",
         "rank_calib_train_window_label": "训练窗口（天）",
-        "rank_calib_train_window_help": "ML 训练仅使用每场赛日前 N 天的历史赛事；0 = 不限（使用已拉取的全部历史）。300 与智能投注 App 一致。",
+        "rank_calib_train_window_help": "ML 训练仅使用每场赛日前 N 天的历史赛事；0 = 不限（使用已拉取的全部历史）。730 与智能投注 App 一致。",
         "rank_calib_train_window_summary": "训练窗口 {days} 天",
         "rank_calib_train_window_unlimited": "训练窗口：不限",
         
@@ -963,7 +964,7 @@ Let AI be your racing assistant.
         "rank_calib_col_actual": "Actual top 4",
         "rank_calib_race_label": "Race {race_no}",
         "rank_calib_train_window_label": "Training window (days)",
-        "rank_calib_train_window_help": "ML training uses only races within N days before each race day; 0 = unlimited (all fetched history). 300 matches the Smart Betting app.",
+        "rank_calib_train_window_help": "ML training uses only races within N days before each race day; 0 = unlimited (all fetched history). 730 matches the Smart Betting app.",
         "rank_calib_train_window_summary": "Training window {days} days",
         "rank_calib_train_window_unlimited": "Training window: unlimited",
         
@@ -7904,7 +7905,7 @@ def train_model_for_smart_betting(model_type: str, start_date: str = None, end_d
     # 确定日期范围
     if start_date is None or end_date is None:
         end_date_dt = datetime.now()
-        start_date_dt = end_date_dt - timedelta(days=300)
+        start_date_dt = end_date_dt - timedelta(days=SMART_BETTING_ML_TRAINING_WINDOW_DAYS)
         start_date = start_date_dt.strftime("%Y-%m-%d")
         end_date = end_date_dt.strftime("%Y-%m-%d")
     
@@ -7964,11 +7965,11 @@ def _get_smart_betting_training_window(prediction_cutoff_date: Optional[str] = N
     """
     if prediction_cutoff_date:
         cutoff_dt = datetime.strptime(prediction_cutoff_date, "%Y-%m-%d")
-        start_dt = cutoff_dt - timedelta(days=300)
+        start_dt = cutoff_dt - timedelta(days=SMART_BETTING_ML_TRAINING_WINDOW_DAYS)
         return start_dt.strftime("%Y-%m-%d"), prediction_cutoff_date
 
     end_dt = datetime.now()
-    start_dt = end_dt - timedelta(days=300)
+    start_dt = end_dt - timedelta(days=SMART_BETTING_ML_TRAINING_WINDOW_DAYS)
     return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
 
 
@@ -13929,7 +13930,7 @@ def render_rank_calibration_backtest_section() -> None:
             texts["rank_calib_train_window_label"],
             min_value=0,
             max_value=2000,
-            value=300,
+            value=730,
             step=1,
             key="admin_rank_calib_train_window",
             help=texts["rank_calib_train_window_help"],
