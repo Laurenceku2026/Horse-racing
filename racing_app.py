@@ -189,6 +189,8 @@ TEXTS = {
         "email_exists": "該電郵已註冊，請直接登入",
         "not_registered_for_racing": "該電郵未註冊賽馬App，請先註冊",
         "forgot_password": "忘記密碼？",
+        "remember_me": "记住我（7 天内免登录）",
+        "remember_me_restoring": "正在恢复登录…",
         "pool_single_title": "**單場彩池**",
         "pool_win": "獨贏",
         "pool_place": "位置",
@@ -671,6 +673,8 @@ TEXTS = {
         "email_exists": "Email already registered. Please login.",
         "not_registered_for_racing": "This email is not registered for Racing App. Please sign up first.",
         "forgot_password": "Forgot Password?",
+        "remember_me": "Remember me (stay signed in for 7 days)",
+        "remember_me_restoring": "Restoring your session…",
         "pool_single_title": "**Single Race Pools**",
         "pool_win": "Win",
         "pool_place": "Place",
@@ -1618,6 +1622,7 @@ def init_session_state():
         "access_token": None,
         "refresh_token": None,
         "token_expiry": 0,
+        "remember_me_active": False,
         "admin_mode": False,
         "show_admin_login": False,
         "show_register": False,
@@ -1728,6 +1733,176 @@ def supabase_request(method: str, table: str, data=None, params=None, access_tok
     return response
 
 # ==================== 用户认证函数 ====================
+REMEMBER_ME_DAYS = 7
+AUTH_STORAGE_KEY = "racing_app_auth_v1"
+
+
+def persist_remember_me_auth(
+    refresh_token: str,
+    user_id: str,
+    user_email: str,
+) -> None:
+    """将 refresh_token 写入浏览器 localStorage（7 天有效）。"""
+    if not refresh_token or not user_id:
+        return
+    import streamlit.components.v1 as components
+
+    expires_at = int((time.time() + REMEMBER_ME_DAYS * 86400) * 1000)
+    payload = {
+        "refresh_token": refresh_token,
+        "user_id": user_id,
+        "user_email": user_email or "",
+        "expires_at": expires_at,
+    }
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            try {{
+                localStorage.setItem({json.dumps(AUTH_STORAGE_KEY)}, {json.dumps(payload)});
+            }} catch (e) {{
+                console.error("remember me save failed", e);
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def clear_persisted_remember_me_auth() -> None:
+    """清除浏览器 localStorage 中的记住我凭证。"""
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        try {{
+            localStorage.removeItem({json.dumps(AUTH_STORAGE_KEY)});
+        }} catch (e) {{
+            console.error("remember me clear failed", e);
+        }}
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _inject_remember_me_restore_js() -> None:
+    """未登录时读取 localStorage，通过一次性 URL 参数把 refresh_token 交给 Python。"""
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            try {{
+                const key = {json.dumps(AUTH_STORAGE_KEY)};
+                const raw = localStorage.getItem(key);
+                if (!raw) return;
+                const auth = JSON.parse(raw);
+                if (!auth || !auth.refresh_token || !auth.expires_at) {{
+                    localStorage.removeItem(key);
+                    return;
+                }}
+                if (auth.expires_at <= Date.now()) {{
+                    localStorage.removeItem(key);
+                    return;
+                }}
+                const url = new URL(window.parent.location.href);
+                if (url.searchParams.get("remember_restore") === "1") return;
+                url.searchParams.set("remember_restore", "1");
+                url.searchParams.set("rt", auth.refresh_token);
+                url.searchParams.set("uid", auth.user_id || "");
+                url.searchParams.set("email", auth.user_email || "");
+                window.parent.location.replace(url.toString());
+            }} catch (e) {{
+                console.error("remember me restore failed", e);
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def restore_session_with_refresh_token(
+    refresh_token: str,
+    user_id: str,
+    user_email: str,
+) -> bool:
+    """用 refresh_token 恢复 Supabase 会话。"""
+    if not refresh_token:
+        return False
+    st.session_state.refresh_token = refresh_token
+    st.session_state.user_id = user_id or None
+    st.session_state.user_email = user_email or None
+    new_token = refresh_auth_token()
+    if not new_token:
+        return False
+    st.session_state.authenticated = True
+    st.session_state.remember_me_active = True
+    persist_remember_me_auth(
+        st.session_state.refresh_token,
+        st.session_state.user_id,
+        st.session_state.user_email,
+    )
+    return True
+
+
+def try_restore_remember_me_login() -> None:
+    """启动时尝试从「记住我」恢复登录（仅处理一次）。"""
+    if st.session_state.get("authenticated"):
+        return
+    if st.session_state.get("_remember_me_restore_done"):
+        return
+
+    qp = st.query_params
+    if qp.get("remember_restore") == "1" and qp.get("rt"):
+        refresh_token = qp.get("rt")
+        user_id = qp.get("uid") or ""
+        user_email = qp.get("email") or ""
+        for key in ("remember_restore", "rt", "uid", "email"):
+            if key in qp:
+                del qp[key]
+        st.session_state._remember_me_restore_done = True
+        if restore_session_with_refresh_token(refresh_token, user_id, user_email):
+            st.rerun()
+        else:
+            clear_persisted_remember_me_auth()
+            st.warning(t()["session_expired"])
+        return
+
+    if not st.session_state.get("_remember_me_js_triggered"):
+        st.session_state._remember_me_js_triggered = True
+        _inject_remember_me_restore_js()
+
+
+def ensure_valid_access_token() -> None:
+    """access_token 将过期时主动刷新；失败则登出。"""
+    if not st.session_state.get("authenticated"):
+        return
+    expiry = float(st.session_state.get("token_expiry") or 0)
+    if time.time() < expiry - 300:
+        return
+    if refresh_auth_token():
+        if st.session_state.get("remember_me_active"):
+            persist_remember_me_auth(
+                st.session_state.refresh_token,
+                st.session_state.user_id,
+                st.session_state.user_email,
+            )
+        return
+    st.session_state.authenticated = False
+    st.session_state.user_id = None
+    st.session_state.user_email = None
+    st.session_state.access_token = None
+    st.session_state.refresh_token = None
+    st.session_state.token_expiry = 0
+    st.session_state.remember_me_active = False
+    clear_persisted_remember_me_auth()
+
+
 def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
     """用户注册 - 创建Auth用户 + racing.user_settings记录"""
     try:
@@ -1892,7 +2067,9 @@ def sign_out():
     st.session_state.access_token = None
     st.session_state.refresh_token = None
     st.session_state.token_expiry = 0
+    st.session_state.remember_me_active = False
     st.session_state.admin_mode = False
+    clear_persisted_remember_me_auth()
     st.rerun()
 #--------
 def refresh_auth_token() -> Optional[str]:
@@ -2030,6 +2207,9 @@ def update_user_profile(user_id: str, data: Dict) -> bool:
                 # 清除失效的认证状态
                 st.session_state.authenticated = False
                 st.session_state.access_token = None
+                st.session_state.refresh_token = None
+                st.session_state.remember_me_active = False
+                clear_persisted_remember_me_auth()
                 st.warning(t()["session_expired"])
                 return False
         
@@ -2626,6 +2806,7 @@ def render_login_form():
         with st.form("login_form", border=True):
             email = st.text_input(t()["email"], key="login_email")
             password = st.text_input(t()["password"], type="password", key="login_password")
+            remember_me = st.checkbox(t()["remember_me"], value=True, key="login_remember_me")
             submitted = st.form_submit_button(t()["login_btn"], type="primary", use_container_width=True)
             
             if submitted:
@@ -2641,7 +2822,12 @@ def render_login_form():
                             st.session_state.access_token = access_token
                             st.session_state.refresh_token = refresh_token
                             st.session_state.token_expiry = time.time() + 3600
+                            st.session_state.remember_me_active = bool(remember_me)
                             st.session_state.show_paywall = False
+                            if remember_me:
+                                persist_remember_me_auth(refresh_token, user_id, user_email)
+                            else:
+                                clear_persisted_remember_me_auth()
                             st.rerun()
                         else:
                             st.error(msg)
@@ -13801,6 +13987,9 @@ def main():
     """主函数"""
     # 处理支付回调
     handle_stripe_callback()
+
+    try_restore_remember_me_login()
+    ensure_valid_access_token()
     
     # 渲染侧边栏和顶部按钮
     render_sidebar()
