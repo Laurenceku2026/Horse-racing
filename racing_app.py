@@ -435,6 +435,10 @@ TEXTS = {
         "rank_calib_col_odds": "赔率",
         "rank_calib_col_actual": "实际前4",
         "rank_calib_race_label": "第{race_no}场",
+        "rank_calib_train_window_label": "训练窗口（天）",
+        "rank_calib_train_window_help": "ML 训练仅使用每场赛日前 N 天的历史赛事；0 = 不限（使用已拉取的全部历史）。300 与智能投注 App 一致。",
+        "rank_calib_train_window_summary": "训练窗口 {days} 天",
+        "rank_calib_train_window_unlimited": "训练窗口：不限",
         
         # ==================== 消息提示 ====================
         "upgrade_pro": "💎 升級專業版",
@@ -958,6 +962,10 @@ Let AI be your racing assistant.
         "rank_calib_col_odds": "Odds",
         "rank_calib_col_actual": "Actual top 4",
         "rank_calib_race_label": "Race {race_no}",
+        "rank_calib_train_window_label": "Training window (days)",
+        "rank_calib_train_window_help": "ML training uses only races within N days before each race day; 0 = unlimited (all fetched history). 300 matches the Smart Betting app.",
+        "rank_calib_train_window_summary": "Training window {days} days",
+        "rank_calib_train_window_unlimited": "Training window: unlimited",
         
         # ==================== Messages ====================
         "upgrade_pro": "💎 Upgrade to Pro",
@@ -13321,6 +13329,25 @@ def _get_backtest_performances_with_lookback(
     return get_performances_batch(train_start, end_date)
 
 
+def _performances_for_ml_training_window(
+    all_performances: List[Dict],
+    cutoff_date: str,
+    training_window_days: int = 0,
+) -> List[Dict]:
+    """按训练窗口截取 cutoff 之前的往绩；0 表示不限。"""
+    if not training_window_days or training_window_days <= 0:
+        return all_performances
+    try:
+        cutoff_dt = datetime.strptime(cutoff_date, "%Y-%m-%d")
+        min_date = (cutoff_dt - timedelta(days=training_window_days)).strftime("%Y-%m-%d")
+    except ValueError:
+        return all_performances
+    return [
+        p for p in all_performances
+        if min_date <= p.get("race_date", "") < cutoff_date
+    ]
+
+
 def _build_race_performance_index(
     all_performances: List[Dict],
 ) -> Dict[Tuple[str, str, int], List[Dict]]:
@@ -13658,6 +13685,7 @@ def run_rank_calibration_backtest(
     end_date: str,
     model_type: str = "lightgbm",
     fast_mode: bool = True,
+    training_window_days: int = 0,
 ) -> RankCalibrationResult:
     texts = t()
     model_names = {
@@ -13666,10 +13694,12 @@ def run_rank_calibration_backtest(
         "xgboost": "XGBoost",
     }
     model_label = model_names.get(model_type, model_type)
+    training_window_days = max(0, int(training_window_days or 0))
     result = RankCalibrationResult(
         model_label=model_label,
         start_date=start_date,
         end_date=end_date,
+        training_window_days=training_window_days,
     )
 
     if model_type == "lightgbm" and not LGB_AVAILABLE:
@@ -13679,8 +13709,11 @@ def run_rank_calibration_backtest(
         st.error(texts["xgboost_not_installed"])
         return result
 
+    fetch_lookback = max(730, training_window_days) if training_window_days > 0 else 730
     with st.spinner(texts["rank_calib_running"].format(model=model_label)):
-        all_performances = _get_backtest_performances_with_lookback(start_date, end_date)
+        all_performances = _get_backtest_performances_with_lookback(
+            start_date, end_date, lookback_days=fetch_lookback
+        )
     if not all_performances:
         st.error(texts["no_data_fetched"])
         return result
@@ -13751,12 +13784,16 @@ def run_rank_calibration_backtest(
             train_key = race_date[:7] if fast_mode else race_date
             model = model_cache.get(train_key)
             if model is None:
+                train_performances = _performances_for_ml_training_window(
+                    all_performances, race_date, training_window_days
+                )
                 train_X, train_y = prepare_training_data_by_date(
-                    race_date, all_performances, horse_cache
+                    race_date, train_performances, horse_cache
                 )
                 if train_X is None or len(train_X) < 50:
                     continue
-                cache_key = f"rank_calib_{model_type}_{train_key}_{weight_hash}"
+                window_tag = training_window_days if training_window_days > 0 else "all"
+                cache_key = f"rank_calib_{model_type}_{train_key}_w{window_tag}_{weight_hash}"
                 cached_model = get_cached_model(cache_key)
                 if cached_model is not None:
                     model = cached_model
@@ -13806,8 +13843,13 @@ def _display_rank_calibration_results(result: RankCalibrationResult) -> None:
         return
     texts = t()
     st.markdown(f"#### {texts['rank_calib_title']} · {result.model_label}")
+    window_note = (
+        texts["rank_calib_train_window_summary"].format(days=result.training_window_days)
+        if result.training_window_days > 0
+        else texts["rank_calib_train_window_unlimited"]
+    )
     st.caption(
-        f"{result.start_date} → {result.end_date} · {texts['rank_calib_caption']}"
+        f"{result.start_date} → {result.end_date} · {window_note} · {texts['rank_calib_caption']}"
     )
 
     if result.race_count == 0:
@@ -13854,7 +13896,7 @@ def render_rank_calibration_backtest_section() -> None:
     if "admin_rank_calibration_result" not in st.session_state:
         st.session_state.admin_rank_calibration_result = None
 
-    rc_date1, rc_date2, rc_model_col, rc_fast_col = st.columns(4)
+    rc_date1, rc_date2, rc_model_col, rc_window_col = st.columns(4)
     with rc_date1:
         rank_calib_start = st.date_input(
             texts["start_date"],
@@ -13882,13 +13924,23 @@ def render_rank_calibration_backtest_section() -> None:
             index=rank_calib_model_idx,
             key="admin_rank_calib_model",
         )
-    with rc_fast_col:
-        rank_calib_fast_mode = st.checkbox(
-            texts["fast_mode_label"],
-            value=True,
-            key="admin_rank_calib_fast_mode",
-            help=texts["fast_mode_help"],
+    with rc_window_col:
+        rank_calib_train_window = st.number_input(
+            texts["rank_calib_train_window_label"],
+            min_value=0,
+            max_value=2000,
+            value=300,
+            step=1,
+            key="admin_rank_calib_train_window",
+            help=texts["rank_calib_train_window_help"],
         )
+
+    rank_calib_fast_mode = st.checkbox(
+        texts["fast_mode_label"],
+        value=True,
+        key="admin_rank_calib_fast_mode",
+        help=texts["fast_mode_help"],
+    )
 
     run_rank_calib_btn = st.button(
         texts["run_rank_calib"],
@@ -13911,6 +13963,7 @@ def render_rank_calibration_backtest_section() -> None:
                 end_date=rank_calib_end.strftime("%Y-%m-%d"),
                 model_type=rc_model_type,
                 fast_mode=rank_calib_fast_mode,
+                training_window_days=int(rank_calib_train_window),
             )
             st.session_state.admin_rank_calibration_result = rc_result
             _display_rank_calibration_results(rc_result)

@@ -39,6 +39,7 @@ class RankCalibrationResult:
     model_label: str
     start_date: str
     end_date: str
+    training_window_days: int = 0
     race_count: int = 0
     top1_in_top3_count: int = 0
     top1_in_top3_rate: float = 0.0
