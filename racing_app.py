@@ -22,6 +22,13 @@ from bs4 import BeautifulSoup
 from betting_strategy_engine import BettingStrategyEngine, get_odds_qin_from_db, get_odds_tri_from_db, get_odds_tce_from_db
 from parlay_recommender import ParlayRecommender, describe_parlay_type, format_parlay_display
 from top1_fixed_backtest_engine import run_top1_fixed_backtest_core, Top1FixedBacktestResult
+from rank_calibration_backtest import (
+    RankCalibrationResult,
+    RankCalibrationRace,
+    build_rank_calibration_race,
+    render_rank_calibration_html,
+    summarize_rank_calibration,
+)
 # ==================== 从 scoring_engine 导入 ====================
 SCORING_ENGINE_OK = False
 try:
@@ -411,6 +418,23 @@ TEXTS = {
         "top1_hit_rate": "命中率",
         "top1_race_days": "赛日数",
         "top1_skipped": "跳过说明",
+
+        "rank_calib_title": "📊 AI 排名校准表",
+        "rank_calib_caption": "每场按模型胜率排序列出全部出马；黄色=实际跑进前4；右侧实际前4列中，若 AI 第1名跑进实际前三则标深黄",
+        "run_rank_calib": "▶️ 生成排名校准表",
+        "rank_calib_running": "正在生成排名校准表 ({model})...",
+        "rank_calib_top1_top3": "AI 第1名进前三",
+        "rank_calib_ai_top4_cover": "AI 前4 覆盖实际前4",
+        "rank_calib_race_count": "场次数",
+        "rank_calib_legend_top4": "跑进实际前4",
+        "rank_calib_legend_top1": "AI第1进实际前三",
+        "rank_calib_col_rank": "序号",
+        "rank_calib_col_horse_no": "马号",
+        "rank_calib_col_horse_name": "马名",
+        "rank_calib_col_win_prob": "胜率",
+        "rank_calib_col_odds": "赔率",
+        "rank_calib_col_actual": "实际前4",
+        "rank_calib_race_label": "第{race_no}场",
         
         # ==================== 消息提示 ====================
         "upgrade_pro": "💎 升級專業版",
@@ -917,6 +941,23 @@ Let AI be your racing assistant.
         "top1_hit_rate": "Hit rate",
         "top1_race_days": "Race days",
         "top1_skipped": "Skipped",
+
+        "rank_calib_title": "📊 AI Rank Calibration Table",
+        "rank_calib_caption": "All runners ranked by model win probability; yellow = finished top 4; dark yellow in actual column = AI #1 in actual top 3",
+        "run_rank_calib": "▶️ Generate rank calibration table",
+        "rank_calib_running": "Building rank calibration table ({model})...",
+        "rank_calib_top1_top3": "AI #1 in actual top 3",
+        "rank_calib_ai_top4_cover": "AI top 4 covers actual top 4",
+        "rank_calib_race_count": "Races",
+        "rank_calib_legend_top4": "Finished top 4",
+        "rank_calib_legend_top1": "AI #1 in actual top 3",
+        "rank_calib_col_rank": "#",
+        "rank_calib_col_horse_no": "No.",
+        "rank_calib_col_horse_name": "Horse",
+        "rank_calib_col_win_prob": "Win %",
+        "rank_calib_col_odds": "Odds",
+        "rank_calib_col_actual": "Actual top 4",
+        "rank_calib_race_label": "Race {race_no}",
         
         # ==================== Messages ====================
         "upgrade_pro": "💎 Upgrade to Pro",
@@ -4041,6 +4082,8 @@ def render_admin_backtest():
                     
                     st.markdown("---")
                     st.caption("📌 回測結果基於歷史數據，不構成投資建議")
+
+    render_rank_calibration_backtest_section()
 # ==================== 管理员：赔率采集监控 ====================
 ODDS_KEY_MINUTES_ADMIN = [
     90, 80, 70, 60, 50, 45, 40, 35, 30, 27, 24, 21,
@@ -13608,6 +13651,271 @@ def _display_top1_fixed_backtest_results(result: Top1FixedBacktestResult) -> Non
         with st.expander(texts["top1_skipped"], expanded=False):
             for note in result.skipped_notes:
                 st.caption(note)
+
+
+def run_rank_calibration_backtest(
+    start_date: str,
+    end_date: str,
+    model_type: str = "lightgbm",
+    fast_mode: bool = True,
+) -> RankCalibrationResult:
+    texts = t()
+    model_names = {
+        "rule": texts["rating_system"],
+        "lightgbm": "LightGBM",
+        "xgboost": "XGBoost",
+    }
+    model_label = model_names.get(model_type, model_type)
+    result = RankCalibrationResult(
+        model_label=model_label,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if model_type == "lightgbm" and not LGB_AVAILABLE:
+        st.error(texts["lightgbm_not_installed"])
+        return result
+    if model_type == "xgboost" and not XGB_AVAILABLE:
+        st.error(texts["xgboost_not_installed"])
+        return result
+
+    with st.spinner(texts["rank_calib_running"].format(model=model_label)):
+        all_performances = _get_backtest_performances_with_lookback(start_date, end_date)
+    if not all_performances:
+        st.error(texts["no_data_fetched"])
+        return result
+
+    horse_cache = build_horse_performances_cache(all_performances)
+    perf_index = _build_race_performance_index(all_performances)
+    all_races = get_races_from_performances(all_performances)
+    backtest_races = [
+        race for race in all_races if start_date <= race["race_date"] <= end_date
+    ]
+    if not backtest_races:
+        st.warning(texts["no_races_found"])
+        return result
+
+    backtest_races.sort(key=lambda r: (r["race_date"], r.get("venue", "ST"), r["race_no"]))
+    day_race_groups = _group_race_days(backtest_races)
+    sorted_day_keys = sorted(day_race_groups.keys())
+
+    weights_cfg = None
+    horse_birth_years = {}
+    if model_type == "rule":
+        from scoring_engine import get_scoring_config, load_horse_birth_years
+
+        config = get_scoring_config()
+        weights_cfg = {
+            "level1": config.get("level1", {}),
+            "basic": config.get("basic", {}),
+            "race": config.get("race", {}),
+            "odds": config.get("odds", {}),
+            "status": config.get("status", {}),
+        }
+        try:
+            horse_birth_years = load_horse_birth_years()
+        except Exception:
+            horse_birth_years = {}
+
+    model_cache: Dict[str, object] = {}
+    weight_hash = None
+    if model_type != "rule":
+        from scoring_engine import get_cached_model, get_current_weights_hash, set_cached_model
+
+        weight_hash = get_current_weights_hash()
+
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    calibration_races: List[RankCalibrationRace] = []
+
+    for idx, (race_date, venue) in enumerate(sorted_day_keys):
+        if st.session_state.get("stop_backtest", False):
+            result.cancelled = True
+            st.warning(texts["backtest_cancelled"])
+            break
+
+        status_text.text(
+            f"{texts['rank_calib_title']} {model_label}: {race_date} {venue} "
+            f"({idx + 1}/{len(sorted_day_keys)})"
+        )
+        progress_bar.progress((idx + 1) / max(len(sorted_day_keys), 1))
+
+        day_races = day_race_groups[(race_date, venue)]
+        _attach_runners_data_to_day_races(day_races, perf_index)
+
+        if model_type == "rule":
+            scored_by_race = _score_races_for_day_rule(
+                day_races, horse_cache, horse_birth_years, weights_cfg
+            )
+        else:
+            train_key = race_date[:7] if fast_mode else race_date
+            model = model_cache.get(train_key)
+            if model is None:
+                train_X, train_y = prepare_training_data_by_date(
+                    race_date, all_performances, horse_cache
+                )
+                if train_X is None or len(train_X) < 50:
+                    continue
+                cache_key = f"rank_calib_{model_type}_{train_key}_{weight_hash}"
+                cached_model = get_cached_model(cache_key)
+                if cached_model is not None:
+                    model = cached_model
+                else:
+                    model = get_or_train_model(train_X, train_y, model_type, cache_key)
+                    if model is not None:
+                        set_cached_model(cache_key, model)
+                model_cache[train_key] = model
+            if model is None:
+                continue
+            scored_by_race = _score_races_for_day_ml(
+                day_races, all_performances, model_type, model, horse_cache=horse_cache
+            )
+
+        for race in sorted(day_races, key=lambda r: r["race_no"]):
+            race_no = race["race_no"]
+            scored = scored_by_race.get(race_no)
+            runners_data = race.get("_runners_data") or []
+            if not scored or not runners_data:
+                continue
+            table = build_rank_calibration_race(
+                race_date,
+                venue,
+                race_no,
+                scored,
+                runners_data,
+                name_resolver=resolve_horse_name,
+            )
+            if table:
+                calibration_races.append(table)
+
+    progress_bar.empty()
+    status_text.empty()
+
+    summary = summarize_rank_calibration(calibration_races)
+    result.races = calibration_races
+    result.race_count = int(summary["race_count"])
+    result.top1_in_top3_count = int(summary["top1_in_top3_count"])
+    result.top1_in_top3_rate = float(summary["top1_in_top3_rate"])
+    result.ai_top4_cover_count = int(summary["ai_top4_cover_count"])
+    result.ai_top4_cover_rate = float(summary["ai_top4_cover_rate"])
+    return result
+
+
+def _display_rank_calibration_results(result: RankCalibrationResult) -> None:
+    if not result:
+        return
+    texts = t()
+    st.markdown(f"#### {texts['rank_calib_title']} · {result.model_label}")
+    st.caption(
+        f"{result.start_date} → {result.end_date} · {texts['rank_calib_caption']}"
+    )
+
+    if result.race_count == 0:
+        st.info(texts["backtest_no_detail"])
+        return
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric(texts["rank_calib_race_count"], result.race_count)
+    with c2:
+        st.metric(
+            texts["rank_calib_top1_top3"],
+            f"{result.top1_in_top3_count}/{result.race_count} ({result.top1_in_top3_rate:.1f}%)",
+        )
+    with c3:
+        st.metric(
+            texts["rank_calib_ai_top4_cover"],
+            f"{result.ai_top4_cover_count}/{result.race_count} ({result.ai_top4_cover_rate:.1f}%)",
+        )
+
+    labels = {
+        "legend_top4": texts["rank_calib_legend_top4"],
+        "legend_top1": texts["rank_calib_legend_top1"],
+        "race_label": texts["rank_calib_race_label"],
+        "col_rank": texts["rank_calib_col_rank"],
+        "col_horse_no": texts["rank_calib_col_horse_no"],
+        "col_horse_name": texts["rank_calib_col_horse_name"],
+        "col_win_prob": texts["rank_calib_col_win_prob"],
+        "col_odds": texts["rank_calib_col_odds"],
+        "col_actual_top4": texts["rank_calib_col_actual"],
+    }
+    import streamlit.components.v1 as components
+
+    components.html(render_rank_calibration_html(result, labels), height=720, scrolling=True)
+
+
+def render_rank_calibration_backtest_section() -> None:
+    """管理员专用：AI 排名校准表回测。"""
+    texts = t()
+    st.markdown("---")
+    st.markdown(f"## {texts['rank_calib_title']}")
+    st.caption(texts["rank_calib_caption"])
+
+    if "admin_rank_calibration_result" not in st.session_state:
+        st.session_state.admin_rank_calibration_result = None
+
+    rc_date1, rc_date2, rc_model_col, rc_fast_col = st.columns(4)
+    with rc_date1:
+        rank_calib_start = st.date_input(
+            texts["start_date"],
+            value=datetime.now() - timedelta(days=14),
+            key="admin_rank_calib_start",
+        )
+    with rc_date2:
+        rank_calib_end = st.date_input(
+            texts["end_date"],
+            value=datetime.now(),
+            key="admin_rank_calib_end",
+        )
+    with rc_model_col:
+        rank_calib_model_options = [texts["rating_system"], "LightGBM"]
+        if XGB_AVAILABLE:
+            rank_calib_model_options.append("XGBoost")
+        rank_calib_model_idx = (
+            rank_calib_model_options.index("LightGBM")
+            if "LightGBM" in rank_calib_model_options
+            else 0
+        )
+        rank_calib_model_label = st.selectbox(
+            texts["ai_model"],
+            options=rank_calib_model_options,
+            index=rank_calib_model_idx,
+            key="admin_rank_calib_model",
+        )
+    with rc_fast_col:
+        rank_calib_fast_mode = st.checkbox(
+            texts["fast_mode_label"],
+            value=True,
+            key="admin_rank_calib_fast_mode",
+            help=texts["fast_mode_help"],
+        )
+
+    run_rank_calib_btn = st.button(
+        texts["run_rank_calib"],
+        type="primary",
+        use_container_width=True,
+        key="admin_run_rank_calib_btn",
+    )
+
+    if run_rank_calib_btn:
+        if rank_calib_start > rank_calib_end:
+            st.error(texts["invalid_date_range"])
+        else:
+            rc_model_type = "rule"
+            if rank_calib_model_label == "LightGBM":
+                rc_model_type = "lightgbm"
+            elif rank_calib_model_label == "XGBoost":
+                rc_model_type = "xgboost"
+            rc_result = run_rank_calibration_backtest(
+                start_date=rank_calib_start.strftime("%Y-%m-%d"),
+                end_date=rank_calib_end.strftime("%Y-%m-%d"),
+                model_type=rc_model_type,
+                fast_mode=rank_calib_fast_mode,
+            )
+            st.session_state.admin_rank_calibration_result = rc_result
+            _display_rank_calibration_results(rc_result)
+    elif st.session_state.get("admin_rank_calibration_result"):
+        _display_rank_calibration_results(st.session_state.admin_rank_calibration_result)
 
 
 def render_backtest_page(show_title: bool = True):
