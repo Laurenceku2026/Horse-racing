@@ -8439,6 +8439,52 @@ def _dedupe_odds_snapshots(pool_rows: List[Dict]) -> List[Dict]:
     return list(best.values())
 
 
+def _latest_odds_by_horse_from_history(rows: List[Dict]) -> Dict[str, Dict[str, float]]:
+    """Each horse_no -> {WIN, PLA} using the snapshot closest to post time."""
+    latest: Dict[str, Dict[str, float]] = {}
+    for pool in ("WIN", "PLA"):
+        deduped = _dedupe_odds_snapshots(_odds_rows_for_pool(rows, pool))
+        by_horse: Dict[str, List[Dict]] = {}
+        for row in deduped:
+            hno = str(row.get("horse_no", "")).strip()
+            if hno:
+                by_horse.setdefault(hno, []).append(row)
+        for hno, snaps in by_horse.items():
+            snaps.sort(key=lambda x: x.get("minutes_before_race", 0), reverse=True)
+            try:
+                val = float(snaps[-1].get("odds_value", 0))
+            except (TypeError, ValueError):
+                continue
+            if val > 0:
+                latest.setdefault(hno, {})[pool] = val
+    return latest
+
+
+def _merge_runners_with_odds_history(
+    runners: List[Dict],
+    odds_rows: List[Dict],
+) -> List[Dict]:
+    """Overlay latest WIN/PLA from odds_history (same source as realtime odds analysis)."""
+    if not runners or not odds_rows:
+        return runners
+    latest = _latest_odds_by_horse_from_history(odds_rows)
+    if not latest:
+        return runners
+    merged: List[Dict] = []
+    for runner in runners:
+        row = dict(runner)
+        hno = str(row.get("horse_no", "")).strip()
+        pool_odds = latest.get(hno, {})
+        win_val = pool_odds.get("WIN")
+        pla_val = pool_odds.get("PLA")
+        if win_val and win_val > 0:
+            row["odds_win"] = win_val
+        if pla_val and pla_val > 0:
+            row["odds_place"] = pla_val
+        merged.append(row)
+    return merged
+
+
 def _build_odds_summary_table(
     pool_rows: List[Dict],
     runners: List[Dict],
@@ -8663,6 +8709,7 @@ def _render_realtime_odds_body(
     sorted_runners: List[Dict],
     selected_date: str,
     race_ui_key: str,
+    odds_rows: Optional[List[Dict]] = None,
 ) -> None:
     texts = t()
     race_date = selected_race.get("race_date") or selected_date
@@ -8670,7 +8717,9 @@ def _render_realtime_odds_body(
     race_no = int(selected_race.get("race_no"))
     cache_key = f"odds_rows_cache_{race_ui_key}"
 
-    rows = _load_realtime_odds_rows(race_ui_key, race_date, venue, race_no)
+    rows = odds_rows if odds_rows is not None else _load_realtime_odds_rows(
+        race_ui_key, race_date, venue, race_no
+    )
     unique_mins = len(
         {
             r.get("minutes_before_race")
@@ -8764,6 +8813,7 @@ def _render_realtime_odds_analysis(
     sorted_runners: List[Dict],
     selected_date: str,
     race_ui_key: str,
+    odds_rows: Optional[List[Dict]] = None,
 ) -> None:
     """Smart betting: odds_history snapshots (WIN/PLA) below runner table."""
     heading = _odds_analysis_heading(selected_race, selected_date)
@@ -8775,7 +8825,7 @@ def _render_realtime_odds_analysis(
         odds_state_key,
         f"odds_analysis:{race_ui_key}",
         lambda: _render_realtime_odds_body(
-            selected_race, sorted_runners, selected_date, race_ui_key
+            selected_race, sorted_runners, selected_date, race_ui_key, odds_rows
         ),
         expand_label=texts["realtime_odds_expand"],
     )
@@ -9578,6 +9628,14 @@ def render_smart_betting(show_title: bool = True):
     sorted_runners = runners if model_choice == "评分系统" else sorted(
         runners, key=lambda x: x.get("win_probability", 0), reverse=True
     )
+
+    odds_history_rows = _load_realtime_odds_rows(
+        current_race_key,
+        selected_race.get("race_date") or selected_date,
+        selected_race.get("venue", "ST"),
+        int(selected_race.get("race_no")),
+    )
+    sorted_runners = _merge_runners_with_odds_history(sorted_runners, odds_history_rows)
     #--------------------
     # 在计算完 runners 的 win_probability 之后添加
 
@@ -9699,7 +9757,13 @@ def render_smart_betting(show_title: bool = True):
     t5 = time.time()
     perf_log["显示表格"] = t5 - t4
 
-    _render_realtime_odds_analysis(selected_race, sorted_runners, selected_date, current_race_key)
+    _render_realtime_odds_analysis(
+        selected_race,
+        sorted_runners,
+        selected_date,
+        current_race_key,
+        odds_rows=odds_history_rows,
+    )
         
     #------------
     # ==================== AI 投注策略建议（折叠版） ====================
