@@ -1758,6 +1758,7 @@ try:
         get_combined_incident_adjustment,
         get_llm_impact_from_cache,
         batch_cache_missing_incidents,
+        fetch_incident_llm_usage_stats,
     )
     INCIDENT_LLM_OK = True
 except ImportError:
@@ -4280,7 +4281,9 @@ def render_admin_odds_collection() -> None:
         response = requests.get(url, headers=headers, timeout=30)
         if response.status_code == 200 and response.json():
             df_stats = pd.DataFrame(response.json())
-            df_stats["recorded_at"] = pd.to_datetime(df_stats["recorded_at"])
+            df_stats["recorded_at"] = pd.to_datetime(
+                df_stats["recorded_at"], format="ISO8601", errors="coerce"
+            )
             df_stats["collect_date"] = df_stats["recorded_at"].dt.date
             pivot_stats = df_stats.groupby(["collect_date", "odds_type"]).size().unstack(fill_value=0)
             st.dataframe(pivot_stats, use_container_width=True)
@@ -4290,18 +4293,114 @@ def render_admin_odds_collection() -> None:
         st.error(str(exc))
 
 
+def render_admin_deepseek_usage() -> None:
+    """管理员：DeepSeek / incident LLM 用量与补缓存。"""
+    lang = st.session_state.get("lang", "zh")
+    st.markdown("### 🤖 DeepSeek 用量监控" if lang == "zh" else "### 🤖 DeepSeek Usage Monitor")
+    st.caption(
+        "热路径（智能投注单场、全马评分榜、ML 特征）**只读 Supabase 缓存，不自动调 API**。"
+        "每条 incident_llm_cache 记录 ≈ 曾调用一次 DeepSeek 分析。"
+        if lang == "zh"
+        else "Hot paths read Supabase cache only. Each incident_llm_cache row ≈ one DeepSeek API call."
+    )
+
+    if not INCIDENT_LLM_OK or not SUPABASE_URL:
+        st.warning("incident_llm_service 未加载或 Supabase 未配置。" if lang == "zh" else "incident_llm_service or Supabase not configured.")
+        return
+
+    headers = get_supabase_headers(use_secret=True)
+    stats = fetch_incident_llm_usage_stats(SUPABASE_URL, headers)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.metric("缓存总数" if lang == "zh" else "Cache rows", stats.get("cache_total", 0))
+    with c2:
+        st.metric("近 24h 新增" if lang == "zh" else "Added 24h", stats.get("cache_24h", 0))
+    with c3:
+        st.metric("近 7 天新增" if lang == "zh" else "Added 7d", stats.get("cache_7d", 0))
+    with c4:
+        st.metric("最近写入" if lang == "zh" else "Latest write", stats.get("latest_at") or "-")
+
+    st.markdown("**不会自动调用 DeepSeek 的功能**" if lang == "zh" else "**Does NOT auto-call DeepSeek**")
+    st.markdown(
+        """
+- 全马基础评分榜（读 `horse_scores_cache`；仅无缓存时本地重算，用规则 incident）
+- 智能投注 · 单场分析 / LightGBM（只读 `incident_llm_cache`）
+- 回测 / Top1 / 排名校准（规则 incident 或缓存）
+"""
+        if lang == "zh"
+        else """
+- Horse rating leaderboard (`horse_scores_cache`; rule-based incident if rebuild)
+- Smart betting single-race / LightGBM (reads `incident_llm_cache` only)
+- Backtests / Top1 / rank calibration (rules or cache)
+"""
+    )
+
+    recent = stats.get("recent_rows") or []
+    if recent:
+        st.markdown("**最近 incident LLM 缓存**" if lang == "zh" else "**Recent incident LLM cache**")
+        show_rows = []
+        for row in recent:
+            text = (row.get("incident_text") or "")[:60]
+            show_rows.append({
+                "时间" if lang == "zh" else "Time": (row.get("created_at") or "")[:19].replace("T", " "),
+                "LLM分" if lang == "zh" else "LLM": row.get("llm_impact_score"),
+                "类型" if lang == "zh" else "Type": row.get("incident_type"),
+                "事件" if lang == "zh" else "Incident": text,
+            })
+        st.dataframe(pd.DataFrame(show_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("incident_llm_cache 暂无数据；请执行 scripts/incident_llm_cache.sql" if lang == "zh" else "No incident_llm_cache rows yet.")
+
+    st.markdown("---")
+    st.markdown("**手动补全未缓存 incident（会调用 DeepSeek API）**" if lang == "zh" else "**Backfill missing incidents (calls DeepSeek API)**")
+    max_calls = st.slider(
+        "本次最多 API 调用数" if lang == "zh" else "Max API calls this run",
+        min_value=0,
+        max_value=100,
+        value=20,
+        step=5,
+        key="admin_deepseek_max_calls",
+    )
+    if st.button("▶️ 补全未缓存 incident" if lang == "zh" else "▶️ Backfill missing incidents", key="admin_deepseek_backfill"):
+        if max_calls <= 0:
+            st.warning("请将最多调用数设为大于 0。" if lang == "zh" else "Set max calls above 0.")
+        else:
+            with st.spinner("正在批量分析未缓存 incident..." if lang == "zh" else "Backfilling incidents..."):
+                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=incident&incident=not.is.null&limit=5000"
+                resp = requests.get(perf_url, headers=headers, timeout=60)
+                texts = []
+                if resp.status_code == 200:
+                    texts = [r.get("incident", "") for r in resp.json() if r.get("incident")]
+                secrets = {
+                    "DEEPSEEK_API_KEY": st.secrets.get("DEEPSEEK_API_KEY", ""),
+                    "DEEPSEEK_BASE_URL": st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+                    "DEEPSEEK_MODEL": st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
+                }
+                result = batch_cache_missing_incidents(
+                    texts, SUPABASE_URL, headers, secrets, max_new_calls=max_calls
+                )
+            st.success(
+                f"完成：新分析 {result.get('analyzed', 0)} 条，已有缓存 {result.get('cached', 0)}，跳过 {result.get('skipped', 0)}，错误 {result.get('errors', 0)}"
+                if lang == "zh"
+                else f"Done: analyzed {result.get('analyzed', 0)}, cached {result.get('cached', 0)}, skipped {result.get('skipped', 0)}, errors {result.get('errors', 0)}"
+            )
+            st.rerun()
+
+
 # ==================== 管理员面板 ====================
 def render_admin_panel():
     """管理员面板 - 数据编辑器 + 回测 + 用户管理 + 马名映射"""
     st.markdown(f"## ⚙️ {t()['admin_panel']}")
     
     # 创建选项卡
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 数据编辑器",
         "📈 回测",
         "👥 用户管理",
         "⚙️ 评分权重设置",
         "📡 赔率采集",
+        "🤖 DeepSeek",
     ])
     
     # ==================== Tab1: 数据编辑器 ====================
@@ -5030,6 +5129,9 @@ def render_admin_panel():
     with tab5:
         render_admin_odds_collection()
 
+    with tab6:
+        render_admin_deepseek_usage()
+
     st.markdown("---")
     if st.button("退出管理员模式", use_container_width=True):
         admin_sign_out()
@@ -5711,6 +5813,81 @@ def save_horse_scores_to_cache(df: pd.DataFrame) -> bool:
         print(f"保存缓存异常: {e}")
         return False
 # ==================== 辅助函数：获取所有马匹基础评分 ====================
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_horse_scores_cache_df(limit: int, lang: str) -> pd.DataFrame:
+    """只读 Supabase horse_scores_cache（不触发全量重算）。"""
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        cache_check_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache?select=horse_id&limit=1"
+        cache_check = requests.get(cache_check_url, headers=headers, timeout=20)
+        if cache_check.status_code != 200 or not cache_check.json():
+            return pd.DataFrame()
+
+        cache_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache?order=basic_score.desc&limit={limit}"
+        response = requests.get(cache_url, headers=headers, timeout=30)
+        if response.status_code != 200 or not response.json():
+            return pd.DataFrame()
+
+        cache_data = response.json()
+        df = pd.DataFrame(cache_data)
+        if lang == "zh":
+            df_display = df.rename(columns={
+                "horse_id": "Horse_ID",
+                "name_zh": "馬名(中)",
+                "name_en": "馬名(英)",
+                "sex": "性別",
+                "age": "年齡",
+                "avg_weight": "平均體重",
+                "win_rate": "勝率",
+                "place_rate": "入Q率",
+                "show_rate": "入T率",
+                "basic_score": "綜合評分",
+                "races_count": "出賽場次",
+            })
+            column_order = [
+                "Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重",
+                "勝率", "入Q率", "入T率", "綜合評分", "出賽場次",
+            ]
+        else:
+            df_display = df.rename(columns={
+                "horse_id": "Horse_ID",
+                "name_zh": "Name (CN)",
+                "name_en": "Name (EN)",
+                "sex": "Sex",
+                "age": "Age",
+                "avg_weight": "Avg Weight",
+                "win_rate": "Win Rate",
+                "place_rate": "Place Rate",
+                "show_rate": "Show Rate",
+                "basic_score": "Overall Score",
+                "races_count": "Races",
+            })
+            column_order = [
+                "Horse_ID", "Name (EN)", "Sex", "Age", "Avg Weight",
+                "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races",
+            ]
+
+        for col in ["勝率", "入Q率", "入T率", "Win Rate", "Place Rate", "Show Rate"]:
+            if col in df_display.columns:
+                df_display[col] = df_display[col].apply(
+                    lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x
+                )
+
+        df_display = df_display[[c for c in column_order if c in df_display.columns]]
+        if lang == "en" and "Sex" in df_display.columns:
+            df_display["Sex"] = df_display["Sex"].apply(lambda x: format_sex(x, "en"))
+
+        calc_time = cache_data[0].get("calculated_at", "")
+        if calc_time:
+            calc_time = calc_time[:16].replace("T", " ")
+        df_display.attrs["cache_time"] = calc_time
+        df_display.attrs["from_cache"] = True
+        return df_display
+    except Exception as exc:
+        print(f"读取 horse_scores_cache 失败: {exc}")
+        return pd.DataFrame()
+
+
 def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.DataFrame:
     """
     获取所有马匹的基础评分（使用新评分引擎）
@@ -5718,87 +5895,21 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
     支持缓存：优先从 horse_scores_cache 表读取
     """
     try:
-        # 获取当前语言
         lang = st.session_state.get("lang", "zh")
-        
+        cached_df = _load_horse_scores_cache_df(limit, lang)
+        if not cached_df.empty:
+            cache_time = getattr(cached_df, "attrs", {}).get("cache_time", "")
+            if cache_time:
+                st.caption(
+                    f"📊 共 {len(cached_df)} 匹馬 (緩存於 {cache_time})"
+                    if lang == "zh"
+                    else f"📊 Total {len(cached_df)} horses (cached at {cache_time})"
+                )
+            return cached_df
+
         headers = get_supabase_headers(use_secret=True)
         
-        # ==================== 新增：检查缓存 ====================
-        cache_check_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache?select=horse_id&limit=1"
-        cache_check = requests.get(cache_check_url, headers=headers)
-        
-        cache_exists = cache_check.status_code == 200 and cache_check.json()
-        
-        if cache_exists:
-            # 从缓存读取
-            cache_url = f"{SUPABASE_URL}/rest/v1/horse_scores_cache?order=basic_score.desc&limit={limit}"
-            response = requests.get(cache_url, headers=headers)
-            
-            if response.status_code == 200:
-                cache_data = response.json()
-                
-                if cache_data:
-                    # 构建 DataFrame
-                    df = pd.DataFrame(cache_data)
-                    
-                    # 重命名列（中文）
-                    if lang == "zh":
-                        df_display = df.rename(columns={
-                            "horse_id": "Horse_ID",
-                            "name_zh": "馬名(中)",
-                            "name_en": "馬名(英)",
-                            "sex": "性別",
-                            "age": "年齡",
-                            "avg_weight": "平均體重",
-                            "win_rate": "勝率",
-                            "place_rate": "入Q率",
-                            "show_rate": "入T率",
-                            "basic_score": "綜合評分",
-                            "races_count": "出賽場次"
-                        })
-                    else:
-                        df_display = df.rename(columns={
-                            "horse_id": "Horse_ID",
-                            "name_zh": "Name (CN)",
-                            "name_en": "Name (EN)",
-                            "sex": "Sex",
-                            "age": "Age",
-                            "avg_weight": "Avg Weight",
-                            "win_rate": "Win Rate",
-                            "place_rate": "Place Rate",
-                            "show_rate": "Show Rate",
-                            "basic_score": "Overall Score",
-                            "races_count": "Races"
-                        })
-                    
-                    # 格式化百分比
-                    for col in ["勝率", "入Q率", "入T率", "Win Rate", "Place Rate", "Show Rate"]:
-                        if col in df_display.columns:
-                            df_display[col] = df_display[col].apply(
-                                lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x
-                            )
-                    
-                    # 列顺序
-                    if lang == "zh":
-                        column_order = ["Horse_ID", "馬名(中)", "馬名(英)", "性別", "年齡", "平均體重", "勝率", "入Q率", "入T率", "綜合評分", "出賽場次"]
-                    else:
-                        column_order = ["Horse_ID", "Name (EN)", "Sex", "Age", "Avg Weight", "Win Rate", "Place Rate", "Show Rate", "Overall Score", "Races"]
-                    
-                    df_display = df_display[[c for c in column_order if c in df_display.columns]]
-                    
-                    if lang == "en" and "Sex" in df_display.columns:
-                        df_display["Sex"] = df_display["Sex"].apply(lambda x: format_sex(x, "en"))
-                    
-                    # 显示缓存时间
-                    calc_time = cache_data[0].get('calculated_at', '')
-                    if calc_time:
-                        calc_time = calc_time[:16].replace('T', ' ')
-                    
-                    st.caption(f"📊 共 {len(df_display)} 匹馬 (緩存於 {calc_time})" if lang == "zh" else f"📊 Total {len(df_display)} horses (cached at {calc_time})")
-                    
-                    return df_display
-        
-        # ==================== 缓存不存在：执行完整计算 ====================
+        # ==================== 缓存不存在：执行完整计算（不调 DeepSeek） ====================
         # ==================== 1. 获取马匹基本信息 ====================
         horses_url = f"{SUPABASE_URL}/rest/v1/horses_v2?select=*"
         horses_response = requests.get(horses_url, headers=headers)
@@ -6346,6 +6457,7 @@ def render_home():
                                 ).format(new_races=new_races, new_records=new_records)
                             )
                             st.cache_data.clear()
+                            _load_horse_scores_cache_df.clear()
                             st.rerun()
                     except Exception as e:
                         st.warning(f"数据同步成功，但缓存刷新失败: {e}")
@@ -6377,9 +6489,21 @@ def render_home():
             )
 
         scope = texts["all_games"] if recent_games == 0 else texts["recent_n_games_format"].format(n=recent_games)
-        with st.spinner(texts["rating_calculating"].format(scope=scope)):
-            rating_df = get_all_horses_base_score(limit=rating_limit, recent_games=recent_games)
-            render_horse_rating_table(rating_df)
+        lang = st.session_state.get("lang", "zh")
+        cached_rating_df = _load_horse_scores_cache_df(rating_limit, lang)
+        if not cached_rating_df.empty:
+            cache_time = getattr(cached_rating_df, "attrs", {}).get("cache_time", "")
+            if cache_time:
+                st.caption(
+                    f"📊 共 {len(cached_rating_df)} 匹馬 (緩存於 {cache_time})"
+                    if lang == "zh"
+                    else f"📊 Total {len(cached_rating_df)} horses (cached at {cache_time})"
+                )
+            render_horse_rating_table(cached_rating_df)
+        else:
+            with st.spinner(texts["rating_calculating"].format(scope=scope)):
+                rating_df = get_all_horses_base_score(limit=rating_limit, recent_games=recent_games)
+                render_horse_rating_table(rating_df)
         st.markdown("---")
     
     # ==================== 模块3：智能投注 ====================
@@ -14882,7 +15006,7 @@ def calculate_horse_score(
     user_weights: Dict,
     incident: str = ""  # 新增参数
 ) -> Dict:
-    """计算马匹的综合评分（含 DeepSeek 事件分析）"""
+    """计算马匹的综合评分（事件分读缓存，不调 DeepSeek API）"""
     past_performances_v2 = get_horse_past_performances_v2(horse_id)
     basic_score = calculate_basic_score(horse_id, distance, past_performances_v2)
     weight_comfort_range = get_horse_weight_comfort_range(horse_id)
@@ -14892,11 +15016,16 @@ def calculate_horse_score(
     )
     odds_score = calculate_odds_score(odds_win)
     
-    # DeepSeek 事件影响分析
     incident_impact = 0
-    if incident and incident != '无特别报告。':
-        incident_result = analyze_incident_with_deepseek(incident)
-        incident_impact = incident_result.get("score", 0)
+    if incident and incident not in ("无特别报告。", "無特別報告。"):
+        if INCIDENT_LLM_OK and SUPABASE_URL:
+            combined, _, _ = get_combined_incident_adjustment(
+                incident, SUPABASE_URL, get_supabase_headers(use_secret=True)
+            )
+            incident_impact = combined
+        else:
+            incident_result = analyze_incident_with_deepseek(incident)
+            incident_impact = incident_result.get("score", 0)
     
     # 综合评分 = 基础评分 + 场次评分 + 赔率评分 + 事件影响
     combined_score = (
@@ -14947,63 +15076,15 @@ def get_deepseek_client():
 
 
 def analyze_incident_with_deepseek(incident_text: str) -> Dict:
-    """
-    使用 DeepSeek 分析竞赛事件报告
-    返回：影响分数、事件类型、建议
-    """
-    # 默认返回
+    """读取 incident LLM 缓存（热路径不调 DeepSeek API）。"""
     default_result = {"score": 0, "type": "normal", "suggestion": ""}
-    
-    if not incident_text or incident_text == '无特别报告。' or incident_text == '無特別報告。':
+    if not incident_text or incident_text in ("无特别报告。", "無特別報告。"):
         return default_result
-    
-    client = get_deepseek_client()
-    if not client:
-        return default_result
-    
-    prompt = f"""
-    分析以下香港赛马竞赛事件报告，评估对马匹表现的影响。
-    
-    事件报告：{incident_text}
-    
-    请返回 JSON 格式：
-    {{
-        "impact_score": -20 到 20 之间的整数，
-            负分表示不利影响（如受阻、走外叠、出闸笨拙、健康问题），
-            正分表示有利影响（如顺利、节省脚程），
-            0表示中性或无影响，
-        "incident_type": "受阻/抢口/走外叠/出闸笨拙/健康问题/赛后抽检/正常/其他" 中的一个，
-        "suggestion": "简要建议（20字以内）"
-    }}
-    
-    只返回 JSON，不要有其他内容。
-    """
-    
-    try:
-        response = client.chat.completions.create(
-            model=st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
-            max_tokens=300
+    if INCIDENT_LLM_OK and SUPABASE_URL:
+        llm = get_llm_impact_from_cache(
+            incident_text, SUPABASE_URL, get_supabase_headers(use_secret=True)
         )
-        
-        result_text = response.choices[0].message.content
-        print(f"DeepSeek 响应: {result_text}")
-        
-        # 提取 JSON
-        import json
-        import re
-        json_match = re.search(r'\{[^{}]*\}', result_text)
-        if json_match:
-            result = json.loads(json_match.group())
-            return {
-                "score": result.get("impact_score", 0),
-                "type": result.get("incident_type", "其他"),
-                "suggestion": result.get("suggestion", "")
-            }
-    except Exception as e:
-        print(f"DeepSeek 分析失败: {e}")
-    
+        return {"score": llm, "type": "cached", "suggestion": ""}
     return default_result
 
 

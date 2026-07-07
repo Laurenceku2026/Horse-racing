@@ -197,3 +197,69 @@ def _cache_exists(incident_text: str, supabase_url: str, headers: Dict) -> bool:
         return resp.status_code == 200 and bool(resp.json())
     except Exception:
         return False
+
+
+def _count_incident_cache_rows(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    created_since: Optional[str] = None,
+) -> int:
+    """Supabase count via Content-Range header."""
+    if not supabase_url or not headers:
+        return 0
+    try:
+        url = f"{supabase_url}/rest/v1/incident_llm_cache?select=id"
+        if created_since:
+            url += f"&created_at=gte.{created_since}"
+        hdrs = dict(headers)
+        hdrs["Prefer"] = "count=exact"
+        hdrs["Range"] = "0-0"
+        resp = requests.get(url, headers=hdrs, timeout=20)
+        if resp.status_code not in (200, 206):
+            return 0
+        content_range = resp.headers.get("Content-Range", "")
+        if "/" in content_range:
+            total = content_range.split("/")[-1]
+            if total.isdigit():
+                return int(total)
+        return len(resp.json()) if resp.json() else 0
+    except Exception as exc:
+        print(f"统计 incident_llm_cache 失败: {exc}")
+        return 0
+
+
+def fetch_incident_llm_usage_stats(
+    supabase_url: str,
+    headers: Dict,
+) -> Dict:
+    """DeepSeek 用量代理指标：每条 cache 行 ≈ 一次 API 分析写入。"""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    since_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
+    since_7d = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    stats = {
+        "cache_total": _count_incident_cache_rows(supabase_url, headers),
+        "cache_24h": _count_incident_cache_rows(supabase_url, headers, created_since=since_24h),
+        "cache_7d": _count_incident_cache_rows(supabase_url, headers, created_since=since_7d),
+        "latest_at": "",
+        "recent_rows": [],
+    }
+
+    try:
+        url = (
+            f"{supabase_url}/rest/v1/incident_llm_cache"
+            f"?select=incident_text,llm_impact_score,incident_type,model_version,created_at"
+            f"&order=created_at.desc&limit=15"
+        )
+        resp = requests.get(url, headers=headers, timeout=20)
+        if resp.status_code == 200 and resp.json():
+            rows = resp.json()
+            stats["recent_rows"] = rows
+            stats["latest_at"] = (rows[0].get("created_at") or "")[:19].replace("T", " ")
+    except Exception as exc:
+        print(f"读取 incident_llm_cache 最近记录失败: {exc}")
+
+    return stats
