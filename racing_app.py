@@ -29,6 +29,7 @@ from rank_calibration_backtest import (
     render_rank_calibration_html,
     summarize_rank_calibration,
 )
+from pwa_setup import inject_pwa_head, render_pwa_install_hint
 # ==================== 从 scoring_engine 导入 ====================
 SCORING_ENGINE_OK = False
 try:
@@ -62,11 +63,12 @@ except ImportError as e:
     print(f"scoring_engine import failed: {e}")
 # ==================== 页面配置 ====================
 st.set_page_config(
-    page_title="HK Horse Racing AI System",
-    page_icon="🐎",
+    page_title="Equi-AI 智马",
+    page_icon="static/pwa/icon-192.png",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+inject_pwa_head()
 
 # ==================== 自定义CSS ====================
 st.markdown("""
@@ -14352,6 +14354,7 @@ def main():
 
     try_restore_remember_me_login()
     ensure_valid_access_token()
+    render_pwa_install_hint(st.session_state.get("lang", "zh"))
     
     # 渲染侧边栏和顶部按钮
     render_sidebar()
