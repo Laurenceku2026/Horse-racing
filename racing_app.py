@@ -1759,6 +1759,10 @@ try:
         get_llm_impact_from_cache,
         batch_cache_missing_incidents,
         fetch_incident_llm_usage_stats,
+        count_missing_incident_cache,
+        format_datetime_hkt,
+        fetch_past_incident_texts,
+        INCIDENT_SCAN_LIMIT,
     )
     INCIDENT_LLM_OK = True
 except ImportError:
@@ -4300,8 +4304,9 @@ def render_admin_deepseek_usage() -> None:
     st.caption(
         "热路径（智能投注单场、全马评分榜、ML 特征）**只读 Supabase 缓存，不自动调 API**。"
         "每条 incident_llm_cache 记录 ≈ 曾调用一次 DeepSeek 分析。"
+        "时间均为 **香港时间 (UTC+8)**。"
         if lang == "zh"
-        else "Hot paths read Supabase cache only. Each incident_llm_cache row ≈ one DeepSeek API call."
+        else "Hot paths read Supabase cache only. Each incident_llm_cache row ≈ one DeepSeek API call. Times are HKT (UTC+8)."
     )
 
     if not INCIDENT_LLM_OK or not SUPABASE_URL:
@@ -4311,6 +4316,16 @@ def render_admin_deepseek_usage() -> None:
     headers = get_supabase_headers(use_secret=True)
     stats = fetch_incident_llm_usage_stats(SUPABASE_URL, headers)
 
+    @st.cache_data(ttl=300, show_spinner=False)
+    def _load_missing_incident_stats(supabase_url: str) -> Dict:
+        hdrs = get_supabase_headers(use_secret=True)
+        return count_missing_incident_cache(supabase_url, hdrs)
+
+    missing_stats = _load_missing_incident_stats(SUPABASE_URL)
+    remaining = missing_stats.get("missing_unique", 0)
+    total_unique = missing_stats.get("total_unique", 0)
+    cached_unique = missing_stats.get("cached_unique", 0)
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("缓存总数" if lang == "zh" else "Cache rows", stats.get("cache_total", 0))
@@ -4319,7 +4334,30 @@ def render_admin_deepseek_usage() -> None:
     with c3:
         st.metric("近 7 天新增" if lang == "zh" else "Added 7d", stats.get("cache_7d", 0))
     with c4:
-        st.metric("最近写入" if lang == "zh" else "Latest write", stats.get("latest_at") or "-")
+        st.metric(
+            "最近写入 (HKT)" if lang == "zh" else "Latest write (HKT)",
+            stats.get("latest_at") or "-",
+        )
+
+    if remaining > 0:
+        st.warning(
+            f"**剩余未缓存约 {remaining} 条**（已扫描 {total_unique} 条唯一 incident，已缓存 {cached_unique} 条）。"
+            f"每次补全最多处理滑块设定的条数；重复点击会继续消耗 DeepSeek API。"
+            if lang == "zh"
+            else f"**~{remaining} incidents still uncached** ({cached_unique}/{total_unique} unique cached in scan). Each run uses API quota."
+        )
+    else:
+        st.success(
+            "当前扫描范围内 incident 已全部缓存（或无可分析事件）。" if lang == "zh"
+            else "All scanned incidents are cached (or none to analyze)."
+        )
+
+    if missing_stats.get("truncated"):
+        st.caption(
+            f"统计基于 past_performances_v2 最近 {INCIDENT_SCAN_LIMIT} 条含 incident 的往绩；若数据库更大，实际未缓存数可能更高。"
+            if lang == "zh"
+            else f"Stats scan up to {INCIDENT_SCAN_LIMIT} performance rows with incidents; actual backlog may be higher."
+        )
 
     st.markdown("**不会自动调用 DeepSeek 的功能**" if lang == "zh" else "**Does NOT auto-call DeepSeek**")
     st.markdown(
@@ -4339,11 +4377,12 @@ def render_admin_deepseek_usage() -> None:
     recent = stats.get("recent_rows") or []
     if recent:
         st.markdown("**最近 incident LLM 缓存**" if lang == "zh" else "**Recent incident LLM cache**")
+        st.caption("写入时间 = DeepSeek 分析完成并写入 Supabase 的香港时间。" if lang == "zh" else "Write time = when DeepSeek result was saved (HKT).")
         show_rows = []
         for row in recent:
             text = (row.get("incident_text") or "")[:60]
             show_rows.append({
-                "时间" if lang == "zh" else "Time": (row.get("created_at") or "")[:19].replace("T", " "),
+                "时间 (HKT)" if lang == "zh" else "Time (HKT)": format_datetime_hkt(row.get("created_at") or ""),
                 "LLM分" if lang == "zh" else "LLM": row.get("llm_impact_score"),
                 "类型" if lang == "zh" else "Type": row.get("incident_type"),
                 "事件" if lang == "zh" else "Incident": text,
@@ -4367,11 +4406,7 @@ def render_admin_deepseek_usage() -> None:
             st.warning("请将最多调用数设为大于 0。" if lang == "zh" else "Set max calls above 0.")
         else:
             with st.spinner("正在批量分析未缓存 incident..." if lang == "zh" else "Backfilling incidents..."):
-                perf_url = f"{SUPABASE_URL}/rest/v1/past_performances_v2?select=incident&incident=not.is.null&limit=5000"
-                resp = requests.get(perf_url, headers=headers, timeout=60)
-                texts = []
-                if resp.status_code == 200:
-                    texts = [r.get("incident", "") for r in resp.json() if r.get("incident")]
+                texts, _ = fetch_past_incident_texts(SUPABASE_URL, headers, limit=INCIDENT_SCAN_LIMIT)
                 secrets = {
                     "DEEPSEEK_API_KEY": st.secrets.get("DEEPSEEK_API_KEY", ""),
                     "DEEPSEEK_BASE_URL": st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
@@ -4380,11 +4415,26 @@ def render_admin_deepseek_usage() -> None:
                 result = batch_cache_missing_incidents(
                     texts, SUPABASE_URL, headers, secrets, max_new_calls=max_calls
                 )
+            remaining_after = result.get("remaining_missing", 0)
+            _load_missing_incident_stats.clear()
             st.success(
-                f"完成：新分析 {result.get('analyzed', 0)} 条，已有缓存 {result.get('cached', 0)}，跳过 {result.get('skipped', 0)}，错误 {result.get('errors', 0)}"
+                f"完成：新分析 {result.get('analyzed', 0)} 条，已有缓存 {result.get('cached', 0)}，"
+                f"跳过 {result.get('skipped', 0)}，错误 {result.get('errors', 0)}。"
+                f"**剩余未缓存约 {remaining_after} 条**。"
                 if lang == "zh"
-                else f"Done: analyzed {result.get('analyzed', 0)}, cached {result.get('cached', 0)}, skipped {result.get('skipped', 0)}, errors {result.get('errors', 0)}"
+                else (
+                    f"Done: analyzed {result.get('analyzed', 0)}, cached {result.get('cached', 0)}, "
+                    f"skipped {result.get('skipped', 0)}, errors {result.get('errors', 0)}. "
+                    f"~{remaining_after} still uncached."
+                )
             )
+            if remaining_after > 0:
+                st.info(
+                    f"仍有约 {remaining_after} 条未缓存；请提高「本次最多 API 调用数」或分多次补全，"
+                    f"补完前请勿重复无意义点击。"
+                    if lang == "zh"
+                    else f"~{remaining_after} still uncached; increase max calls or run again until zero."
+                )
             st.rerun()
 
 

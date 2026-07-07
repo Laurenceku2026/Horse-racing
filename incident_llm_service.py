@@ -9,9 +9,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
+
+HKT = timezone(timedelta(hours=8))
+INCIDENT_SCAN_LIMIT = 5000
 
 EMPTY_INCIDENTS = frozenset({"", "无特别报告。", "無特別報告。", "None", "null"})
 
@@ -150,6 +154,103 @@ def analyze_incident_with_deepseek_api(incident_text: str, secrets: Dict) -> Dic
     return default
 
 
+def format_datetime_hkt(iso_str: str) -> str:
+    """Supabase ISO8601 → 香港时间字符串。"""
+    if not iso_str:
+        return "-"
+    try:
+        normalized = iso_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(normalized)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(HKT).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return (iso_str or "")[:19].replace("T", " ")
+
+
+def fetch_past_incident_texts(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    limit: int = INCIDENT_SCAN_LIMIT,
+) -> Tuple[List[str], bool]:
+    """从 past_performances_v2 拉取 incident 文本。返回 (texts, truncated)。"""
+    if not supabase_url or not headers:
+        return [], False
+    try:
+        url = (
+            f"{supabase_url}/rest/v1/past_performances_v2"
+            f"?select=incident&incident=not.is.null&limit={limit}"
+        )
+        resp = requests.get(url, headers=headers, timeout=60)
+        if resp.status_code != 200:
+            return [], False
+        rows = resp.json() or []
+        texts = [r.get("incident", "") for r in rows if r.get("incident")]
+        return texts, len(rows) >= limit
+    except Exception as exc:
+        print(f"读取 past_performances_v2 incident 失败: {exc}")
+        return [], False
+
+
+def fetch_cached_incident_hashes(supabase_url: str, headers: Dict) -> Set[str]:
+    """分页读取 incident_llm_cache 全部 hash。"""
+    cached: Set[str] = set()
+    if not supabase_url or not headers:
+        return cached
+    page_size = 1000
+    offset = 0
+    try:
+        while True:
+            url = (
+                f"{supabase_url}/rest/v1/incident_llm_cache"
+                f"?select=incident_text_hash&limit={page_size}&offset={offset}"
+            )
+            resp = requests.get(url, headers=headers, timeout=30)
+            if resp.status_code != 200:
+                break
+            rows = resp.json() or []
+            if not rows:
+                break
+            cached.update(str(r.get("incident_text_hash") or "") for r in rows if r.get("incident_text_hash"))
+            if len(rows) < page_size:
+                break
+            offset += page_size
+    except Exception as exc:
+        print(f"读取 incident_llm_cache hash 失败: {exc}")
+    return cached
+
+
+def count_missing_incident_cache(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    limit: int = INCIDENT_SCAN_LIMIT,
+) -> Dict:
+    """统计未写入 incident_llm_cache 的唯一 incident 数。"""
+    texts, truncated = fetch_past_incident_texts(supabase_url, headers, limit=limit)
+    unique_hashes: Set[str] = set()
+    incident_rows = 0
+    for text in texts:
+        if is_empty_incident(text):
+            continue
+        incident_rows += 1
+        unique_hashes.add(incident_text_hash(text))
+
+    cached_hashes = fetch_cached_incident_hashes(supabase_url, headers)
+    missing_hashes = unique_hashes - cached_hashes
+    cached_unique = len(unique_hashes & cached_hashes)
+
+    return {
+        "missing_unique": len(missing_hashes),
+        "total_unique": len(unique_hashes),
+        "cached_unique": cached_unique,
+        "incident_rows_scanned": incident_rows,
+        "scan_limit": limit,
+        "truncated": truncated,
+    }
+
+
 def batch_cache_missing_incidents(
     incident_texts: List[str],
     supabase_url: str,
@@ -158,8 +259,9 @@ def batch_cache_missing_incidents(
     max_new_calls: int = 20,
 ) -> Dict:
     """批量补全未缓存的 incident（限制单次 API 调用数）。"""
-    stats = {"cached": 0, "analyzed": 0, "skipped": 0, "errors": 0}
+    stats = {"cached": 0, "analyzed": 0, "skipped": 0, "errors": 0, "remaining_missing": 0}
     seen = set()
+    cached_hashes = fetch_cached_incident_hashes(supabase_url, headers)
     for text in incident_texts:
         if is_empty_incident(text):
             stats["skipped"] += 1
@@ -168,7 +270,7 @@ def batch_cache_missing_incidents(
         if h in seen:
             continue
         seen.add(h)
-        if get_llm_impact_from_cache(text, supabase_url, headers) != 0 or _cache_exists(text, supabase_url, headers):
+        if h in cached_hashes:
             stats["cached"] += 1
             continue
         if stats["analyzed"] >= max_new_calls:
@@ -184,8 +286,12 @@ def batch_cache_missing_incidents(
         )
         if ok:
             stats["analyzed"] += 1
+            cached_hashes.add(h)
         else:
             stats["errors"] += 1
+    missing_stats = count_missing_incident_cache(supabase_url, headers)
+    stats["remaining_missing"] = missing_stats.get("missing_unique", 0)
+    stats["missing_stats"] = missing_stats
     return stats
 
 
@@ -234,8 +340,6 @@ def fetch_incident_llm_usage_stats(
     headers: Dict,
 ) -> Dict:
     """DeepSeek 用量代理指标：每条 cache 行 ≈ 一次 API 分析写入。"""
-    from datetime import datetime, timedelta, timezone
-
     now = datetime.now(timezone.utc)
     since_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
     since_7d = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -258,7 +362,8 @@ def fetch_incident_llm_usage_stats(
         if resp.status_code == 200 and resp.json():
             rows = resp.json()
             stats["recent_rows"] = rows
-            stats["latest_at"] = (rows[0].get("created_at") or "")[:19].replace("T", " ")
+            latest_raw = rows[0].get("created_at") or ""
+            stats["latest_at"] = format_datetime_hkt(latest_raw)
     except Exception as exc:
         print(f"读取 incident_llm_cache 最近记录失败: {exc}")
 
