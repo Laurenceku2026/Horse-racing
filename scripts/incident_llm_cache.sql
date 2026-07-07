@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS incident_llm_cache (
     incident_type TEXT DEFAULT 'normal',
     suggestion TEXT DEFAULT '',
     model_version TEXT DEFAULT 'deepseek-chat',
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
+    total_tokens INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

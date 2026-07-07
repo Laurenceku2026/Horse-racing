@@ -1754,19 +1754,41 @@ except ImportError as _day_portfolio_import_error:
     DAY_PORTFOLIO_IMPORT_ERROR = str(_day_portfolio_import_error)
 
 try:
-    from incident_llm_service import (
-        get_combined_incident_adjustment,
-        get_llm_impact_from_cache,
-        batch_cache_missing_incidents,
-        fetch_incident_llm_usage_stats,
-        count_missing_incident_cache,
-        format_datetime_hkt,
-        fetch_past_incident_texts,
-        INCIDENT_SCAN_LIMIT,
+    import incident_llm_service as ils
+    get_combined_incident_adjustment = ils.get_combined_incident_adjustment
+    get_llm_impact_from_cache = ils.get_llm_impact_from_cache
+    batch_cache_missing_incidents = ils.batch_cache_missing_incidents
+    fetch_incident_llm_usage_stats = ils.fetch_incident_llm_usage_stats
+    count_missing_incident_cache = getattr(ils, "count_missing_incident_cache", None)
+    format_datetime_hkt = getattr(
+        ils,
+        "format_datetime_hkt",
+        lambda iso_str: (iso_str or "")[:19].replace("T", " "),
     )
+    fetch_past_incident_texts = getattr(ils, "fetch_past_incident_texts", None)
+    INCIDENT_SCAN_LIMIT = getattr(ils, "INCIDENT_SCAN_LIMIT", 5000)
     INCIDENT_LLM_OK = True
-except ImportError:
+    INCIDENT_LLM_IMPORT_ERROR = ""
+except ImportError as _incident_llm_import_error:
+    ils = None
     INCIDENT_LLM_OK = False
+    INCIDENT_LLM_IMPORT_ERROR = str(_incident_llm_import_error)
+    get_combined_incident_adjustment = None
+    get_llm_impact_from_cache = None
+    batch_cache_missing_incidents = None
+    fetch_incident_llm_usage_stats = None
+    count_missing_incident_cache = None
+    format_datetime_hkt = lambda iso_str: (iso_str or "")[:19].replace("T", " ")
+    fetch_past_incident_texts = None
+    INCIDENT_SCAN_LIMIT = 5000
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_missing_incident_stats(supabase_url: str) -> Dict:
+    if not count_missing_incident_cache or not supabase_url:
+        return {}
+    hdrs = get_supabase_headers(use_secret=True)
+    return count_missing_incident_cache(supabase_url, hdrs)
 
 def supabase_request(method: str, table: str, data=None, params=None, access_token=None):
     """通用的Supabase REST API请求"""
@@ -4309,22 +4331,40 @@ def render_admin_deepseek_usage() -> None:
         else "Hot paths read Supabase cache only. Each incident_llm_cache row ≈ one DeepSeek API call. Times are HKT (UTC+8)."
     )
 
-    if not INCIDENT_LLM_OK or not SUPABASE_URL:
-        st.warning("incident_llm_service 未加载或 Supabase 未配置。" if lang == "zh" else "incident_llm_service or Supabase not configured.")
+    if not INCIDENT_LLM_OK:
+        st.warning(
+            f"incident_llm_service 未加载：{INCIDENT_LLM_IMPORT_ERROR or 'ImportError'}"
+            if lang == "zh"
+            else f"incident_llm_service failed to load: {INCIDENT_LLM_IMPORT_ERROR or 'ImportError'}"
+        )
+        st.caption("请确认仓库已部署 `incident_llm_service.py`，并重新启动 Streamlit 应用。" if lang == "zh" else "Ensure incident_llm_service.py is deployed and restart the app.")
+        return
+    if not SUPABASE_URL:
+        st.warning("Supabase 未配置：请在 secrets 中设置 SUPABASE_STOCK_URL。" if lang == "zh" else "Supabase not configured: set SUPABASE_STOCK_URL in secrets.")
+        return
+    if not fetch_incident_llm_usage_stats:
+        st.warning("fetch_incident_llm_usage_stats 不可用。" if lang == "zh" else "fetch_incident_llm_usage_stats unavailable.")
         return
 
     headers = get_supabase_headers(use_secret=True)
-    stats = fetch_incident_llm_usage_stats(SUPABASE_URL, headers)
+    try:
+        stats = fetch_incident_llm_usage_stats(SUPABASE_URL, headers)
+    except Exception as exc:
+        st.error(f"读取 DeepSeek 统计失败：{exc}" if lang == "zh" else f"Failed to load DeepSeek stats: {exc}")
+        return
 
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _load_missing_incident_stats(supabase_url: str) -> Dict:
-        hdrs = get_supabase_headers(use_secret=True)
-        return count_missing_incident_cache(supabase_url, hdrs)
-
-    missing_stats = _load_missing_incident_stats(SUPABASE_URL)
-    remaining = missing_stats.get("missing_unique", 0)
-    total_unique = missing_stats.get("total_unique", 0)
-    cached_unique = missing_stats.get("cached_unique", 0)
+    missing_stats: Dict = {}
+    remaining = 0
+    total_unique = 0
+    cached_unique = 0
+    if count_missing_incident_cache:
+        try:
+            missing_stats = _load_missing_incident_stats(SUPABASE_URL)
+            remaining = missing_stats.get("missing_unique", 0)
+            total_unique = missing_stats.get("total_unique", 0)
+            cached_unique = missing_stats.get("cached_unique", 0)
+        except Exception as exc:
+            st.warning(f"统计未缓存 incident 失败：{exc}" if lang == "zh" else f"Failed to count missing incidents: {exc}")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -4339,14 +4379,48 @@ def render_admin_deepseek_usage() -> None:
             stats.get("latest_at") or "-",
         )
 
-    if remaining > 0:
+    tokens_total = stats.get("tokens_total") or {}
+    tokens_24h = stats.get("tokens_24h") or {}
+    tokens_7d = stats.get("tokens_7d") or {}
+    t1, t2, t3 = st.columns(3)
+    with t1:
+        st.metric(
+            "累计 Token" if lang == "zh" else "Total tokens",
+            f"{tokens_total.get('total_tokens', 0):,}",
+        )
+    with t2:
+        st.metric(
+            "近 24h Token" if lang == "zh" else "Tokens 24h",
+            f"{tokens_24h.get('total_tokens', 0):,}",
+        )
+    with t3:
+        st.metric(
+            "近 7 天 Token" if lang == "zh" else "Tokens 7d",
+            f"{tokens_7d.get('total_tokens', 0):,}",
+        )
+
+    if tokens_total.get("columns_available") is False:
+        st.info(
+            "Token 列尚未创建：请在 Supabase 执行 `scripts/incident_llm_cache_tokens.sql` 后刷新。"
+            if lang == "zh"
+            else "Token columns missing: run scripts/incident_llm_cache_tokens.sql in Supabase."
+        )
+    elif tokens_total.get("rows_with_tokens", 0) < stats.get("cache_total", 0):
+        st.caption(
+            f"其中 {tokens_total.get('rows_with_tokens', 0)} / {stats.get('cache_total', 0)} 条缓存有 Token 记录；"
+            f"历史补全在升级前写入的记录无 Token 数据。"
+            if lang == "zh"
+            else f"{tokens_total.get('rows_with_tokens', 0)} / {stats.get('cache_total', 0)} cache rows have token data."
+        )
+
+    if count_missing_incident_cache and remaining > 0:
         st.warning(
             f"**剩余未缓存约 {remaining} 条**（已扫描 {total_unique} 条唯一 incident，已缓存 {cached_unique} 条）。"
             f"每次补全最多处理滑块设定的条数；重复点击会继续消耗 DeepSeek API。"
             if lang == "zh"
             else f"**~{remaining} incidents still uncached** ({cached_unique}/{total_unique} unique cached in scan). Each run uses API quota."
         )
-    else:
+    elif count_missing_incident_cache:
         st.success(
             "当前扫描范围内 incident 已全部缓存（或无可分析事件）。" if lang == "zh"
             else "All scanned incidents are cached (or none to analyze)."
@@ -4384,6 +4458,7 @@ def render_admin_deepseek_usage() -> None:
             show_rows.append({
                 "时间 (HKT)" if lang == "zh" else "Time (HKT)": format_datetime_hkt(row.get("created_at") or ""),
                 "LLM分" if lang == "zh" else "LLM": row.get("llm_impact_score"),
+                "Token" if lang == "zh" else "Tokens": row.get("total_tokens") or 0,
                 "类型" if lang == "zh" else "Type": row.get("incident_type"),
                 "事件" if lang == "zh" else "Incident": text,
             })
@@ -4402,7 +4477,9 @@ def render_admin_deepseek_usage() -> None:
         key="admin_deepseek_max_calls",
     )
     if st.button("▶️ 补全未缓存 incident" if lang == "zh" else "▶️ Backfill missing incidents", key="admin_deepseek_backfill"):
-        if max_calls <= 0:
+        if not batch_cache_missing_incidents or not fetch_past_incident_texts:
+            st.error("补全功能不可用，请重新部署最新版 incident_llm_service.py。" if lang == "zh" else "Backfill unavailable; redeploy latest incident_llm_service.py.")
+        elif max_calls <= 0:
             st.warning("请将最多调用数设为大于 0。" if lang == "zh" else "Set max calls above 0.")
         else:
             with st.spinner("正在批量分析未缓存 incident..." if lang == "zh" else "Backfilling incidents..."):
@@ -4416,16 +4493,18 @@ def render_admin_deepseek_usage() -> None:
                     texts, SUPABASE_URL, headers, secrets, max_new_calls=max_calls
                 )
             remaining_after = result.get("remaining_missing", 0)
+            session_tokens = result.get("total_tokens", 0)
             _load_missing_incident_stats.clear()
             st.success(
                 f"完成：新分析 {result.get('analyzed', 0)} 条，已有缓存 {result.get('cached', 0)}，"
-                f"跳过 {result.get('skipped', 0)}，错误 {result.get('errors', 0)}。"
+                f"跳过 {result.get('skipped', 0)}，错误 {result.get('errors', 0)}，"
+                f"本次 Token {session_tokens:,}。"
                 f"**剩余未缓存约 {remaining_after} 条**。"
                 if lang == "zh"
                 else (
                     f"Done: analyzed {result.get('analyzed', 0)}, cached {result.get('cached', 0)}, "
-                    f"skipped {result.get('skipped', 0)}, errors {result.get('errors', 0)}. "
-                    f"~{remaining_after} still uncached."
+                    f"skipped {result.get('skipped', 0)}, errors {result.get('errors', 0)}, "
+                    f"tokens {session_tokens:,}. ~{remaining_after} still uncached."
                 )
             )
             if remaining_after > 0:

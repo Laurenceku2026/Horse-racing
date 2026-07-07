@@ -84,6 +84,9 @@ def save_incident_llm_cache(
     race_no: Optional[int] = None,
     horse_no: str = "",
     model_version: str = "deepseek-chat",
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
 ) -> bool:
     if is_empty_incident(incident_text):
         return False
@@ -99,13 +102,24 @@ def save_incident_llm_cache(
         "incident_type": incident_type,
         "suggestion": suggestion[:200] if suggestion else "",
         "model_version": model_version,
+        "prompt_tokens": int(prompt_tokens or 0),
+        "completion_tokens": int(completion_tokens or 0),
+        "total_tokens": int(total_tokens or 0),
     }
     try:
         url = f"{supabase_url}/rest/v1/incident_llm_cache"
         hdrs = dict(headers)
         hdrs["Prefer"] = "resolution=merge-duplicates,return=minimal"
         resp = requests.post(url, headers=hdrs, json=payload, timeout=20)
-        return resp.status_code in (200, 201, 204)
+        if resp.status_code in (200, 201, 204):
+            return True
+        if resp.status_code == 400 and "prompt_tokens" in (resp.text or ""):
+            payload.pop("prompt_tokens", None)
+            payload.pop("completion_tokens", None)
+            payload.pop("total_tokens", None)
+            resp = requests.post(url, headers=hdrs, json=payload, timeout=20)
+            return resp.status_code in (200, 201, 204)
+        return False
     except Exception as exc:
         print(f"写入 incident_llm_cache 失败: {exc}")
         return False
@@ -113,7 +127,14 @@ def save_incident_llm_cache(
 
 def analyze_incident_with_deepseek_api(incident_text: str, secrets: Dict) -> Dict:
     """调用 DeepSeek API（仅用于批量补全/管理员，不在热路径自动调用）。"""
-    default = {"llm_impact_score": 0, "incident_type": "normal", "suggestion": ""}
+    default = {
+        "llm_impact_score": 0,
+        "incident_type": "normal",
+        "suggestion": "",
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
     if is_empty_incident(incident_text):
         return default
     try:
@@ -141,6 +162,10 @@ def analyze_incident_with_deepseek_api(incident_text: str, secrets: Dict) -> Dic
             max_tokens=200,
         )
         result_text = response.choices[0].message.content or ""
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
         match = re.search(r"\{[^{}]*\}", result_text)
         if match:
             data = json.loads(match.group())
@@ -148,6 +173,9 @@ def analyze_incident_with_deepseek_api(incident_text: str, secrets: Dict) -> Dic
                 "llm_impact_score": float(data.get("impact_score", 0)),
                 "incident_type": str(data.get("incident_type", "其他")),
                 "suggestion": str(data.get("suggestion", "")),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
             }
     except Exception as exc:
         print(f"DeepSeek incident 分析失败: {exc}")
@@ -259,7 +287,16 @@ def batch_cache_missing_incidents(
     max_new_calls: int = 20,
 ) -> Dict:
     """批量补全未缓存的 incident（限制单次 API 调用数）。"""
-    stats = {"cached": 0, "analyzed": 0, "skipped": 0, "errors": 0, "remaining_missing": 0}
+    stats = {
+        "cached": 0,
+        "analyzed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "remaining_missing": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
     seen = set()
     cached_hashes = fetch_cached_incident_hashes(supabase_url, headers)
     for text in incident_texts:
@@ -283,9 +320,15 @@ def batch_cache_missing_incidents(
             result["suggestion"],
             supabase_url,
             headers,
+            prompt_tokens=result.get("prompt_tokens", 0),
+            completion_tokens=result.get("completion_tokens", 0),
+            total_tokens=result.get("total_tokens", 0),
         )
         if ok:
             stats["analyzed"] += 1
+            stats["prompt_tokens"] = stats.get("prompt_tokens", 0) + int(result.get("prompt_tokens", 0) or 0)
+            stats["completion_tokens"] = stats.get("completion_tokens", 0) + int(result.get("completion_tokens", 0) or 0)
+            stats["total_tokens"] = stats.get("total_tokens", 0) + int(result.get("total_tokens", 0) or 0)
             cached_hashes.add(h)
         else:
             stats["errors"] += 1
@@ -335,6 +378,81 @@ def _count_incident_cache_rows(
         return 0
 
 
+def _sum_incident_cache_tokens(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    created_since: Optional[str] = None,
+) -> Dict:
+    """分页汇总 incident_llm_cache 的 Token 用量。"""
+    totals = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "rows_with_tokens": 0,
+        "rows_scanned": 0,
+        "columns_available": True,
+    }
+    if not supabase_url or not headers:
+        return totals
+
+    page_size = 1000
+    offset = 0
+    since_dt = None
+    if created_since:
+        try:
+            since_dt = datetime.fromisoformat(created_since.replace("Z", "+00:00"))
+            if since_dt.tzinfo is None:
+                since_dt = since_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            since_dt = None
+
+    select_cols = "prompt_tokens,completion_tokens,total_tokens,created_at"
+    while True:
+        try:
+            url = (
+                f"{supabase_url}/rest/v1/incident_llm_cache"
+                f"?select={select_cols}&limit={page_size}&offset={offset}"
+            )
+            resp = requests.get(url, headers=headers, timeout=30)
+            if resp.status_code == 400 and "prompt_tokens" in (resp.text or ""):
+                totals["columns_available"] = False
+                break
+            if resp.status_code != 200:
+                break
+            rows = resp.json() or []
+            if not rows:
+                break
+            for row in rows:
+                totals["rows_scanned"] += 1
+                if since_dt:
+                    created_raw = row.get("created_at") or ""
+                    try:
+                        created_dt = datetime.fromisoformat(created_raw.replace("Z", "+00:00"))
+                        if created_dt.tzinfo is None:
+                            created_dt = created_dt.replace(tzinfo=timezone.utc)
+                        if created_dt < since_dt:
+                            continue
+                    except Exception:
+                        continue
+                prompt = int(row.get("prompt_tokens") or 0)
+                completion = int(row.get("completion_tokens") or 0)
+                total = int(row.get("total_tokens") or 0)
+                if total <= 0 and prompt <= 0 and completion <= 0:
+                    continue
+                totals["rows_with_tokens"] += 1
+                totals["prompt_tokens"] += prompt
+                totals["completion_tokens"] += completion
+                totals["total_tokens"] += total if total > 0 else (prompt + completion)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+        except Exception as exc:
+            print(f"汇总 incident_llm_cache Token 失败: {exc}")
+            break
+    return totals
+
+
 def fetch_incident_llm_usage_stats(
     supabase_url: str,
     headers: Dict,
@@ -350,15 +468,26 @@ def fetch_incident_llm_usage_stats(
         "cache_7d": _count_incident_cache_rows(supabase_url, headers, created_since=since_7d),
         "latest_at": "",
         "recent_rows": [],
+        "tokens_total": _sum_incident_cache_tokens(supabase_url, headers),
+        "tokens_24h": _sum_incident_cache_tokens(supabase_url, headers, created_since=since_24h),
+        "tokens_7d": _sum_incident_cache_tokens(supabase_url, headers, created_since=since_7d),
     }
 
     try:
         url = (
             f"{supabase_url}/rest/v1/incident_llm_cache"
-            f"?select=incident_text,llm_impact_score,incident_type,model_version,created_at"
+            f"?select=incident_text,llm_impact_score,incident_type,model_version,created_at,"
+            f"prompt_tokens,completion_tokens,total_tokens"
             f"&order=created_at.desc&limit=15"
         )
         resp = requests.get(url, headers=headers, timeout=20)
+        if resp.status_code == 400 and "prompt_tokens" in (resp.text or ""):
+            url = (
+                f"{supabase_url}/rest/v1/incident_llm_cache"
+                f"?select=incident_text,llm_impact_score,incident_type,model_version,created_at"
+                f"&order=created_at.desc&limit=15"
+            )
+            resp = requests.get(url, headers=headers, timeout=20)
         if resp.status_code == 200 and resp.json():
             rows = resp.json()
             stats["recent_rows"] = rows
