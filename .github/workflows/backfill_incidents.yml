@@ -1,0 +1,33 @@
+name: Auto Backfill Incident LLM
+
+on:
+  # 赛日后自动补全（香港时间）
+  # 17:30 HKT = 09:30 UTC（日马后）
+  # 23:30 HKT = 15:30 UTC（夜马后）
+  schedule:
+    - cron: '30 9 * * *'
+    - cron: '30 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  backfill-incidents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests openai
+
+      - name: Run incident auto backfill
+        env:
+          SUPABASE_STOCK_URL: ${{ secrets.SUPABASE_STOCK_URL }}
+          SUPABASE_STOCK_SECRET_KEY: ${{ secrets.SUPABASE_STOCK_SECRET_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
+          DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+          INCIDENT_AUTO_MAX_CALLS: '500'
+        run: python scripts/auto_backfill_incidents.py

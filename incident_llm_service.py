@@ -279,6 +279,154 @@ def count_missing_incident_cache(
     }
 
 
+def get_recent_race_dates_with_incidents(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    days_back: int = 7,
+    days_forward: int = 1,
+) -> List[str]:
+    """取得近 N 天（含今天/明日）含 incident 的赛日列表。"""
+    if not supabase_url or not headers:
+        return []
+    today = datetime.now(HKT).date()
+    start = (today - timedelta(days=days_back)).isoformat()
+    end = (today + timedelta(days=days_forward)).isoformat()
+    try:
+        url = (
+            f"{supabase_url}/rest/v1/past_performances_v2"
+            f"?select=race_date&incident=not.is.null"
+            f"&race_date=gte.{start}&race_date=lte.{end}&limit=10000"
+        )
+        resp = requests.get(url, headers=headers, timeout=60)
+        if resp.status_code != 200:
+            return []
+        dates = sorted(
+            {
+                str(r.get("race_date") or "")[:10]
+                for r in (resp.json() or [])
+                if r.get("race_date")
+            }
+        )
+        return dates
+    except Exception as exc:
+        print(f"读取近赛日 incident 失败: {exc}")
+        return []
+
+
+def get_upcoming_meeting_dates(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    days_ahead: int = 14,
+) -> List[str]:
+    """本地赛程表中的未来赛日（新赛期）。"""
+    if not supabase_url or not headers:
+        return []
+    today = datetime.now(HKT).date().isoformat()
+    end = (datetime.now(HKT).date() + timedelta(days=days_ahead)).isoformat()
+    try:
+        url = (
+            f"{supabase_url}/rest/v1/races"
+            f"?select=race_date&race_date=gte.{today}&race_date=lte.{end}&limit=5000"
+        )
+        resp = requests.get(url, headers=headers, timeout=30)
+        if resp.status_code != 200:
+            return []
+        return sorted(
+            {
+                str(r.get("race_date") or "")[:10]
+                for r in (resp.json() or [])
+                if r.get("race_date")
+            }
+        )
+    except Exception as exc:
+        print(f"读取未来赛日失败: {exc}")
+        return []
+
+
+def fetch_incident_texts_for_race_dates(
+    supabase_url: str,
+    headers: Dict,
+    race_dates: List[str],
+    *,
+    limit: int = INCIDENT_SCAN_LIMIT,
+) -> Tuple[List[str], bool]:
+    """按赛日拉取 incident 文本。"""
+    if not supabase_url or not headers or not race_dates:
+        return [], False
+    clean_dates = sorted({d[:10] for d in race_dates if d})
+    if not clean_dates:
+        return [], False
+    try:
+        in_clause = ",".join(clean_dates)
+        url = (
+            f"{supabase_url}/rest/v1/past_performances_v2"
+            f"?select=incident,race_date"
+            f"&incident=not.is.null&race_date=in.({in_clause})&limit={limit}"
+        )
+        resp = requests.get(url, headers=headers, timeout=60)
+        if resp.status_code != 200:
+            return [], False
+        rows = resp.json() or []
+        texts = [r.get("incident", "") for r in rows if r.get("incident")]
+        return texts, len(rows) >= limit
+    except Exception as exc:
+        print(f"按赛日读取 incident 失败: {exc}")
+        return [], False
+
+
+def run_auto_incident_backfill(
+    supabase_url: str,
+    headers: Dict,
+    secrets: Dict,
+    *,
+    days_back: int = 7,
+    days_forward: int = 1,
+    include_upcoming_meetings: bool = True,
+    max_new_calls: int = 500,
+    fill_all: bool = False,
+) -> Dict:
+    """
+    赛日自动补全：检查近赛日 + 本地新赛期相关往绩中的未缓存 incident。
+    供 GitHub Actions / 管理员触发；普通用户界面不调用。
+    """
+    recent_dates = get_recent_race_dates_with_incidents(
+        supabase_url, headers, days_back=days_back, days_forward=days_forward
+    )
+    upcoming_dates = (
+        get_upcoming_meeting_dates(supabase_url, headers)
+        if include_upcoming_meetings
+        else []
+    )
+    target_dates = sorted(set(recent_dates) | set(upcoming_dates))
+    texts, truncated = fetch_incident_texts_for_race_dates(
+        supabase_url, headers, target_dates, limit=INCIDENT_SCAN_LIMIT
+    )
+    if not texts:
+        return {
+            "analyzed": 0,
+            "cached": 0,
+            "skipped": 0,
+            "errors": 0,
+            "remaining_missing": 0,
+            "target_dates": target_dates,
+            "message": "no incidents for target dates",
+        }
+    stats = batch_cache_missing_incidents(
+        texts,
+        supabase_url,
+        headers,
+        secrets,
+        max_new_calls=max_new_calls,
+        fill_all=fill_all,
+    )
+    stats["target_dates"] = target_dates
+    stats["scan_truncated"] = truncated
+    stats["mode"] = "auto"
+    return stats
+
+
 def estimate_backfill_tokens(remaining_calls: int, tokens_total_stats: Optional[Dict] = None) -> Dict:
     """根据历史 Token 均值估算补全费用规模（仅供参考）。"""
     default_per_call = 450

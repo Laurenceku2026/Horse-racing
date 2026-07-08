@@ -1767,6 +1767,7 @@ try:
         lambda iso_str: (iso_str or "")[:19].replace("T", " "),
     )
     fetch_past_incident_texts = getattr(ils, "fetch_past_incident_texts", None)
+    run_auto_incident_backfill = getattr(ils, "run_auto_incident_backfill", None)
     INCIDENT_SCAN_LIMIT = getattr(ils, "INCIDENT_SCAN_LIMIT", 5000)
     INCIDENT_LLM_OK = True
     INCIDENT_LLM_IMPORT_ERROR = ""
@@ -1782,6 +1783,7 @@ except ImportError as _incident_llm_import_error:
     estimate_backfill_tokens = None
     format_datetime_hkt = lambda iso_str: (iso_str or "")[:19].replace("T", " ")
     fetch_past_incident_texts = None
+    run_auto_incident_backfill = None
     INCIDENT_SCAN_LIMIT = 5000
 
 
@@ -4627,6 +4629,43 @@ def render_admin_deepseek_usage() -> None:
             if st.button("取消" if lang == "zh" else "Cancel", key="admin_deepseek_fill_all_cancel"):
                 st.session_state["admin_deepseek_fill_all_confirm"] = False
                 st.rerun()
+
+    st.markdown("---")
+    st.markdown("**赛日自动补全（仅管理员 / GitHub Actions）**" if lang == "zh" else "**Scheduled race-day auto backfill (admin / GitHub Actions)**")
+    st.caption(
+        "每天 **17:30 / 23:30 香港时间** 由 GitHub Actions 自动检查近 7 天赛日 + 本地新赛期相关 incident，"
+        "仅补未缓存项（每次最多 500 条 API）。**普通用户界面不会调用 DeepSeek。**"
+        if lang == "zh"
+        else "GitHub Actions runs at 17:30/23:30 HKT; max 500 API calls per run. Users never trigger DeepSeek."
+    )
+    if run_auto_incident_backfill and st.button(
+        "🔄 立即运行赛日自动补全" if lang == "zh" else "🔄 Run race-day auto backfill now",
+        key="admin_deepseek_auto_run",
+    ):
+        auto_max = st.session_state.get("admin_deepseek_auto_max", 500)
+        with st.spinner("正在执行赛日自动补全..." if lang == "zh" else "Running auto backfill..."):
+            auto_result = run_auto_incident_backfill(
+                SUPABASE_URL,
+                headers,
+                _get_deepseek_secrets(),
+                max_new_calls=auto_max,
+                fill_all=False,
+            )
+        _load_missing_incident_stats.clear()
+        dates = auto_result.get("target_dates") or []
+        st.success(
+            f"自动补全完成：赛日 {', '.join(dates) or '-'}；"
+            f"新分析 {auto_result.get('analyzed', 0)} 条，"
+            f"剩余未缓存约 {auto_result.get('remaining_missing', 0)} 条，"
+            f"Token {auto_result.get('total_tokens', 0):,}。"
+            if lang == "zh"
+            else (
+                f"Auto backfill done for {dates}; analyzed {auto_result.get('analyzed', 0)}, "
+                f"remaining {auto_result.get('remaining_missing', 0)}, "
+                f"tokens {auto_result.get('total_tokens', 0):,}."
+            )
+        )
+        st.rerun()
 
 
 # ==================== 管理员面板 ====================
@@ -15330,56 +15369,8 @@ def analyze_incident_with_deepseek(incident_text: str) -> Dict:
 
 
 def analyze_race_with_deepseek(race_info: Dict, runners: List[Dict]) -> str:
-    """
-    使用 DeepSeek 分析整场赛事，生成投注建议
-    返回自然语言建议
-    """
-    client = get_deepseek_client()
-    if not client:
-        return "DeepSeek 未配置，无法生成分析建议。"
-    
-    # 构建提示词
-    runners_summary = []
-    for i, runner in enumerate(runners[:5]):  # 只取前5匹
-        runners_summary.append(
-            f"{i+1}. {runner.get('horse_name', '未知')} - "
-            f"胜率: {runner.get('win_probability', 0)*100:.1f}%, "
-            f"赔率: {runner.get('odds_win', 0):.1f}, "
-            f"档位: {runner.get('draw', '-')}"
-        )
-    
-    prompt = f"""
-    你是一位专业的香港赛马分析师。请分析以下赛事并给出投注建议。
-    
-    赛事信息：
-    - 场地：{race_info.get('venue', 'ST')}
-    - 路程：{race_info.get('distance', 0)}米
-    - 班次：{race_info.get('race_class', '未知')}
-    - 场地状况：{race_info.get('going', '未知')}
-    
-    主要马匹分析：
-    {chr(10).join(runners_summary)}
-    
-    请给出：
-    1. 赛事形势分析（50字以内）
-    2. 推荐投注策略（独赢/位置/连赢）
-    3. 信心马匹及理由
-    
-    请用中文回复，简洁明了。
-    """
-    
-    try:
-        response = client.chat.completions.create(
-            model=st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=500
-        )
-        
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"DeepSeek 赛事分析失败: {e}")
-        return f"分析失败: {str(e)}"
+    """整场赛事 DeepSeek 分析（已停用；防止非管理员路径调用 API）。"""
+    return "此功能已停用。Incident 分析请使用管理员 DeepSeek 补全（结果永久缓存）。"
 
 
 def batch_analyze_incidents(incidents: List[str]) -> List[Dict]:
