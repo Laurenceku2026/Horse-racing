@@ -7607,6 +7607,24 @@ def precompute_all_races_for_date(race_date: str, venue: str = None, user_weight
     
     return result
 #-------------------------
+def _is_valid_runner_horse_no(horse_no) -> bool:
+    """有效出赛马号须为正整数（0 为同步异常占位，无赔率）。"""
+    if horse_no is None or horse_no == "":
+        return False
+    try:
+        return int(horse_no) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _filter_valid_race_runners(runners: List[Dict]) -> List[Dict]:
+    valid = [r for r in runners if _is_valid_runner_horse_no(r.get("horse_no"))]
+    dropped = len(runners) - len(valid)
+    if dropped:
+        print(f"已过滤无效马号出马 {dropped} 条")
+    return valid
+
+
 def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> List[Dict]:
     """
     获取赛事出赛马匹详情
@@ -7659,7 +7677,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     })
                 
                 print(f"从 race_runners_clean 获取到 {len(result)} 匹马 (未来赛事)")
-                return _enrich_runner_horse_names(result)
+                return _filter_valid_race_runners(_enrich_runner_horse_names(result))
             else:
                 print(f"race_runners_clean 中无数据: {race_date} {venue} 第{race_no}场")
                 return []
@@ -7713,7 +7731,7 @@ def get_race_runners_with_details(race_date: str, venue: str, race_no: int) -> L
                     })
                 
                 print(f"从 past_performances_v2 获取到 {len(result)} 匹马 (历史赛事)")
-                return _enrich_runner_horse_names(result)
+                return _filter_valid_race_runners(_enrich_runner_horse_names(result))
             else:
                 return []
         

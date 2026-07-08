@@ -161,6 +161,17 @@ function resolveKeyMinuteForSnapshot(postTimeIso) {
     return resolveSnapshotMinute(minutesToStart, false);
 }
 
+function resolveRunnerHorseNo(runner) {
+    const candidates = [runner?.no, runner?.runnerNo, runner?.horseNo, runner?.number];
+    for (const raw of candidates) {
+        const n = parseInt(raw, 10);
+        if (n > 0) {
+            return n;
+        }
+    }
+    return 0;
+}
+
 async function saveParsedOddsSnapshots(raceCtx, parsed, runners, keyMinute) {
     if (keyMinute === null || !parsed) {
         return { saved: 0, skipped: 0 };
@@ -169,7 +180,7 @@ async function saveParsedOddsSnapshots(raceCtx, parsed, runners, keyMinute) {
     let savedCount = 0;
     let skippedCount = 0;
     for (const runner of runners) {
-        const horseNo = parseInt(runner.no, 10);
+        const horseNo = resolveRunnerHorseNo(runner);
         if (!horseNo) {
             continue;
         }
@@ -383,7 +394,7 @@ async function collectOddsForRace(race, options = {}) {
         const errors = [];
 
         for (const runner of runners) {
-            const horseNo = parseInt(runner.no, 10);
+            const horseNo = resolveRunnerHorseNo(runner);
             if (!horseNo) {
                 continue;
             }
@@ -613,7 +624,14 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
         for (const runner of runners) {
             const horseId = (runner.horse && runner.horse.id) || runner.id || runner.horseId || '';
             const horseName = runner.name_en || runner.horseName || 'Unknown';
-            const horseNo = parseInt(runner.no) || 0;
+            const horseNo = resolveRunnerHorseNo(runner);
+            if (!horseNo) {
+                const horseNameZh = runner.name_ch || '';
+                console.warn(
+                    `[同步] 跳过无有效马号: ${horseNameZh || horseName} (${date} ${venue} R${raceNo})`
+                );
+                continue;
+            }
             const draw = parseInt(runner.barrierDrawNumber) || 0;
             const actualWeight = parseInt(runner.handicapWeight) || 0;
             const rating = parseInt(runner.internationalRating) || 0;
@@ -661,6 +679,14 @@ async function syncSingleRaceToSupabase(date, venue, raceNo, isOverseas = false)
                 console.error(`保存出赛记录失败 ${horseName}:`, runnerError);
             }
         }
+
+        await supabase
+            .from('race_runners_clean')
+            .delete()
+            .eq('race_date', date)
+            .eq('venue', venue)
+            .eq('race_no', parseInt(raceNo))
+            .eq('horse_no', 0);
 
         console.log(`[同步完成] ${date} ${venue} 第${raceNo}场, ${runners.length} 匹马`);
         return true;
@@ -723,7 +749,7 @@ async function updateFinalOdds(race) {
         let skippedCount = 0;
 
         for (const runner of runners) {
-            const horseNo = parseInt(runner.no, 10);
+            const horseNo = resolveRunnerHorseNo(runner);
             if (!horseNo) {
                 continue;
             }
