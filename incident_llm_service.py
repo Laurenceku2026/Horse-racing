@@ -61,15 +61,39 @@ def get_combined_incident_adjustment(
     supabase_url: str = "",
     headers: Optional[Dict] = None,
     llm_weight: float = 0.5,
+    incident_llm_map: Optional[Dict[str, float]] = None,
 ) -> Tuple[float, float, float]:
     """
     返回 (combined, rule_score, llm_impact)
     combined = clamp(rule + llm_weight * llm_impact, -20, 20)
     """
     rule = get_rule_incident_score(incident_text)
-    llm = get_llm_impact_from_cache(incident_text, supabase_url, headers)
+    llm = 0.0
+    if not is_empty_incident(incident_text):
+        if incident_llm_map is not None:
+            llm = float(incident_llm_map.get(incident_text, 0.0) or 0.0)
+        else:
+            llm = get_llm_impact_from_cache(incident_text, supabase_url, headers)
     combined = max(-20.0, min(20.0, rule + llm_weight * llm))
     return combined, rule, llm
+
+
+def incident_combined_feature_score(
+    incident_text: str,
+    incident_llm_map: Optional[Dict[str, float]] = None,
+    supabase_url: str = "",
+    headers: Optional[Dict] = None,
+    llm_weight: float = 0.5,
+) -> float:
+    """ML/展示用 incident 特征分：规则分 + llm_weight×LLM 缓存分，范围 -20~+20。"""
+    combined, _, _ = get_combined_incident_adjustment(
+        incident_text,
+        supabase_url,
+        headers,
+        llm_weight=llm_weight,
+        incident_llm_map=incident_llm_map,
+    )
+    return combined
 
 
 def save_incident_llm_cache(

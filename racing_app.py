@@ -1757,6 +1757,7 @@ try:
     import incident_llm_service as ils
     get_combined_incident_adjustment = ils.get_combined_incident_adjustment
     get_llm_impact_from_cache = ils.get_llm_impact_from_cache
+    incident_combined_feature_score = getattr(ils, "incident_combined_feature_score", None)
     batch_cache_missing_incidents = ils.batch_cache_missing_incidents
     fetch_incident_llm_usage_stats = ils.fetch_incident_llm_usage_stats
     count_missing_incident_cache = getattr(ils, "count_missing_incident_cache", None)
@@ -1782,6 +1783,7 @@ except ImportError as _incident_llm_import_error:
     INCIDENT_LLM_IMPORT_ERROR = str(_incident_llm_import_error)
     get_combined_incident_adjustment = None
     get_llm_impact_from_cache = None
+    incident_combined_feature_score = None
     batch_cache_missing_incidents = None
     fetch_incident_llm_usage_stats = None
     count_missing_incident_cache = None
@@ -6408,6 +6410,8 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             info_msg = "暂无成绩数据" if lang == "zh" else "No performance data available"
             st.info(info_msg)
             return pd.DataFrame()
+
+        incident_llm_map = _build_incident_llm_map([p.get("incident", "") for p in data])
         
         # ==================== 3. 按 horse_id 分组 ====================
         from collections import defaultdict
@@ -6582,15 +6586,19 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 odds_win = 10.0
             
             odds_score = calculate_odds_score(odds_win, 50.0, odds_w)
+
+            latest_incident = latest.get('incident', '')
+            llm_overlay = incident_llm_map.get(latest_incident, 0.0) if latest_incident else 0.0
             
             status_score = calculate_status_score(
                 birth_year,
                 latest.get('body_weight'),
                 [r.get('body_weight') for r in past_performances if r.get('body_weight')],
-                latest.get('incident', ''),
+                latest_incident,
                 latest.get('running_position', ''),
                 latest.get('position'),
-                status_w
+                status_w,
+                llm_incident_overlay=llm_overlay,
             )
             
             overall_score = calculate_overall_score(
@@ -7405,6 +7413,10 @@ def calculate_all_horses_scores_v2(runners: List[Dict], user_weights: Dict) -> T
     # 转换为元组（因为 @st.cache_data 要求 hashable）
     horse_ids_tuple = tuple(set(horse_ids))
     perf_cache = get_horses_performances_batch(horse_ids_tuple)
+
+    incident_llm_map = _build_incident_llm_map(
+        [r.get("incident", "") for r in runners if r.get("incident")]
+    )
     
     scores = []
     basic_scores = []
@@ -7469,10 +7481,12 @@ def calculate_all_horses_scores_v2(runners: List[Dict], user_weights: Dict) -> T
         )
         
         odds_score = calculate_odds_score(odds_win)
+        llm_overlay = incident_llm_map.get(incident, 0.0) if incident else 0.0
         status_score = calculate_status_score(
             None, body_weight,
             [p.get('body_weight') for p in past_performances if p.get('body_weight')],
-            incident, runner.get('running_position', ''), None, user_weights
+            incident, runner.get('running_position', ''), None, user_weights,
+            llm_incident_overlay=llm_overlay,
         )
         
         combined_score = calculate_overall_score(
@@ -8004,7 +8018,8 @@ def build_ml_features_for_prediction(runner: Dict, past_before: List[Dict],
                                        horse_birth_years: Dict, 
                                        jockey_win_rates: Dict, 
                                        trainer_base_scores: Dict,
-                                       horse_id: str = None) -> Dict:
+                                       horse_id: str = None,
+                                       incident_llm_map: Optional[Dict[str, float]] = None) -> Dict:
     """
     为预测构建完整的30个特征（与训练一致）
     
@@ -8184,31 +8199,7 @@ def build_ml_features_for_prediction(runner: Dict, past_before: List[Dict],
     
     # ✅ 事件报告（规则 + LLM 缓存叠加，热路径不调 API）
     incident_text = runner.get('incident', '')
-    if INCIDENT_LLM_OK and SUPABASE_URL:
-        combined, _, _ = get_combined_incident_adjustment(
-            incident_text, SUPABASE_URL, get_supabase_headers(use_secret=True)
-        )
-        features['incident'] = combined
-    else:
-        incident_score = 0
-        if incident_text and incident_text not in ['无特别报告。', '無特別報告。', '']:
-            negative_keywords = [
-                ('流鼻血', -20), ('不良於行', -18), ('喘鳴症', -15),
-                ('心律不正', -15), ('勒避', -8), ('受阻', -8),
-                ('收慢', -6), ('外疊', -6), ('搶口', -5),
-                ('出閘笨拙', -5), ('內閃', -4), ('外閃', -4)
-            ]
-            positive_keywords = [('順利', 5), ('望空', 4), ('節省腳程', 3)]
-            for keyword, impact in negative_keywords:
-                if keyword in incident_text:
-                    incident_score = impact
-                    break
-            if incident_score == 0:
-                for keyword, impact in positive_keywords:
-                    if keyword in incident_text:
-                        incident_score = impact
-                        break
-        features['incident'] = max(-20, min(20, incident_score))
+    features['incident'] = _incident_feature_score(incident_text, incident_llm_map)
     
     # ✅ 冲刺能力
     running_pos = runner.get('running_position', '')
@@ -8286,7 +8277,8 @@ def get_trainer_base_scores() -> Dict[str, int]:
 #-------------
 def get_model_predictions(race_date: str, venue: str, race_no: int, 
                           runners: List[Dict], model_type: str, model=None,
-                          perf_cache: Optional[Dict[str, List[Dict]]] = None) -> List[float]:
+                          perf_cache: Optional[Dict[str, List[Dict]]] = None,
+                          incident_llm_map: Optional[Dict[str, float]] = None) -> List[float]:
     """
     获取 ML 模型预测的胜率
     支持二分类和三分类模型
@@ -8328,7 +8320,8 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
         features = build_ml_features_for_prediction(
             runner, past_before, race_date, venue, distance,
             horse_birth_years, jockey_win_rates, trainer_base_scores,
-            horse_id
+            horse_id,
+            incident_llm_map=incident_llm_map,
         )
         
         if features:
@@ -8516,9 +8509,14 @@ def train_model_for_smart_betting(model_type: str, start_date: str = None, end_d
     
     # 构建马匹往绩缓存
     horse_cache = build_horse_performances_cache(all_performances)
+    incident_llm_map = _build_incident_llm_map(
+        [p.get("incident", "") for p in all_performances if p.get("incident")]
+    )
     
     # 使用 cutoff_date = end_date（使用所有数据训练）
-    train_X, train_y = prepare_training_data_by_date(end_date, all_performances, horse_cache)
+    train_X, train_y = prepare_training_data_by_date(
+        end_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
+    )
     
     if train_X is None or len(train_X) < 50:
         st.error(f"训练数据不足: {len(train_X) if train_X is not None else 0} 条")
@@ -8635,6 +8633,11 @@ def _score_runners_for_parlay_race(
     if not runners_data:
         return []
 
+    if incident_llm_map is None:
+        incident_llm_map = _build_incident_llm_map(
+            [r.get("incident", "") for r in runners_data if r.get("incident")]
+        )
+
     if model_choice == "评分系统":
         if SCORING_ENGINE_OK:
             cfg = weights_config
@@ -8683,6 +8686,7 @@ def _score_runners_for_parlay_race(
         runners_data,
         ml_model_type,
         ml_model,
+        incident_llm_map=incident_llm_map,
     )
     for i, runner in enumerate(runners_data):
         if i < len(ml_probs):
@@ -10162,6 +10166,9 @@ def render_smart_betting(show_title: bool = True):
             horse_ids = tuple({r.get("horse_id") for r in runners if r.get("horse_id")})
             perf_cache = se_get_horses_performances_batch(horse_ids)
             horse_birth_years = load_horse_birth_years()
+            incident_llm_map = _build_incident_llm_map(
+                [r.get("incident", "") for r in runners if r.get("incident")]
+            )
 
             analysis_progress.progress(0.45, text=t()["sb_scoring_runners"])
             runners = score_runners_for_prediction(
@@ -10173,6 +10180,7 @@ def render_smart_betting(show_title: bool = True):
                 horse_birth_years,
                 weights_config,
                 temperature=0.8,
+                incident_llm_map=incident_llm_map,
             )
             runners = localize_runner_names(runners)
         #---------
@@ -10184,13 +10192,17 @@ def render_smart_betting(show_title: bool = True):
 
             if model is not None:
                 try:
+                    incident_llm_map = _build_incident_llm_map(
+                        [r.get("incident", "") for r in runners if r.get("incident")]
+                    )
                     ml_probs = get_model_predictions(
                         selected_race.get('race_date'),
                         selected_race.get('venue'),
                         selected_race.get('race_no'),
                         runners,
                         model_type,
-                        model
+                        model,
+                        incident_llm_map=incident_llm_map,
                     )
                 except Exception as e:
                     st.error(f"{t()['prediction_error']}: {e}")
@@ -11199,6 +11211,10 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
             error_msg = "未獲取到任何數據" if lang == "zh" else "No data retrieved"
             st.error(error_msg)
             return result
+
+        incident_llm_map = _build_incident_llm_map(
+            [p.get("incident", "") for p in all_performances if p.get("incident")]
+        )
         
         # ==================== 3. 构建马匹往绩缓存 ====================
         horse_cache = build_horse_performances_cache(all_performances)
@@ -11313,6 +11329,7 @@ def run_backtest_for_model(start_date: str, end_date: str, model_type: str) -> D
                 horse_cache,
                 horse_birth_years,
                 weights_cfg,
+                incident_llm_map=incident_llm_map,
             )
             
             if not runners:
@@ -11750,7 +11767,12 @@ def calculate_basic_score_fast(past_performances_v2: List[Dict], target_distance
 #-------------
 # ==================== ML 模型回测专用：时间滑窗训练 ====================
 
-def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict], horse_cache: Dict) -> Tuple[pd.DataFrame, pd.Series]:
+def prepare_training_data_by_date(
+    cutoff_date: str,
+    all_performances: List[Dict],
+    horse_cache: Dict,
+    incident_llm_map: Optional[Dict[str, float]] = None,
+) -> Tuple[pd.DataFrame, pd.Series]:
     """
     准备截止到 cutoff_date 之前的训练数据
     使用18个因子（完整版，包含骑师、练马师、年龄、体重、事件、冲刺、新马标记）
@@ -11784,6 +11806,11 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
     
     # ==================== 4. 筛选 cutoff_date 之前的赛事 ====================
     past_races = [p for p in all_performances if p.get('race_date', '') < cutoff_date]
+
+    if incident_llm_map is None:
+        incident_llm_map = _build_incident_llm_map(
+            [p.get("incident", "") for p in past_races if p.get("incident")]
+        )
     
     # ==================== 5. 按赛事分组 ====================
     race_groups = {}
@@ -11998,28 +12025,8 @@ def prepare_training_data_by_date(cutoff_date: str, all_performances: List[Dict]
             else:
                 features['weight_change'] = 50
             
-            # ✅ 事件报告
-            incident_text = r.get('incident', '')
-            incident_score = 0
-            if incident_text and incident_text not in ['无特别报告。', '無特別報告。', '']:
-                negative_keywords = [
-                    ('流鼻血', -20), ('不良於行', -18), ('喘鳴症', -15),
-                    ('心律不正', -15), ('勒避', -8), ('受阻', -8),
-                    ('收慢', -6), ('外疊', -6), ('搶口', -5),
-                    ('出閘笨拙', -5), ('內閃', -4), ('外閃', -4)
-                ]
-                positive_keywords = [('順利', 5), ('望空', 4), ('節省腳程', 3)]
-                
-                for keyword, impact in negative_keywords:
-                    if keyword in incident_text:
-                        incident_score = impact
-                        break
-                if incident_score == 0:
-                    for keyword, impact in positive_keywords:
-                        if keyword in incident_text:
-                            incident_score = impact
-                            break
-            features['incident'] = max(-20, min(20, incident_score))
+            # ✅ 事件报告（规则 + LLM 缓存，与预测一致）
+            features['incident'] = _incident_feature_score(r.get('incident', ''), incident_llm_map)
             
             # ✅ 冲刺能力
             running_pos = r.get('running_position', '')
@@ -12406,10 +12413,13 @@ def _prepare_ml_runners_for_strategy(
     model_type: str,
     model,
     perf_cache: Optional[Dict[str, List[Dict]]] = None,
+    incident_llm_map: Optional[Dict[str, float]] = None,
 ) -> List[Dict]:
     """为策略回测准备带 ML 胜率与赔率的出马列表。"""
     ml_probs = get_model_predictions(
-        race_date, venue, race_no, runners_data, model_type, model, perf_cache=perf_cache
+        race_date, venue, race_no, runners_data, model_type, model,
+        perf_cache=perf_cache,
+        incident_llm_map=incident_llm_map,
     )
     prepared = []
     for i, row in enumerate(runners_data):
@@ -12458,6 +12468,10 @@ def run_strategy_backtest(
         st.error("未獲取到任何數據")
         return BacktestSummary(model_name=model_label, diagnostics=diagnostics)
 
+    incident_llm_map = _build_incident_llm_map(
+        [p.get("incident", "") for p in all_performances if p.get("incident")]
+    )
+
     horse_cache = build_horse_performances_cache(all_performances)
     races = get_races_from_performances(all_performances)
     if not races:
@@ -12484,7 +12498,9 @@ def run_strategy_backtest(
         status_text.text(f"策略回測 {model_label}: {current_date} ({idx + 1}/{len(sorted_dates)})")
         progress_bar.progress((idx + 1) / len(sorted_dates))
 
-        train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
+        train_X, train_y = prepare_training_data_by_date(
+            current_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
+        )
         if train_X is None or len(train_X) < 50:
             continue
 
@@ -12514,7 +12530,8 @@ def run_strategy_backtest(
                 continue
 
             ml_runners = _prepare_ml_runners_for_strategy(
-                runners_data, race_date, venue, race_no, model_type, model
+                runners_data, race_date, venue, race_no, model_type, model,
+                incident_llm_map=incident_llm_map,
             )
             win_odds_snapshot = fetch_win_odds_snapshot(
                 race_date, venue, race_no, SUPABASE_URL, supabase_headers
@@ -12581,6 +12598,30 @@ def _build_incident_llm_map(incident_texts: List[str]) -> Dict[str, float]:
     return mapping
 
 
+def _incident_feature_score(
+    incident_text: str,
+    incident_llm_map: Optional[Dict[str, float]] = None,
+) -> float:
+    """规则 + 0.5×LLM 缓存分（-20~+20），与 ML 预测/训练一致。"""
+    if incident_combined_feature_score:
+        headers = get_supabase_headers(use_secret=True) if SUPABASE_URL else None
+        return incident_combined_feature_score(
+            incident_text,
+            incident_llm_map=incident_llm_map,
+            supabase_url=SUPABASE_URL or "",
+            headers=headers,
+        )
+    if get_combined_incident_adjustment and SUPABASE_URL:
+        combined, _, _ = get_combined_incident_adjustment(
+            incident_text,
+            SUPABASE_URL,
+            get_supabase_headers(use_secret=True),
+            incident_llm_map=incident_llm_map,
+        )
+        return combined
+    return calculate_incident_score(incident_text)
+
+
 def _group_race_days(races: List[Dict]) -> Dict[Tuple[str, str], List[Dict]]:
     days: Dict[Tuple[str, str], List[Dict]] = {}
     for race in races:
@@ -12595,6 +12636,7 @@ def _score_races_for_day_ml(
     model_type: str,
     model,
     horse_cache: Optional[Dict[str, List[Dict]]] = None,
+    incident_llm_map: Optional[Dict[str, float]] = None,
 ) -> Dict[int, List[Dict]]:
     scored: Dict[int, List[Dict]] = {}
     for race in day_races:
@@ -12610,7 +12652,9 @@ def _score_races_for_day_ml(
         if not runners_data:
             continue
         ml_runners = _prepare_ml_runners_for_strategy(
-            runners_data, race_date, venue, race_no, model_type, model, perf_cache=horse_cache
+            runners_data, race_date, venue, race_no, model_type, model,
+            perf_cache=horse_cache,
+            incident_llm_map=incident_llm_map,
         )
         scored[race_no] = ml_runners
     return scored
@@ -12646,7 +12690,7 @@ def run_day_portfolio_backtest(
         return {}
 
     incident_texts = [p.get("incident", "") for p in all_performances if p.get("incident")]
-    _build_incident_llm_map(incident_texts)
+    incident_llm_map = _build_incident_llm_map(incident_texts)
 
     horse_cache = build_horse_performances_cache(all_performances)
     races = get_races_from_performances(all_performances)
@@ -12692,7 +12736,9 @@ def run_day_portfolio_backtest(
             train_key = race_date[:7]
 
         if model is None or train_key != last_train_key:
-            train_X, train_y = prepare_training_data_by_date(race_date, all_performances, horse_cache)
+            train_X, train_y = prepare_training_data_by_date(
+                race_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
+            )
             if train_X is None or len(train_X) < 50:
                 continue
             cache_key = f"portfolio_{model_type}_{train_key}_{weight_hash}"
@@ -12709,7 +12755,7 @@ def run_day_portfolio_backtest(
             continue
 
         day_races = race_days[(race_date, venue)]
-        scored_by_race = _score_races_for_day_ml(day_races, all_performances, model_type, model)
+        scored_by_race = _score_races_for_day_ml(day_races, all_performances, model_type, model, incident_llm_map=incident_llm_map)
         for race_no, runners in scored_by_race.items():
             for row in runners:
                 row["horse_name"] = resolve_horse_name(row)
@@ -12935,6 +12981,9 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
         
         # 2. 构建马匹往绩缓存
         horse_cache = build_horse_performances_cache(all_performances)
+        incident_llm_map = _build_incident_llm_map(
+            [p.get("incident", "") for p in all_performances if p.get("incident")]
+        )
         print(f"📊 构建马匹缓存: {len(horse_cache)} 匹马")
         
         # 3. 获取按日期排序的赛事列表
@@ -12998,7 +13047,9 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             # 8.1 使用 current_date 之前的所有数据训练模型
             status_text.text(texts["ml_preparing_train"].format(date=current_date))
             #----------
-            train_X, train_y = prepare_training_data_by_date(current_date, all_performances, horse_cache)
+            train_X, train_y = prepare_training_data_by_date(
+                current_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
+            )
             
             if train_X is None or len(train_X) < 50:
                 status_text.text(
@@ -13299,28 +13350,8 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
                     else:
                         features['weight_change'] = 50
                     
-                    # ✅ 事件报告
-                    incident_text = r.get('incident', '')
-                    incident_score = 0
-                    if incident_text and incident_text not in ['无特别报告。', '無特別報告。', '']:
-                        negative_keywords = [
-                            ('流鼻血', -20), ('不良於行', -18), ('喘鳴症', -15),
-                            ('心律不正', -15), ('勒避', -8), ('受阻', -8),
-                            ('收慢', -6), ('外疊', -6), ('搶口', -5),
-                            ('出閘笨拙', -5), ('內閃', -4), ('外閃', -4)
-                        ]
-                        positive_keywords = [('順利', 5), ('望空', 4), ('節省腳程', 3)]
-                        
-                        for keyword, impact in negative_keywords:
-                            if keyword in incident_text:
-                                incident_score = impact
-                                break
-                        if incident_score == 0:
-                            for keyword, impact in positive_keywords:
-                                if keyword in incident_text:
-                                    incident_score = impact
-                                    break
-                    features['incident'] = max(-20, min(20, incident_score))
+                    # ✅ 事件报告（规则 + LLM 缓存，与训练一致）
+                    features['incident'] = _incident_feature_score(r.get('incident', ''), incident_llm_map)
                     
                     # ✅ 冲刺能力
                     running_pos = r.get('running_position', '')
@@ -14026,6 +14057,7 @@ def _score_races_for_day_rule(
     horse_cache: Dict,
     horse_birth_years: Dict,
     weights_cfg: Dict,
+    incident_llm_map: Optional[Dict[str, float]] = None,
 ) -> Dict[int, List[Dict]]:
     from scoring_engine import score_runners_for_prediction
 
@@ -14071,6 +14103,7 @@ def _score_races_for_day_rule(
             horse_cache,
             horse_birth_years,
             weights_cfg,
+            incident_llm_map=incident_llm_map,
         )
         if runners:
             scored[race_no] = runners
@@ -14159,6 +14192,9 @@ def run_top1_fixed_strategy_backtest(
 
     horse_cache = build_horse_performances_cache(all_performances)
     perf_index = _build_race_performance_index(all_performances)
+    incident_llm_map = _build_incident_llm_map(
+        [p.get("incident", "") for p in all_performances if p.get("incident")]
+    )
     all_races = get_races_from_performances(all_performances)
     backtest_races = [
         race for race in all_races if start_date <= race["race_date"] <= end_date
@@ -14220,12 +14256,16 @@ def run_top1_fixed_strategy_backtest(
 
         _attach_runners_data_to_day_races(day_races, perf_index)
         if model_type == "rule":
-            return _score_races_for_day_rule(day_races, horse_cache, horse_birth_years, weights_cfg)
+            return _score_races_for_day_rule(
+                day_races, horse_cache, horse_birth_years, weights_cfg, incident_llm_map
+            )
 
         train_key = race_date[:7] if fast_mode else race_date
         model = model_cache.get(train_key)
         if model is None:
-            train_X, train_y = prepare_training_data_by_date(race_date, all_performances, horse_cache)
+            train_X, train_y = prepare_training_data_by_date(
+                race_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
+            )
             if train_X is None or len(train_X) < 50:
                 return {}
 
@@ -14242,7 +14282,8 @@ def run_top1_fixed_strategy_backtest(
         if model is None:
             return {}
         return _score_races_for_day_ml(
-            day_races, all_performances, model_type, model, horse_cache=horse_cache
+            day_races, all_performances, model_type, model,
+            horse_cache=horse_cache, incident_llm_map=incident_llm_map,
         )
 
     result = run_top1_fixed_backtest_core(
@@ -14374,6 +14415,9 @@ def run_rank_calibration_backtest(
 
     horse_cache = build_horse_performances_cache(all_performances)
     perf_index = _build_race_performance_index(all_performances)
+    incident_llm_map = _build_incident_llm_map(
+        [p.get("incident", "") for p in all_performances if p.get("incident")]
+    )
     all_races = get_races_from_performances(all_performances)
     backtest_races = [
         race for race in all_races if start_date <= race["race_date"] <= end_date
@@ -14432,7 +14476,7 @@ def run_rank_calibration_backtest(
 
         if model_type == "rule":
             scored_by_race = _score_races_for_day_rule(
-                day_races, horse_cache, horse_birth_years, weights_cfg
+                day_races, horse_cache, horse_birth_years, weights_cfg, incident_llm_map
             )
         else:
             train_key = race_date[:7] if fast_mode else race_date
@@ -14442,7 +14486,7 @@ def run_rank_calibration_backtest(
                     all_performances, race_date, training_window_days
                 )
                 train_X, train_y = prepare_training_data_by_date(
-                    race_date, train_performances, horse_cache
+                    race_date, train_performances, horse_cache, incident_llm_map=incident_llm_map
                 )
                 if train_X is None or len(train_X) < 50:
                     continue
@@ -14459,7 +14503,8 @@ def run_rank_calibration_backtest(
             if model is None:
                 continue
             scored_by_race = _score_races_for_day_ml(
-                day_races, all_performances, model_type, model, horse_cache=horse_cache
+                day_races, all_performances, model_type, model,
+                horse_cache=horse_cache, incident_llm_map=incident_llm_map,
             )
 
         for race in sorted(day_races, key=lambda r: r["race_no"]):
