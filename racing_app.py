@@ -1760,6 +1760,7 @@ try:
     batch_cache_missing_incidents = ils.batch_cache_missing_incidents
     fetch_incident_llm_usage_stats = ils.fetch_incident_llm_usage_stats
     count_missing_incident_cache = getattr(ils, "count_missing_incident_cache", None)
+    estimate_backfill_tokens = getattr(ils, "estimate_backfill_tokens", None)
     format_datetime_hkt = getattr(
         ils,
         "format_datetime_hkt",
@@ -1778,6 +1779,7 @@ except ImportError as _incident_llm_import_error:
     batch_cache_missing_incidents = None
     fetch_incident_llm_usage_stats = None
     count_missing_incident_cache = None
+    estimate_backfill_tokens = None
     format_datetime_hkt = lambda iso_str: (iso_str or "")[:19].replace("T", " ")
     fetch_past_incident_texts = None
     INCIDENT_SCAN_LIMIT = 5000
@@ -4319,6 +4321,87 @@ def render_admin_odds_collection() -> None:
         st.error(str(exc))
 
 
+def _get_deepseek_secrets() -> Dict:
+    return {
+        "DEEPSEEK_API_KEY": st.secrets.get("DEEPSEEK_API_KEY", ""),
+        "DEEPSEEK_BASE_URL": st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        "DEEPSEEK_MODEL": st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
+    }
+
+
+def _run_admin_incident_backfill(
+    headers: Dict,
+    *,
+    max_calls: int,
+    fill_all: bool,
+    lang: str,
+) -> Optional[Dict]:
+    if not batch_cache_missing_incidents or not fetch_past_incident_texts:
+        st.error("补全功能不可用，请重新部署最新版 incident_llm_service.py。" if lang == "zh" else "Backfill unavailable; redeploy latest incident_llm_service.py.")
+        return None
+
+    texts, _ = fetch_past_incident_texts(SUPABASE_URL, headers, limit=INCIDENT_SCAN_LIMIT)
+    progress = st.progress(0.0)
+    status = st.empty()
+    target = max_calls
+
+    def on_progress(run_stats: Dict) -> None:
+        done = int(run_stats.get("analyzed", 0) or 0)
+        planned = int(run_stats.get("planned_calls", 0) or target or 1)
+        denom = planned if planned > 0 else max(done, 1)
+        progress.progress(min(done / denom, 1.0))
+        status.caption(
+            f"正在分析 {done} / {planned} ..." if lang == "zh" else f"Analyzing {done} / {planned} ..."
+        )
+
+    with st.spinner(
+        "正在补全全部未缓存 incident，请勿关闭页面..." if fill_all and lang == "zh"
+        else "Backfilling all missing incidents, keep this page open..." if fill_all
+        else "正在批量分析未缓存 incident..." if lang == "zh"
+        else "Backfilling incidents..."
+    ):
+        result = batch_cache_missing_incidents(
+            texts,
+            SUPABASE_URL,
+            headers,
+            _get_deepseek_secrets(),
+            max_new_calls=max_calls,
+            fill_all=fill_all,
+            progress_callback=on_progress,
+        )
+    progress.progress(1.0)
+    status.empty()
+    return result
+
+
+def _show_admin_backfill_result(result: Dict, lang: str) -> None:
+    remaining_after = result.get("remaining_missing", 0)
+    session_tokens = result.get("total_tokens", 0)
+    _load_missing_incident_stats.clear()
+    st.success(
+        f"完成：新分析 {result.get('analyzed', 0)} 条，已有缓存 {result.get('cached', 0)}，"
+        f"跳过 {result.get('skipped', 0)}，错误 {result.get('errors', 0)}，"
+        f"本次 Token {session_tokens:,}。"
+        f"**剩余未缓存约 {remaining_after} 条**。"
+        if lang == "zh"
+        else (
+            f"Done: analyzed {result.get('analyzed', 0)}, cached {result.get('cached', 0)}, "
+            f"skipped {result.get('skipped', 0)}, errors {result.get('errors', 0)}, "
+            f"tokens {session_tokens:,}. ~{remaining_after} still uncached."
+        )
+    )
+    if remaining_after > 0:
+        st.info(
+            f"仍有约 {remaining_after} 条未缓存；可再次使用一键补全或分批补全。"
+            if lang == "zh"
+            else f"~{remaining_after} still uncached; run fill-all again or backfill in batches."
+        )
+    elif lang == "zh":
+        st.success("历史 incident 已全部写入缓存；今后只会对新 incident 调用 DeepSeek。")
+    else:
+        st.success("All scanned incidents are cached; future API calls are for new incidents only.")
+
+
 def render_admin_deepseek_usage() -> None:
     """管理员：DeepSeek / incident LLM 用量与补缓存。"""
     lang = st.session_state.get("lang", "zh")
@@ -4469,52 +4552,81 @@ def render_admin_deepseek_usage() -> None:
     st.markdown("---")
     st.markdown("**手动补全未缓存 incident（会调用 DeepSeek API）**" if lang == "zh" else "**Backfill missing incidents (calls DeepSeek API)**")
     max_calls = st.slider(
-        "本次最多 API 调用数" if lang == "zh" else "Max API calls this run",
+        "本次最多 API 调用数（分批补全）" if lang == "zh" else "Max API calls this run (batch mode)",
         min_value=0,
         max_value=100,
         value=20,
         step=5,
         key="admin_deepseek_max_calls",
     )
-    if st.button("▶️ 补全未缓存 incident" if lang == "zh" else "▶️ Backfill missing incidents", key="admin_deepseek_backfill"):
-        if not batch_cache_missing_incidents or not fetch_past_incident_texts:
-            st.error("补全功能不可用，请重新部署最新版 incident_llm_service.py。" if lang == "zh" else "Backfill unavailable; redeploy latest incident_llm_service.py.")
-        elif max_calls <= 0:
-            st.warning("请将最多调用数设为大于 0。" if lang == "zh" else "Set max calls above 0.")
-        else:
-            with st.spinner("正在批量分析未缓存 incident..." if lang == "zh" else "Backfilling incidents..."):
-                texts, _ = fetch_past_incident_texts(SUPABASE_URL, headers, limit=INCIDENT_SCAN_LIMIT)
-                secrets = {
-                    "DEEPSEEK_API_KEY": st.secrets.get("DEEPSEEK_API_KEY", ""),
-                    "DEEPSEEK_BASE_URL": st.secrets.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-                    "DEEPSEEK_MODEL": st.secrets.get("DEEPSEEK_MODEL", "deepseek-chat"),
-                }
-                result = batch_cache_missing_incidents(
-                    texts, SUPABASE_URL, headers, secrets, max_new_calls=max_calls
-                )
-            remaining_after = result.get("remaining_missing", 0)
-            session_tokens = result.get("total_tokens", 0)
-            _load_missing_incident_stats.clear()
-            st.success(
-                f"完成：新分析 {result.get('analyzed', 0)} 条，已有缓存 {result.get('cached', 0)}，"
-                f"跳过 {result.get('skipped', 0)}，错误 {result.get('errors', 0)}，"
-                f"本次 Token {session_tokens:,}。"
-                f"**剩余未缓存约 {remaining_after} 条**。"
-                if lang == "zh"
-                else (
-                    f"Done: analyzed {result.get('analyzed', 0)}, cached {result.get('cached', 0)}, "
-                    f"skipped {result.get('skipped', 0)}, errors {result.get('errors', 0)}, "
-                    f"tokens {session_tokens:,}. ~{remaining_after} still uncached."
-                )
+    col_partial, col_fill_all = st.columns(2)
+    with col_partial:
+        if st.button("▶️ 补全未缓存 incident" if lang == "zh" else "▶️ Backfill missing incidents", key="admin_deepseek_backfill"):
+            if max_calls <= 0:
+                st.warning("请将最多调用数设为大于 0。" if lang == "zh" else "Set max calls above 0.")
+            else:
+                result = _run_admin_incident_backfill(headers, max_calls=max_calls, fill_all=False, lang=lang)
+                if result:
+                    _show_admin_backfill_result(result, lang)
+                    st.rerun()
+
+    with col_fill_all:
+        if remaining <= 0:
+            st.caption("当前无未缓存 backlog，无需一键补全。" if lang == "zh" else "No uncached backlog; fill-all not needed.")
+        elif st.button("🚀 一键补全全部未缓存" if lang == "zh" else "🚀 Fill all uncached", key="admin_deepseek_fill_all_start"):
+            st.session_state["admin_deepseek_fill_all_confirm"] = True
+
+    if st.session_state.get("admin_deepseek_fill_all_confirm") and remaining > 0:
+        est = (
+            estimate_backfill_tokens(remaining, tokens_total)
+            if estimate_backfill_tokens
+            else {
+                "remaining_calls": remaining,
+                "avg_tokens_per_call": 450,
+                "estimated_total_tokens": remaining * 450,
+            }
+        )
+        st.warning(
+            f"**费用确认**：将调用 DeepSeek API **约 {est['remaining_calls']} 次**，"
+            f"预计 Token **约 {est['estimated_total_tokens']:,}**"
+            f"（按历史均值约 {est['avg_tokens_per_call']} / 次估算，仅供参考）。"
+            if lang == "zh"
+            else (
+                f"**Cost confirm**: ~{est['remaining_calls']} API calls, "
+                f"~{est['estimated_total_tokens']:,} tokens estimated "
+                f"({est['avg_tokens_per_call']}/call avg)."
             )
-            if remaining_after > 0:
-                st.info(
-                    f"仍有约 {remaining_after} 条未缓存；请提高「本次最多 API 调用数」或分多次补全，"
-                    f"补完前请勿重复无意义点击。"
-                    if lang == "zh"
-                    else f"~{remaining_after} still uncached; increase max calls or run again until zero."
-                )
-            st.rerun()
+        )
+        st.caption(
+            "补全期间请保持此页面打开；耗时可能较长。完成后同一 incident 永久缓存，不会重复扣费。"
+            if lang == "zh"
+            else "Keep this page open during backfill. Cached incidents are never billed again."
+        )
+        confirm_cost = st.checkbox(
+            f"我确认消耗约 {est['remaining_calls']} 次 DeepSeek API 调用" if lang == "zh"
+            else f"I confirm ~{est['remaining_calls']} DeepSeek API calls",
+            key="admin_deepseek_fill_all_ack",
+        )
+        c_ok, c_cancel = st.columns(2)
+        with c_ok:
+            if st.button("✅ 确认开始全部补全" if lang == "zh" else "✅ Confirm fill all", key="admin_deepseek_fill_all_go"):
+                if not confirm_cost:
+                    st.warning("请先勾选费用确认。" if lang == "zh" else "Please check the cost confirmation box.")
+                else:
+                    result = _run_admin_incident_backfill(
+                        headers,
+                        max_calls=remaining,
+                        fill_all=True,
+                        lang=lang,
+                    )
+                    st.session_state["admin_deepseek_fill_all_confirm"] = False
+                    if result:
+                        _show_admin_backfill_result(result, lang)
+                        st.rerun()
+        with c_cancel:
+            if st.button("取消" if lang == "zh" else "Cancel", key="admin_deepseek_fill_all_cancel"):
+                st.session_state["admin_deepseek_fill_all_confirm"] = False
+                st.rerun()
 
 
 # ==================== 管理员面板 ====================

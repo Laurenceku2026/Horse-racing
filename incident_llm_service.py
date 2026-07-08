@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import requests
 
@@ -279,14 +279,34 @@ def count_missing_incident_cache(
     }
 
 
+def estimate_backfill_tokens(remaining_calls: int, tokens_total_stats: Optional[Dict] = None) -> Dict:
+    """根据历史 Token 均值估算补全费用规模（仅供参考）。"""
+    default_per_call = 450
+    avg_per_call = default_per_call
+    if tokens_total_stats:
+        rows = int(tokens_total_stats.get("rows_with_tokens") or 0)
+        total = int(tokens_total_stats.get("total_tokens") or 0)
+        if rows > 0 and total > 0:
+            avg_per_call = max(100, int(total / rows))
+    est_tokens = remaining_calls * avg_per_call
+    return {
+        "remaining_calls": remaining_calls,
+        "avg_tokens_per_call": avg_per_call,
+        "estimated_total_tokens": est_tokens,
+    }
+
+
 def batch_cache_missing_incidents(
     incident_texts: List[str],
     supabase_url: str,
     headers: Dict,
     secrets: Dict,
     max_new_calls: int = 20,
+    *,
+    fill_all: bool = False,
+    progress_callback: Optional[Callable[[Dict], None]] = None,
 ) -> Dict:
-    """批量补全未缓存的 incident（限制单次 API 调用数）。"""
+    """批量补全未缓存的 incident。fill_all=True 时不限制本次 API 调用数。"""
     stats = {
         "cached": 0,
         "analyzed": 0,
@@ -296,9 +316,12 @@ def batch_cache_missing_incidents(
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
+        "fill_all": fill_all,
+        "planned_calls": 0,
     }
     seen = set()
     cached_hashes = fetch_cached_incident_hashes(supabase_url, headers)
+    pending_unique: List[str] = []
     for text in incident_texts:
         if is_empty_incident(text):
             stats["skipped"] += 1
@@ -310,8 +333,13 @@ def batch_cache_missing_incidents(
         if h in cached_hashes:
             stats["cached"] += 1
             continue
-        if stats["analyzed"] >= max_new_calls:
+        pending_unique.append(text)
+    stats["planned_calls"] = len(pending_unique) if fill_all else min(len(pending_unique), max_new_calls)
+
+    for text in pending_unique:
+        if not fill_all and stats["analyzed"] >= max_new_calls:
             break
+        h = incident_text_hash(text)
         result = analyze_incident_with_deepseek_api(text, secrets)
         ok = save_incident_llm_cache(
             text,
@@ -330,6 +358,8 @@ def batch_cache_missing_incidents(
             stats["completion_tokens"] = stats.get("completion_tokens", 0) + int(result.get("completion_tokens", 0) or 0)
             stats["total_tokens"] = stats.get("total_tokens", 0) + int(result.get("total_tokens", 0) or 0)
             cached_hashes.add(h)
+            if progress_callback:
+                progress_callback(dict(stats))
         else:
             stats["errors"] += 1
     missing_stats = count_missing_incident_cache(supabase_url, headers)
