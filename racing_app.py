@@ -13,6 +13,7 @@ import json
 import re
 import time
 import hmac
+import hashlib
 import plotly.graph_objects as go
 import plotly.express as px
 from typing import Callable, Dict, List, Optional, Tuple
@@ -1677,6 +1678,8 @@ def init_session_state():
         "remember_me_active": False,
         "admin_mode": False,
         "show_admin_login": False,
+        "admin_session_expires_at": 0,
+        "try_admin_local_restore": False,
         "show_register": False,
         "show_paywall": False,
         "payment_url": None,
@@ -1832,6 +1835,8 @@ def supabase_request(method: str, table: str, data=None, params=None, access_tok
 # ==================== 用户认证函数 ====================
 REMEMBER_ME_DAYS = 7
 AUTH_STORAGE_KEY = "racing_app_auth_v1"
+ADMIN_SESSION_HOURS = 24
+ADMIN_STORAGE_KEY = "racing_app_admin_v1"
 
 
 def persist_remember_me_auth(
@@ -1923,6 +1928,145 @@ def _inject_remember_me_restore_js() -> None:
     )
 
 
+def _admin_session_token(expires_at_sec: int) -> str:
+    raw = f"{ADMIN_USERNAME}|{ADMIN_PASSWORD}|{expires_at_sec}|racing_admin_v1"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def persist_admin_session() -> None:
+    """管理员会话写入 localStorage（24 小时内点击齿轮免重复登录）。"""
+    import streamlit.components.v1 as components
+
+    expires_at_ms = int((time.time() + ADMIN_SESSION_HOURS * 3600) * 1000)
+    expires_at_sec = expires_at_ms // 1000
+    token = _admin_session_token(expires_at_sec)
+    st.session_state.admin_session_expires_at = expires_at_sec
+    payload = {"expires_at": expires_at_ms, "token": token}
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            try {{
+                localStorage.setItem({json.dumps(ADMIN_STORAGE_KEY)}, {json.dumps(payload)});
+            }} catch (e) {{
+                console.error("admin session save failed", e);
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def clear_persisted_admin_session() -> None:
+    import streamlit.components.v1 as components
+
+    st.session_state.admin_session_expires_at = 0
+    components.html(
+        f"""
+        <script>
+        try {{
+            localStorage.removeItem({json.dumps(ADMIN_STORAGE_KEY)});
+        }} catch (e) {{
+            console.error("admin session clear failed", e);
+        }}
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _inject_admin_restore_js() -> None:
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            try {{
+                const key = {json.dumps(ADMIN_STORAGE_KEY)};
+                const raw = localStorage.getItem(key);
+                if (!raw) return;
+                const auth = JSON.parse(raw);
+                if (!auth || !auth.token || !auth.expires_at) {{
+                    localStorage.removeItem(key);
+                    return;
+                }}
+                if (auth.expires_at <= Date.now()) {{
+                    localStorage.removeItem(key);
+                    return;
+                }}
+                const url = new URL(window.parent.location.href);
+                if (url.searchParams.get("admin_restore") === "1") return;
+                url.searchParams.set("admin_restore", "1");
+                url.searchParams.set("exp", String(auth.expires_at));
+                url.searchParams.set("token", auth.token);
+                window.parent.location.replace(url.toString());
+            }} catch (e) {{
+                console.error("admin session restore failed", e);
+            }}
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def _verify_admin_session_token(expires_at_ms: int, token: str) -> bool:
+    try:
+        expires_at_ms = int(expires_at_ms)
+    except (TypeError, ValueError):
+        return False
+    if expires_at_ms <= int(time.time() * 1000):
+        return False
+    expected = _admin_session_token(expires_at_ms // 1000)
+    return hmac.compare_digest(expected, token or "")
+
+
+def is_admin_session_valid() -> bool:
+    if float(st.session_state.get("admin_session_expires_at") or 0) > time.time():
+        return True
+    return False
+
+
+def activate_admin_mode(*, preserve_user: bool = True) -> None:
+    """进入管理员模式（可选保留原用户会话以便退出时恢复）。"""
+    if preserve_user and st.session_state.get("user_id") not in (None, "admin"):
+        st.session_state.admin_previous_user_id = st.session_state.get("user_id")
+        st.session_state.admin_previous_user_email = st.session_state.get("user_email")
+        st.session_state.admin_previous_access_token = st.session_state.get("access_token")
+        st.session_state.admin_previous_refresh_token = st.session_state.get("refresh_token")
+    st.session_state.admin_mode = True
+    st.session_state.show_admin_login = False
+    st.session_state.authenticated = True
+    st.session_state.user_id = "admin"
+    st.session_state.user_email = ADMIN_EMAIL
+
+
+def try_restore_admin_session() -> None:
+    """从 URL 参数或 localStorage 恢复管理员会话。"""
+    if st.session_state.get("admin_mode"):
+        return
+
+    qp = st.query_params
+    if qp.get("admin_restore") == "1" and qp.get("token") and qp.get("exp"):
+        expires_at_ms = qp.get("exp")
+        token = qp.get("token")
+        for key in ("admin_restore", "exp", "token"):
+            if key in qp:
+                del qp[key]
+        if _verify_admin_session_token(int(expires_at_ms), token):
+            st.session_state.admin_session_expires_at = int(expires_at_ms) // 1000
+            activate_admin_mode(preserve_user=True)
+            st.rerun()
+        else:
+            clear_persisted_admin_session()
+        return
+
+    if qp.get("admin_restore") == "1":
+        return
+
+
 def restore_session_with_refresh_token(
     refresh_token: str,
     user_id: str,
@@ -1939,6 +2083,7 @@ def restore_session_with_refresh_token(
         return False
     st.session_state.authenticated = True
     st.session_state.remember_me_active = True
+    st.session_state.home_section_nav = t()["nav_smart_betting"]
     persist_remember_me_auth(
         st.session_state.refresh_token,
         st.session_state.user_id,
@@ -1948,10 +2093,8 @@ def restore_session_with_refresh_token(
 
 
 def try_restore_remember_me_login() -> None:
-    """启动时尝试从「记住我」恢复登录（仅处理一次）。"""
+    """启动时尝试从「记住我」恢复登录。"""
     if st.session_state.get("authenticated"):
-        return
-    if st.session_state.get("_remember_me_restore_done"):
         return
 
     qp = st.query_params
@@ -1962,7 +2105,6 @@ def try_restore_remember_me_login() -> None:
         for key in ("remember_restore", "rt", "uid", "email"):
             if key in qp:
                 del qp[key]
-        st.session_state._remember_me_restore_done = True
         if restore_session_with_refresh_token(refresh_token, user_id, user_email):
             st.rerun()
         else:
@@ -1970,14 +2112,17 @@ def try_restore_remember_me_login() -> None:
             st.warning(t()["session_expired"])
         return
 
-    if not st.session_state.get("_remember_me_js_triggered"):
-        st.session_state._remember_me_js_triggered = True
-        _inject_remember_me_restore_js()
+    if qp.get("remember_restore") == "1":
+        return
+
+    _inject_remember_me_restore_js()
 
 
 def ensure_valid_access_token() -> None:
-    """access_token 将过期时主动刷新；失败则登出。"""
+    """access_token 将过期时主动刷新；失败则清会话但保留「记住我」供下次自动恢复。"""
     if not st.session_state.get("authenticated"):
+        return
+    if st.session_state.get("user_id") == "admin":
         return
     expiry = float(st.session_state.get("token_expiry") or 0)
     if time.time() < expiry - 300:
@@ -1997,7 +2142,6 @@ def ensure_valid_access_token() -> None:
     st.session_state.refresh_token = None
     st.session_state.token_expiry = 0
     st.session_state.remember_me_active = False
-    clear_persisted_remember_me_auth()
 
 
 def sign_up(email: str, password: str) -> Tuple[bool, str, Optional[str]]:
@@ -2167,6 +2311,7 @@ def sign_out():
     st.session_state.remember_me_active = False
     st.session_state.admin_mode = False
     clear_persisted_remember_me_auth()
+    clear_persisted_admin_session()
     st.rerun()
 #--------
 def refresh_auth_token() -> Optional[str]:
@@ -2921,6 +3066,7 @@ def render_login_form():
                             st.session_state.token_expiry = time.time() + 3600
                             st.session_state.remember_me_active = bool(remember_me)
                             st.session_state.show_paywall = False
+                            st.session_state.home_section_nav = t()["nav_smart_betting"]
                             if remember_me:
                                 persist_remember_me_auth(refresh_token, user_id, user_email)
                             else:
@@ -2988,12 +3134,9 @@ def render_admin_login_form():
                     st.session_state.admin_previous_user_email = st.session_state.get("user_email")
                     st.session_state.admin_previous_access_token = st.session_state.get("access_token")
                     st.session_state.admin_previous_refresh_token = st.session_state.get("refresh_token")
-                    
-                    st.session_state.admin_mode = True
-                    st.session_state.show_admin_login = False
-                    st.session_state.authenticated = True
-                    st.session_state.user_id = "admin"
-                    st.session_state.user_email = ADMIN_EMAIL
+
+                    persist_admin_session()
+                    activate_admin_mode(preserve_user=False)
                     st.rerun()
                 else:
                     st.error(t()["admin_login_failed"])
@@ -5971,7 +6114,7 @@ def admin_sign_out():
     st.session_state.admin_previous_user_email = None
     st.session_state.admin_previous_access_token = None
     st.session_state.admin_previous_refresh_token = None
-    st.rerun()        
+    st.rerun()
 # ==================== 侧边栏 ====================
 def render_sidebar():
     """渲染侧边栏"""
@@ -6169,7 +6312,11 @@ def render_top_buttons():
     
     with col4:
         if st.button("⚙️", key="gear_btn", help=t()["admin_login_help"], use_container_width=True):
-            st.session_state.show_admin_login = True
+            if is_admin_session_valid():
+                activate_admin_mode(preserve_user=True)
+            else:
+                st.session_state.show_admin_login = True
+                st.session_state.try_admin_local_restore = True
             st.rerun()
     
     with col5:
@@ -6866,6 +7013,8 @@ def render_home():
     section_labels = (
         [t()["nav_data_ratings"], t()["nav_smart_betting"], t()["nav_backtest"]]
     )
+    if "home_section_nav" not in st.session_state:
+        st.session_state.home_section_nav = t()["nav_smart_betting"]
     section = st.radio(
         t()["nav_label"],
         section_labels,
@@ -15079,6 +15228,7 @@ def main():
 
     try_restore_remember_me_login()
     ensure_valid_access_token()
+    try_restore_admin_session()
     render_pwa_install_hint(st.session_state.get("lang", "zh"))
     
     # 渲染侧边栏和顶部按钮
@@ -15087,6 +15237,9 @@ def main():
     
     # 管理员登录
     if st.session_state.get("show_admin_login", False):
+        if st.session_state.get("try_admin_local_restore"):
+            _inject_admin_restore_js()
+            st.session_state.try_admin_local_restore = False
         render_admin_login_form()
         return
     
