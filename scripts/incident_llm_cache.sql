@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS incident_llm_cache (
     venue TEXT,
     race_no INTEGER,
     horse_no TEXT,
+    horse_id TEXT,
+    horse_name TEXT,
     rule_score NUMERIC(6, 2) DEFAULT 0,
     llm_impact_score NUMERIC(6, 2) DEFAULT 0,
     incident_type TEXT DEFAULT 'normal',

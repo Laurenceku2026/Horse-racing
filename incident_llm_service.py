@@ -83,6 +83,8 @@ def save_incident_llm_cache(
     venue: str = "",
     race_no: Optional[int] = None,
     horse_no: str = "",
+    horse_id: str = "",
+    horse_name: str = "",
     model_version: str = "deepseek-chat",
     prompt_tokens: int = 0,
     completion_tokens: int = 0,
@@ -97,6 +99,8 @@ def save_incident_llm_cache(
         "venue": venue or None,
         "race_no": race_no,
         "horse_no": str(horse_no) if horse_no else None,
+        "horse_id": str(horse_id) if horse_id else None,
+        "horse_name": (horse_name or "")[:200] or None,
         "rule_score": get_rule_incident_score(incident_text),
         "llm_impact_score": llm_impact,
         "incident_type": incident_type,
@@ -113,10 +117,12 @@ def save_incident_llm_cache(
         resp = requests.post(url, headers=hdrs, json=payload, timeout=20)
         if resp.status_code in (200, 201, 204):
             return True
-        if resp.status_code == 400 and "prompt_tokens" in (resp.text or ""):
+        if resp.status_code == 400 and ("prompt_tokens" in (resp.text or "") or "horse_name" in (resp.text or "")):
             payload.pop("prompt_tokens", None)
             payload.pop("completion_tokens", None)
             payload.pop("total_tokens", None)
+            payload.pop("horse_id", None)
+            payload.pop("horse_name", None)
             resp = requests.post(url, headers=hdrs, json=payload, timeout=20)
             return resp.status_code in (200, 201, 204)
         return False
@@ -219,7 +225,7 @@ def fetch_past_incident_records(
     """从 past_performances_v2 拉取含 incident 的往绩（含赛日/马匹元数据）。"""
     if not supabase_url or not headers:
         return [], False
-    select_cols = "incident,race_date,venue,race_no,horse_no,horse_id"
+    select_cols = "incident,race_date,venue,race_no,horse_no,horse_id,horse_name"
     try:
         if race_dates:
             clean_dates = sorted({d[:10] for d in race_dates if d})
@@ -272,6 +278,7 @@ def _dedupe_incident_records(records: List[Dict]) -> Tuple[List[str], Dict[str, 
             "race_no": rec.get("race_no"),
             "horse_no": rec.get("horse_no") or "",
             "horse_id": rec.get("horse_id") or "",
+            "horse_name": rec.get("horse_name") or "",
         }
     return pending_texts, meta_by_hash
 
@@ -282,27 +289,62 @@ def build_incident_context_maps(
     *,
     perf_limit: int = 50000,
 ) -> Dict:
-    """构建 incident 哈希 → 赛日/马匹上下文，及 horse_id → 马名。"""
+    """构建 incident 哈希 / 赛日键 → 马匹上下文，及 horse_id → 马名。"""
     by_hash: Dict[str, Dict] = {}
+    by_race_key: Dict[str, Dict] = {}
     horse_names: Dict[str, str] = {}
     if not supabase_url or not headers:
-        return {"by_hash": by_hash, "horse_names": horse_names}
+        return {"by_hash": by_hash, "by_race_key": by_race_key, "horse_names": horse_names}
 
-    records, _ = fetch_past_incident_records(supabase_url, headers, limit=perf_limit)
-    for rec in sorted(records, key=lambda r: str(r.get("race_date") or ""), reverse=True):
-        text = rec.get("incident", "")
-        if is_empty_incident(text):
-            continue
-        h = incident_text_hash(text)
-        if h in by_hash:
-            continue
-        by_hash[h] = {
-            "race_date": (rec.get("race_date") or "")[:10] or "",
-            "venue": rec.get("venue") or "",
-            "race_no": rec.get("race_no"),
-            "horse_no": str(rec.get("horse_no") or ""),
-            "horse_id": str(rec.get("horse_id") or ""),
-        }
+    select_cols = "incident,race_date,venue,race_no,horse_no,horse_id,horse_name"
+    page_size = 1000
+    offset = 0
+    total_loaded = 0
+    try:
+        while total_loaded < perf_limit:
+            url = (
+                f"{supabase_url}/rest/v1/past_performances_v2"
+                f"?select={select_cols}&incident=not.is.null"
+                f"&order=race_date.desc&limit={page_size}&offset={offset}"
+            )
+            resp = requests.get(url, headers=headers, timeout=60)
+            if resp.status_code != 200:
+                break
+            rows = resp.json() or []
+            if not rows:
+                break
+            for rec in rows:
+                text = rec.get("incident", "")
+                if is_empty_incident(text):
+                    continue
+                h = incident_text_hash(text)
+                if h not in by_hash:
+                    by_hash[h] = {
+                        "race_date": (rec.get("race_date") or "")[:10] or "",
+                        "venue": rec.get("venue") or "",
+                        "race_no": rec.get("race_no"),
+                        "horse_no": str(rec.get("horse_no") or ""),
+                        "horse_id": str(rec.get("horse_id") or ""),
+                        "horse_name": rec.get("horse_name") or "",
+                    }
+                race_key = _incident_race_key(
+                    rec.get("race_date"),
+                    rec.get("venue"),
+                    rec.get("race_no"),
+                    rec.get("horse_no"),
+                )
+                if race_key and race_key not in by_race_key:
+                    by_race_key[race_key] = {
+                        "horse_id": str(rec.get("horse_id") or ""),
+                        "horse_name": rec.get("horse_name") or "",
+                        "incident_text_hash": h,
+                    }
+            total_loaded += len(rows)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+    except Exception as exc:
+        print(f"构建 incident 上下文失败: {exc}")
 
     try:
         horses_url = f"{supabase_url}/rest/v1/horses_v2?select=horse_id,name_zh,name_en&limit=50000"
@@ -315,7 +357,66 @@ def build_incident_context_maps(
     except Exception as exc:
         print(f"读取 horses_v2 失败: {exc}")
 
-    return {"by_hash": by_hash, "horse_names": horse_names}
+    return {"by_hash": by_hash, "by_race_key": by_race_key, "horse_names": horse_names}
+
+
+def _incident_race_key(
+    race_date: object,
+    venue: object,
+    race_no: object,
+    horse_no: object,
+) -> str:
+    rd = str(race_date or "")[:10]
+    vn = str(venue or "").strip().upper()
+    rn = str(race_no or "").strip()
+    hn = str(horse_no or "").strip()
+    if not rd or not vn or not rn or not hn:
+        return ""
+    return f"{rd}|{vn}|{rn}|{hn}"
+
+
+def resolve_incident_cache_display(
+    row: Dict,
+    ctx: Dict,
+    *,
+    lang: str = "zh",
+) -> Dict:
+    """合并 cache 行 + 往绩上下文，解析赛日/马匹显示字段。"""
+    by_hash = ctx.get("by_hash") or {}
+    by_race_key = ctx.get("by_race_key") or {}
+    horse_names = ctx.get("horse_names") or {}
+
+    text = row.get("incident_text") or ""
+    h = row.get("incident_text_hash") or (incident_text_hash(text) if text else "")
+    meta = by_hash.get(h, {})
+
+    race_date = (row.get("race_date") or meta.get("race_date") or "")[:10]
+    venue = row.get("venue") or meta.get("venue") or ""
+    race_no = row.get("race_no") if row.get("race_no") is not None else meta.get("race_no")
+    horse_no = str(row.get("horse_no") or meta.get("horse_no") or "")
+    horse_id = str(row.get("horse_id") or meta.get("horse_id") or "")
+    horse_name = (row.get("horse_name") or meta.get("horse_name") or "").strip()
+
+    if not horse_name and horse_id:
+        horse_name = horse_names.get(horse_id, "")
+    if not horse_name:
+        race_key = _incident_race_key(race_date, venue, race_no, horse_no)
+        if race_key:
+            rk_meta = by_race_key.get(race_key, {})
+            horse_name = rk_meta.get("horse_name") or ""
+            if not horse_id:
+                horse_id = rk_meta.get("horse_id") or ""
+
+    race_label = f"第{race_no}场" if lang == "zh" and race_no else (f"R{race_no}" if race_no else "-")
+    return {
+        "race_date": race_date or "-",
+        "venue_label": format_venue_label(venue, lang) if venue else "-",
+        "race_label": race_label,
+        "horse_no": horse_no or "-",
+        "horse_id": horse_id or "-",
+        "horse_name": horse_name or "-",
+        "incident_text": text,
+    }
 
 
 def search_incident_llm_cache(
@@ -340,7 +441,7 @@ def search_incident_llm_cache(
     offset = (page - 1) * page_size
 
     select_cols = (
-        "id,incident_text_hash,incident_text,race_date,venue,race_no,horse_no,"
+        "id,incident_text_hash,incident_text,race_date,venue,race_no,horse_no,horse_id,horse_name,"
         "rule_score,llm_impact_score,incident_type,suggestion,model_version,"
         "prompt_tokens,completion_tokens,total_tokens,created_at"
     )
@@ -361,7 +462,11 @@ def search_incident_llm_cache(
         hdrs = dict(headers)
         hdrs["Prefer"] = "count=exact"
         resp = requests.get(url, headers=hdrs, timeout=30)
-        if resp.status_code == 400 and "prompt_tokens" in (resp.text or ""):
+        if resp.status_code == 400 and (
+            "prompt_tokens" in (resp.text or "")
+            or "horse_name" in (resp.text or "")
+            or "horse_id" in (resp.text or "")
+        ):
             select_cols = (
                 "id,incident_text_hash,incident_text,race_date,venue,race_no,horse_no,"
                 "rule_score,llm_impact_score,incident_type,suggestion,model_version,created_at"
@@ -685,6 +790,8 @@ def batch_cache_missing_incidents(
             venue=meta.get("venue") or "",
             race_no=meta.get("race_no"),
             horse_no=meta.get("horse_no") or "",
+            horse_id=meta.get("horse_id") or "",
+            horse_name=meta.get("horse_name") or "",
             model_version=model_version,
             prompt_tokens=result.get("prompt_tokens", 0),
             completion_tokens=result.get("completion_tokens", 0),
