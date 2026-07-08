@@ -1768,6 +1768,10 @@ try:
     )
     fetch_past_incident_texts = getattr(ils, "fetch_past_incident_texts", None)
     run_auto_incident_backfill = getattr(ils, "run_auto_incident_backfill", None)
+    search_incident_llm_cache = getattr(ils, "search_incident_llm_cache", None)
+    build_incident_context_maps = getattr(ils, "build_incident_context_maps", None)
+    format_venue_label = getattr(ils, "format_venue_label", lambda v, lang="zh": v or "-")
+    incident_text_hash_fn = getattr(ils, "incident_text_hash", None)
     INCIDENT_SCAN_LIMIT = getattr(ils, "INCIDENT_SCAN_LIMIT", 5000)
     INCIDENT_LLM_OK = True
     INCIDENT_LLM_IMPORT_ERROR = ""
@@ -1784,6 +1788,10 @@ except ImportError as _incident_llm_import_error:
     format_datetime_hkt = lambda iso_str: (iso_str or "")[:19].replace("T", " ")
     fetch_past_incident_texts = None
     run_auto_incident_backfill = None
+    search_incident_llm_cache = None
+    build_incident_context_maps = None
+    format_venue_label = lambda v, lang="zh": v or "-"
+    incident_text_hash_fn = None
     INCIDENT_SCAN_LIMIT = 5000
 
 
@@ -4323,6 +4331,182 @@ def render_admin_odds_collection() -> None:
         st.error(str(exc))
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_incident_context_maps(supabase_url: str) -> Dict:
+    if not build_incident_context_maps or not supabase_url:
+        return {"by_hash": {}, "horse_names": {}}
+    hdrs = get_supabase_headers(use_secret=True)
+    return build_incident_context_maps(supabase_url, hdrs)
+
+
+def _render_incident_cache_browser(headers: Dict, lang: str) -> None:
+    """管理员：分页查阅 incident LLM 缓存。"""
+    if not search_incident_llm_cache:
+        return
+
+    st.markdown("**事件缓存查阅**" if lang == "zh" else "**Browse incident LLM cache**")
+    st.caption(
+        "可按赛日、场地、关键词翻查历史事件；赛日/马匹若缓存写入时为空，会从往绩表自动补全显示。"
+        if lang == "zh"
+        else "Filter by race date, venue, keyword; missing fields are enriched from past performances."
+    )
+
+    today = datetime.now().date()
+    default_from = today - timedelta(days=90)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        date_from = st.date_input(
+            "赛日起" if lang == "zh" else "Race date from",
+            value=default_from,
+            key="admin_incident_browse_from",
+        )
+    with c2:
+        date_to = st.date_input(
+            "赛日止" if lang == "zh" else "Race date to",
+            value=today,
+            key="admin_incident_browse_to",
+        )
+    with c3:
+        venue_filter = st.selectbox(
+            "场地" if lang == "zh" else "Venue",
+            options=["", "ST", "HV"],
+            format_func=lambda v: {"": "全部" if lang == "zh" else "All", "ST": "沙田 ST" if lang == "zh" else "ST", "HV": "跑馬地 HV" if lang == "zh" else "HV"}.get(v, v),
+            key="admin_incident_browse_venue",
+        )
+    with c4:
+        keyword = st.text_input(
+            "事件关键词" if lang == "zh" else "Keyword",
+            value="",
+            key="admin_incident_browse_kw",
+        )
+
+    c5, c6, c7 = st.columns([1, 1, 2])
+    with c5:
+        page_size = st.selectbox(
+            "每页条数" if lang == "zh" else "Page size",
+            options=[50, 100, 200],
+            index=0,
+            key="admin_incident_browse_page_size",
+        )
+    with c6:
+        sort_by = st.selectbox(
+            "排序" if lang == "zh" else "Sort",
+            options=["created_at.desc", "race_date.desc.nullslast", "race_date.asc"],
+            format_func=lambda x: {
+                "created_at.desc": "写入时间↓" if lang == "zh" else "Created↓",
+                "race_date.desc.nullslast": "赛日↓" if lang == "zh" else "Race date↓",
+                "race_date.asc": "赛日↑" if lang == "zh" else "Race date↑",
+            }.get(x, x),
+            key="admin_incident_browse_sort",
+        )
+    with c7:
+        browse_all_dates = st.checkbox(
+            "不限赛日（查全部历史）" if lang == "zh" else "All dates (full history)",
+            value=True,
+            key="admin_incident_browse_all_dates",
+        )
+
+    page = int(st.session_state.get("admin_incident_browse_page", 1))
+    nav1, nav2, nav3 = st.columns([1, 1, 4])
+    with nav1:
+        if st.button("◀ 上一页" if lang == "zh" else "◀ Prev", key="admin_incident_prev") and page > 1:
+            st.session_state["admin_incident_browse_page"] = page - 1
+            st.rerun()
+    with nav2:
+        if st.button("下一页 ▶" if lang == "zh" else "Next ▶", key="admin_incident_next"):
+            st.session_state["admin_incident_browse_page"] = page + 1
+            st.rerun()
+    with nav3:
+        jump_page = st.number_input(
+            "页码" if lang == "zh" else "Page",
+            min_value=1,
+            value=page,
+            step=1,
+            key="admin_incident_browse_page_input",
+        )
+        if jump_page != page:
+            st.session_state["admin_incident_browse_page"] = int(jump_page)
+            st.rerun()
+
+    race_from = "" if browse_all_dates else str(date_from)
+    race_to = "" if browse_all_dates else str(date_to)
+    search_result = search_incident_llm_cache(
+        SUPABASE_URL,
+        headers,
+        race_date_from=race_from,
+        race_date_to=race_to,
+        venue=venue_filter,
+        keyword=keyword.strip(),
+        page=page,
+        page_size=page_size,
+        order=sort_by,
+    )
+    rows = search_result.get("rows") or []
+    total = int(search_result.get("total") or 0)
+    st.session_state["admin_incident_browse_total"] = total
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    if page > total_pages and total > 0:
+        st.session_state["admin_incident_browse_page"] = total_pages
+        st.rerun()
+
+    ctx = _load_incident_context_maps(SUPABASE_URL)
+    by_hash = ctx.get("by_hash") or {}
+    horse_names = ctx.get("horse_names") or {}
+
+    show_rows = []
+    for row in rows:
+        text = row.get("incident_text") or ""
+        h = row.get("incident_text_hash") or ""
+        if not h and text and incident_text_hash_fn:
+            h = incident_text_hash_fn(text)
+        meta = by_hash.get(h, {})
+        race_date = (row.get("race_date") or meta.get("race_date") or "")[:10]
+        venue = row.get("venue") or meta.get("venue") or ""
+        race_no = row.get("race_no") if row.get("race_no") is not None else meta.get("race_no")
+        horse_no = row.get("horse_no") or meta.get("horse_no") or ""
+        horse_id = meta.get("horse_id") or ""
+        horse_name = horse_names.get(str(horse_id), "") if horse_id else ""
+        race_label = f"第{race_no}场" if lang == "zh" and race_no else (f"R{race_no}" if race_no else "-")
+        show_rows.append({
+            "赛日" if lang == "zh" else "Race date": race_date or "-",
+            "场地" if lang == "zh" else "Venue": format_venue_label(venue, lang) if venue else "-",
+            "场次" if lang == "zh" else "Race": race_label,
+            "马号" if lang == "zh" else "Horse #": horse_no or "-",
+            "马名" if lang == "zh" else "Horse": horse_name or "-",
+            "LLM分" if lang == "zh" else "LLM": row.get("llm_impact_score"),
+            "规则分" if lang == "zh" else "Rule": row.get("rule_score"),
+            "类型" if lang == "zh" else "Type": row.get("incident_type"),
+            "建议" if lang == "zh" else "Tip": row.get("suggestion") or "",
+            "Token" if lang == "zh" else "Tokens": row.get("total_tokens") or 0,
+            "写入(HKT)" if lang == "zh" else "Saved (HKT)": format_datetime_hkt(row.get("created_at") or ""),
+            "事件报告" if lang == "zh" else "Incident": text,
+        })
+
+    st.caption(
+        f"共 {total} 条，第 {min(page, total_pages)} / {total_pages} 页"
+        if lang == "zh"
+        else f"{total} rows, page {min(page, total_pages)} / {total_pages}"
+    )
+    if show_rows:
+        st.dataframe(
+            pd.DataFrame(show_rows),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                ("事件报告" if lang == "zh" else "Incident"): st.column_config.TextColumn(
+                    "事件报告" if lang == "zh" else "Incident",
+                    width="large",
+                ),
+                ("建议" if lang == "zh" else "Tip"): st.column_config.TextColumn(
+                    "建议" if lang == "zh" else "Tip",
+                    width="medium",
+                ),
+            },
+        )
+    else:
+        st.info("没有符合条件的事件缓存。" if lang == "zh" else "No incident cache rows match filters.")
+
+
 def _get_deepseek_secrets() -> Dict:
     return {
         "DEEPSEEK_API_KEY": st.secrets.get("DEEPSEEK_API_KEY", ""),
@@ -4534,20 +4718,10 @@ def render_admin_deepseek_usage() -> None:
     )
 
     recent = stats.get("recent_rows") or []
-    if recent:
-        st.markdown("**最近 incident LLM 缓存**" if lang == "zh" else "**Recent incident LLM cache**")
-        st.caption("写入时间 = DeepSeek 分析完成并写入 Supabase 的香港时间。" if lang == "zh" else "Write time = when DeepSeek result was saved (HKT).")
-        show_rows = []
-        for row in recent:
-            text = (row.get("incident_text") or "")[:60]
-            show_rows.append({
-                "时间 (HKT)" if lang == "zh" else "Time (HKT)": format_datetime_hkt(row.get("created_at") or ""),
-                "LLM分" if lang == "zh" else "LLM": row.get("llm_impact_score"),
-                "Token" if lang == "zh" else "Tokens": row.get("total_tokens") or 0,
-                "类型" if lang == "zh" else "Type": row.get("incident_type"),
-                "事件" if lang == "zh" else "Incident": text,
-            })
-        st.dataframe(pd.DataFrame(show_rows), use_container_width=True, hide_index=True)
+    if stats.get("cache_total", 0) > 0:
+        _render_incident_cache_browser(headers, lang)
+    elif recent:
+        st.info("incident_llm_cache 暂无数据；请执行 scripts/incident_llm_cache.sql" if lang == "zh" else "No incident_llm_cache rows yet.")
     else:
         st.info("incident_llm_cache 暂无数据；请执行 scripts/incident_llm_cache.sql" if lang == "zh" else "No incident_llm_cache rows yet.")
 

@@ -196,6 +196,198 @@ def format_datetime_hkt(iso_str: str) -> str:
         return (iso_str or "")[:19].replace("T", " ")
 
 
+VENUE_LABELS_ZH = {"ST": "沙田", "HV": "跑馬地"}
+VENUE_LABELS_EN = {"ST": "Sha Tin", "HV": "Happy Valley"}
+
+
+def format_venue_label(venue: str, lang: str = "zh") -> str:
+    code = (venue or "").strip().upper()
+    if not code:
+        return "-"
+    labels = VENUE_LABELS_ZH if lang == "zh" else VENUE_LABELS_EN
+    name = labels.get(code, code)
+    return f"{name} ({code})" if lang == "zh" else code
+
+
+def fetch_past_incident_records(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    limit: int = INCIDENT_SCAN_LIMIT,
+    race_dates: Optional[List[str]] = None,
+) -> Tuple[List[Dict], bool]:
+    """从 past_performances_v2 拉取含 incident 的往绩（含赛日/马匹元数据）。"""
+    if not supabase_url or not headers:
+        return [], False
+    select_cols = "incident,race_date,venue,race_no,horse_no,horse_id"
+    try:
+        if race_dates:
+            clean_dates = sorted({d[:10] for d in race_dates if d})
+            if not clean_dates:
+                return [], False
+            in_clause = ",".join(clean_dates)
+            url = (
+                f"{supabase_url}/rest/v1/past_performances_v2"
+                f"?select={select_cols}"
+                f"&incident=not.is.null&race_date=in.({in_clause})&limit={limit}"
+            )
+        else:
+            url = (
+                f"{supabase_url}/rest/v1/past_performances_v2"
+                f"?select={select_cols}&incident=not.is.null&limit={limit}"
+            )
+        resp = requests.get(url, headers=headers, timeout=60)
+        if resp.status_code != 200:
+            return [], False
+        rows = resp.json() or []
+        records = [r for r in rows if r.get("incident") and not is_empty_incident(r.get("incident", ""))]
+        return records, len(rows) >= limit
+    except Exception as exc:
+        print(f"读取 past_performances_v2 incident 记录失败: {exc}")
+        return [], False
+
+
+def _dedupe_incident_records(records: List[Dict]) -> Tuple[List[str], Dict[str, Dict]]:
+    """按 incident 哈希去重，保留最新赛日的一条元数据。"""
+    pending_texts: List[str] = []
+    meta_by_hash: Dict[str, Dict] = {}
+    seen: Set[str] = set()
+    sorted_records = sorted(
+        records,
+        key=lambda r: str(r.get("race_date") or ""),
+        reverse=True,
+    )
+    for rec in sorted_records:
+        text = rec.get("incident", "")
+        if is_empty_incident(text):
+            continue
+        h = incident_text_hash(text)
+        if h in seen:
+            continue
+        seen.add(h)
+        pending_texts.append(text)
+        meta_by_hash[h] = {
+            "race_date": (rec.get("race_date") or "")[:10] or None,
+            "venue": rec.get("venue") or "",
+            "race_no": rec.get("race_no"),
+            "horse_no": rec.get("horse_no") or "",
+            "horse_id": rec.get("horse_id") or "",
+        }
+    return pending_texts, meta_by_hash
+
+
+def build_incident_context_maps(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    perf_limit: int = 50000,
+) -> Dict:
+    """构建 incident 哈希 → 赛日/马匹上下文，及 horse_id → 马名。"""
+    by_hash: Dict[str, Dict] = {}
+    horse_names: Dict[str, str] = {}
+    if not supabase_url or not headers:
+        return {"by_hash": by_hash, "horse_names": horse_names}
+
+    records, _ = fetch_past_incident_records(supabase_url, headers, limit=perf_limit)
+    for rec in sorted(records, key=lambda r: str(r.get("race_date") or ""), reverse=True):
+        text = rec.get("incident", "")
+        if is_empty_incident(text):
+            continue
+        h = incident_text_hash(text)
+        if h in by_hash:
+            continue
+        by_hash[h] = {
+            "race_date": (rec.get("race_date") or "")[:10] or "",
+            "venue": rec.get("venue") or "",
+            "race_no": rec.get("race_no"),
+            "horse_no": str(rec.get("horse_no") or ""),
+            "horse_id": str(rec.get("horse_id") or ""),
+        }
+
+    try:
+        horses_url = f"{supabase_url}/rest/v1/horses_v2?select=horse_id,name_zh,name_en&limit=50000"
+        resp = requests.get(horses_url, headers=headers, timeout=60)
+        if resp.status_code == 200:
+            for h in resp.json() or []:
+                hid = str(h.get("horse_id") or "")
+                if hid:
+                    horse_names[hid] = h.get("name_zh") or h.get("name_en") or hid
+    except Exception as exc:
+        print(f"读取 horses_v2 失败: {exc}")
+
+    return {"by_hash": by_hash, "horse_names": horse_names}
+
+
+def search_incident_llm_cache(
+    supabase_url: str,
+    headers: Dict,
+    *,
+    race_date_from: str = "",
+    race_date_to: str = "",
+    venue: str = "",
+    keyword: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    order: str = "created_at.desc",
+) -> Dict:
+    """分页查阅 incident_llm_cache（管理员）。"""
+    result = {"rows": [], "total": 0, "page": max(1, page), "page_size": page_size}
+    if not supabase_url or not headers:
+        return result
+
+    page_size = max(10, min(int(page_size or 50), 200))
+    page = max(1, int(page or 1))
+    offset = (page - 1) * page_size
+
+    select_cols = (
+        "id,incident_text_hash,incident_text,race_date,venue,race_no,horse_no,"
+        "rule_score,llm_impact_score,incident_type,suggestion,model_version,"
+        "prompt_tokens,completion_tokens,total_tokens,created_at"
+    )
+    url = f"{supabase_url}/rest/v1/incident_llm_cache?select={select_cols}"
+    if race_date_from:
+        url += f"&race_date=gte.{race_date_from}"
+    if race_date_to:
+        url += f"&race_date=lte.{race_date_to}"
+    if venue and venue.upper() in ("ST", "HV"):
+        url += f"&venue=eq.{venue.upper()}"
+    kw = (keyword or "").strip()
+    if kw:
+        from urllib.parse import quote
+        url += f"&incident_text=ilike.{quote(f'%{kw}%')}"
+    url += f"&order={order}&limit={page_size}&offset={offset}"
+
+    try:
+        hdrs = dict(headers)
+        hdrs["Prefer"] = "count=exact"
+        resp = requests.get(url, headers=hdrs, timeout=30)
+        if resp.status_code == 400 and "prompt_tokens" in (resp.text or ""):
+            select_cols = (
+                "id,incident_text_hash,incident_text,race_date,venue,race_no,horse_no,"
+                "rule_score,llm_impact_score,incident_type,suggestion,model_version,created_at"
+            )
+            url = url.replace(
+                "id,incident_text_hash,incident_text,race_date,venue,race_no,horse_no,"
+                "rule_score,llm_impact_score,incident_type,suggestion,model_version,"
+                "prompt_tokens,completion_tokens,total_tokens,created_at",
+                select_cols,
+            )
+            resp = requests.get(url, headers=hdrs, timeout=30)
+        if resp.status_code not in (200, 206):
+            return result
+        result["rows"] = resp.json() or []
+        content_range = resp.headers.get("Content-Range", "")
+        if "/" in content_range:
+            total = content_range.split("/")[-1]
+            if total.isdigit():
+                result["total"] = int(total)
+        if not result["total"]:
+            result["total"] = len(result["rows"])
+    except Exception as exc:
+        print(f"查阅 incident_llm_cache 失败: {exc}")
+    return result
+
+
 def fetch_past_incident_texts(
     supabase_url: str,
     headers: Dict,
@@ -203,22 +395,9 @@ def fetch_past_incident_texts(
     limit: int = INCIDENT_SCAN_LIMIT,
 ) -> Tuple[List[str], bool]:
     """从 past_performances_v2 拉取 incident 文本。返回 (texts, truncated)。"""
-    if not supabase_url or not headers:
-        return [], False
-    try:
-        url = (
-            f"{supabase_url}/rest/v1/past_performances_v2"
-            f"?select=incident&incident=not.is.null&limit={limit}"
-        )
-        resp = requests.get(url, headers=headers, timeout=60)
-        if resp.status_code != 200:
-            return [], False
-        rows = resp.json() or []
-        texts = [r.get("incident", "") for r in rows if r.get("incident")]
-        return texts, len(rows) >= limit
-    except Exception as exc:
-        print(f"读取 past_performances_v2 incident 失败: {exc}")
-        return [], False
+    records, truncated = fetch_past_incident_records(supabase_url, headers, limit=limit)
+    texts, _ = _dedupe_incident_records(records)
+    return texts, truncated
 
 
 def fetch_cached_incident_hashes(supabase_url: str, headers: Dict) -> Set[str]:
@@ -353,27 +532,25 @@ def fetch_incident_texts_for_race_dates(
     limit: int = INCIDENT_SCAN_LIMIT,
 ) -> Tuple[List[str], bool]:
     """按赛日拉取 incident 文本。"""
-    if not supabase_url or not headers or not race_dates:
-        return [], False
-    clean_dates = sorted({d[:10] for d in race_dates if d})
-    if not clean_dates:
-        return [], False
-    try:
-        in_clause = ",".join(clean_dates)
-        url = (
-            f"{supabase_url}/rest/v1/past_performances_v2"
-            f"?select=incident,race_date"
-            f"&incident=not.is.null&race_date=in.({in_clause})&limit={limit}"
-        )
-        resp = requests.get(url, headers=headers, timeout=60)
-        if resp.status_code != 200:
-            return [], False
-        rows = resp.json() or []
-        texts = [r.get("incident", "") for r in rows if r.get("incident")]
-        return texts, len(rows) >= limit
-    except Exception as exc:
-        print(f"按赛日读取 incident 失败: {exc}")
-        return [], False
+    records, truncated = fetch_past_incident_records(
+        supabase_url, headers, limit=limit, race_dates=race_dates
+    )
+    texts, _ = _dedupe_incident_records(records)
+    return texts, truncated
+
+
+def fetch_incident_texts_for_race_dates_with_meta(
+    supabase_url: str,
+    headers: Dict,
+    race_dates: List[str],
+    *,
+    limit: int = INCIDENT_SCAN_LIMIT,
+) -> Tuple[List[str], Dict[str, Dict], bool]:
+    records, truncated = fetch_past_incident_records(
+        supabase_url, headers, limit=limit, race_dates=race_dates
+    )
+    texts, meta = _dedupe_incident_records(records)
+    return texts, meta, truncated
 
 
 def run_auto_incident_backfill(
@@ -469,8 +646,14 @@ def batch_cache_missing_incidents(
     }
     seen = set()
     cached_hashes = fetch_cached_incident_hashes(supabase_url, headers)
+    all_records, _ = fetch_past_incident_records(supabase_url, headers, limit=INCIDENT_SCAN_LIMIT)
+    _, meta_by_hash = _dedupe_incident_records(all_records)
+    if incident_texts:
+        source_texts = incident_texts
+    else:
+        source_texts, _ = _dedupe_incident_records(all_records)
     pending_unique: List[str] = []
-    for text in incident_texts:
+    for text in source_texts:
         if is_empty_incident(text):
             stats["skipped"] += 1
             continue
@@ -484,10 +667,12 @@ def batch_cache_missing_incidents(
         pending_unique.append(text)
     stats["planned_calls"] = len(pending_unique) if fill_all else min(len(pending_unique), max_new_calls)
 
+    model_version = str(secrets.get("DEEPSEEK_MODEL", "deepseek-chat"))
     for text in pending_unique:
         if not fill_all and stats["analyzed"] >= max_new_calls:
             break
         h = incident_text_hash(text)
+        meta = meta_by_hash.get(h, {})
         result = analyze_incident_with_deepseek_api(text, secrets)
         ok = save_incident_llm_cache(
             text,
@@ -496,6 +681,11 @@ def batch_cache_missing_incidents(
             result["suggestion"],
             supabase_url,
             headers,
+            race_date=meta.get("race_date") or "",
+            venue=meta.get("venue") or "",
+            race_no=meta.get("race_no"),
+            horse_no=meta.get("horse_no") or "",
+            model_version=model_version,
             prompt_tokens=result.get("prompt_tokens", 0),
             completion_tokens=result.get("completion_tokens", 0),
             total_tokens=result.get("total_tokens", 0),

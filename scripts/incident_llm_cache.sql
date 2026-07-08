@@ -24,5 +24,8 @@ CREATE TABLE IF NOT EXISTS incident_llm_cache (
 CREATE INDEX IF NOT EXISTS idx_incident_llm_cache_hash
     ON incident_llm_cache (incident_text_hash);
 
+CREATE INDEX IF NOT EXISTS idx_incident_llm_cache_race_date
+    ON incident_llm_cache (race_date DESC);
+
 COMMENT ON TABLE incident_llm_cache IS
     '竞赛事件 LLM 分析缓存；combined = clamp(rule_score + 0.5 * llm_impact_score, -20, 20)';
