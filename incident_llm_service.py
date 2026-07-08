@@ -56,6 +56,53 @@ def get_llm_impact_from_cache(
     return 0.0
 
 
+def build_incident_llm_map_from_texts(
+    incident_texts,
+    supabase_url: str,
+    headers: Optional[Dict],
+    *,
+    chunk_size: int = 100,
+) -> Dict[str, float]:
+    """批量读取 incident LLM 缓存（按 hash in 查询，不调用 DeepSeek）。"""
+    if not supabase_url or not headers:
+        return {}
+
+    text_by_hash: Dict[str, str] = {}
+    for text in incident_texts or []:
+        if is_empty_incident(text):
+            continue
+        text_by_hash[incident_text_hash(text)] = text
+
+    if not text_by_hash:
+        return {}
+
+    mapping: Dict[str, float] = {text: 0.0 for text in text_by_hash.values()}
+    hash_list = list(text_by_hash.keys())
+    chunk_size = max(20, min(int(chunk_size or 100), 150))
+
+    for offset in range(0, len(hash_list), chunk_size):
+        chunk = hash_list[offset: offset + chunk_size]
+        hash_filter = ",".join(chunk)
+        url = (
+            f"{supabase_url}/rest/v1/incident_llm_cache"
+            f"?incident_text_hash=in.({hash_filter})"
+            f"&select=incident_text_hash,llm_impact_score"
+        )
+        try:
+            resp = requests.get(url, headers=headers, timeout=60)
+            if resp.status_code != 200:
+                continue
+            for row in resp.json() or []:
+                h = row.get("incident_text_hash")
+                text = text_by_hash.get(h)
+                if text is not None:
+                    mapping[text] = float(row.get("llm_impact_score") or 0)
+        except Exception as exc:
+            print(f"批量读取 incident_llm_cache 失败: {exc}")
+
+    return mapping
+
+
 def get_combined_incident_adjustment(
     incident_text: str,
     supabase_url: str = "",

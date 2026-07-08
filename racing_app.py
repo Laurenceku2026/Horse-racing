@@ -1771,6 +1771,7 @@ try:
     run_auto_incident_backfill = getattr(ils, "run_auto_incident_backfill", None)
     search_incident_llm_cache = getattr(ils, "search_incident_llm_cache", None)
     build_incident_context_maps = getattr(ils, "build_incident_context_maps", None)
+    build_incident_llm_map_from_texts = getattr(ils, "build_incident_llm_map_from_texts", None)
     resolve_incident_cache_display = getattr(ils, "resolve_incident_cache_display", None)
     format_venue_label = getattr(ils, "format_venue_label", lambda v, lang="zh": v or "-")
     incident_text_hash_fn = getattr(ils, "incident_text_hash", None)
@@ -1793,6 +1794,7 @@ except ImportError as _incident_llm_import_error:
     run_auto_incident_backfill = None
     search_incident_llm_cache = None
     build_incident_context_maps = None
+    build_incident_llm_map_from_texts = None
     resolve_incident_cache_display = None
     format_venue_label = lambda v, lang="zh": v or "-"
     incident_text_hash_fn = None
@@ -6410,8 +6412,6 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
             info_msg = "暂无成绩数据" if lang == "zh" else "No performance data available"
             st.info(info_msg)
             return pd.DataFrame()
-
-        incident_llm_map = _build_incident_llm_map([p.get("incident", "") for p in data])
         
         # ==================== 3. 按 horse_id 分组 ====================
         from collections import defaultdict
@@ -6435,6 +6435,15 @@ def get_all_horses_base_score(limit: int = 500, recent_games: int = 10) -> pd.Da
                 "incident": p.get("incident", ""),
                 "running_position": p.get("running_position", "")
             })
+
+        # 评分榜状态分只用每匹马「最近一场」的 incident，勿扫全库 5 万条往绩
+        latest_incidents: List[str] = []
+        for records in horse_records.values():
+            records.sort(key=lambda x: x.get("race_date", ""), reverse=True)
+            scope_records = records if recent_games == 0 else records[:recent_games]
+            if scope_records:
+                latest_incidents.append(scope_records[0].get("incident", ""))
+        incident_llm_map = _build_incident_llm_map(latest_incidents)
         
         # ==================== 4. 加载评分配置 ====================
         from scoring_engine import get_scoring_config
@@ -12592,6 +12601,8 @@ def _build_incident_llm_map(incident_texts: List[str]) -> Dict[str, float]:
     if not INCIDENT_LLM_OK or not SUPABASE_URL:
         return {}
     headers = get_supabase_headers(use_secret=True)
+    if build_incident_llm_map_from_texts:
+        return build_incident_llm_map_from_texts(incident_texts, SUPABASE_URL, headers)
     mapping: Dict[str, float] = {}
     for text in set(t for t in incident_texts if t):
         mapping[text] = get_llm_impact_from_cache(text, SUPABASE_URL, headers)
