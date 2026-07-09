@@ -16,6 +16,7 @@ import requests
 
 HKT = timezone(timedelta(hours=8))
 INCIDENT_SCAN_LIMIT = 5000
+INCIDENT_LLM_CACHE_KEEP_LIMIT = 15000
 
 EMPTY_INCIDENTS = frozenset({"", "无特别报告。", "無特別報告。", "None", "null"})
 
@@ -200,6 +201,59 @@ def save_incident_llm_cache(
     except Exception as exc:
         print(f"写入 incident_llm_cache 失败: {exc}")
         return False
+
+
+def trim_incident_llm_cache(
+    supabase_url: str,
+    headers: Dict,
+    keep: int = INCIDENT_LLM_CACHE_KEEP_LIMIT,
+) -> Dict:
+    """incident_llm_cache 超过 keep 时删除最旧记录（按 created_at, id）。"""
+    keep_limit = max(1, int(keep or INCIDENT_LLM_CACHE_KEEP_LIMIT))
+    result: Dict = {
+        "deleted": 0,
+        "kept": keep_limit,
+        "total": 0,
+        "error": None,
+    }
+    if not supabase_url:
+        result["error"] = "supabase_url missing"
+        return result
+    payload = {"p_keep": keep_limit}
+    rpc_urls = (
+        f"{supabase_url}/rest/v1/rpc/trim_incident_llm_cache",
+        f"{supabase_url}/rest/v1/rpc/trim_table_rows",
+    )
+    try:
+        for idx, url in enumerate(rpc_urls):
+            body = (
+                payload
+                if idx == 0
+                else {
+                    "p_table": "incident_llm_cache",
+                    "p_keep": keep_limit,
+                    "p_order_sql": "created_at ASC, id ASC",
+                }
+            )
+            resp = requests.post(url, headers=headers, json=body, timeout=60)
+            if resp.status_code != 200:
+                if idx == 0:
+                    continue
+                result["error"] = f"HTTP {resp.status_code}: {(resp.text or '')[:300]}"
+                return result
+            row = resp.json() or {}
+            result["deleted"] = int(row.get("deleted") or 0)
+            result["kept"] = int(row.get("kept") or keep_limit)
+            result["total"] = int(row.get("total") or 0)
+            if row.get("error"):
+                result["error"] = str(row.get("error"))
+            return result
+        result["error"] = "trim_incident_llm_cache RPC not installed"
+        return result
+    except Exception as exc:
+        result["error"] = str(exc)
+        print(f"trim_incident_llm_cache 失败: {exc}")
+        return result
 
 
 def analyze_incident_with_deepseek_api(incident_text: str, secrets: Dict) -> Dict:
@@ -881,6 +935,12 @@ def batch_cache_missing_incidents(
     missing_stats = count_missing_incident_cache(supabase_url, headers)
     stats["remaining_missing"] = missing_stats.get("missing_unique", 0)
     stats["missing_stats"] = missing_stats
+    trim_result = trim_incident_llm_cache(supabase_url, headers)
+    stats["trim"] = trim_result
+    if trim_result.get("deleted", 0) > 0:
+        print(
+            f"incident_llm_cache 清理：删除 {trim_result['deleted']} 条，保留上限 {trim_result.get('kept', INCIDENT_LLM_CACHE_KEEP_LIMIT)}"
+        )
     return stats
 
 

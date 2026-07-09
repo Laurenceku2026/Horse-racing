@@ -4742,6 +4742,14 @@ def _show_admin_backfill_result(result: Dict, lang: str) -> None:
         st.success("历史 incident 已全部写入缓存；今后只会对新 incident 调用 DeepSeek。")
     else:
         st.success("All scanned incidents are cached; future API calls are for new incidents only.")
+    trim_info = result.get("trim") or {}
+    trim_deleted = int(trim_info.get("deleted") or 0)
+    if trim_deleted > 0:
+        st.info(
+            f"incident_llm_cache 已清理最旧 {trim_deleted} 条，当前上限 15,000 条。"
+            if lang == "zh"
+            else f"Trimmed {trim_deleted} oldest incident_llm_cache row(s); cap is 15,000."
+        )
 
 
 def render_admin_deepseek_usage() -> None:
@@ -4750,10 +4758,10 @@ def render_admin_deepseek_usage() -> None:
     st.markdown("### 🤖 DeepSeek 用量监控" if lang == "zh" else "### 🤖 DeepSeek Usage Monitor")
     st.caption(
         "热路径（智能投注单场、全马评分榜、ML 特征）**只读 Supabase 缓存，不自动调 API**。"
-        "每条 incident_llm_cache 记录 ≈ 曾调用一次 DeepSeek 分析。"
+        "每条 incident_llm_cache 记录 ≈ 曾调用一次 DeepSeek 分析；缓存最多保留 **15,000** 条（超出删最旧）。"
         "时间均为 **香港时间 (UTC+8)**。"
         if lang == "zh"
-        else "Hot paths read Supabase cache only. Each incident_llm_cache row ≈ one DeepSeek API call. Times are HKT (UTC+8)."
+        else "Hot paths read Supabase cache only. Each incident_llm_cache row ≈ one DeepSeek API call; cache capped at **15,000** rows (oldest trimmed). Times are HKT (UTC+8)."
     )
 
     if not INCIDENT_LLM_OK:
