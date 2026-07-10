@@ -30,9 +30,55 @@ def is_empty_incident(text: str) -> bool:
     return not text or text.strip() in EMPTY_INCIDENTS
 
 
+def _rule_incident_score_from_keywords(incident_text: str) -> float:
+    """规则 incident 分（与 scoring_engine.calculate_incident_score 一致，无重型依赖）。"""
+    if is_empty_incident(incident_text):
+        return 0.0
+
+    negative_keywords = [
+        ("流鼻血", -20),
+        ("不良於行", -18),
+        ("喘鳴症", -15),
+        ("心律不正", -15),
+        ("試閘", -10),
+        ("勒避", -8),
+        ("受阻", -8),
+        ("收慢", -6),
+        ("外疊", -6),
+        ("走外疊", -6),
+        ("搶口", -5),
+        ("出閘笨拙", -5),
+        ("內閃", -4),
+        ("外閃", -4),
+        ("失去平衡", -3),
+        ("被碰撞", -2),
+    ]
+    positive_keywords = [
+        ("順利", 5),
+        ("望空", 4),
+        ("節省腳程", 3),
+    ]
+
+    score = 0
+    text_lower = incident_text or ""
+    for keyword, impact in negative_keywords:
+        if keyword in text_lower:
+            score += impact
+            break
+    for keyword, impact in positive_keywords:
+        if keyword in text_lower:
+            score += impact
+            break
+    return max(-20.0, min(20.0, float(score)))
+
+
 def get_rule_incident_score(incident_text: str) -> float:
-    from scoring_engine import calculate_incident_score
-    return float(calculate_incident_score(incident_text or ""))
+    try:
+        from scoring_engine import calculate_incident_score
+
+        return float(calculate_incident_score(incident_text))
+    except ImportError:
+        return _rule_incident_score_from_keywords(incident_text)
 
 
 def get_llm_impact_from_cache(

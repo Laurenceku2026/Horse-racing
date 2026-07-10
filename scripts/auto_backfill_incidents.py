@@ -62,6 +62,15 @@ def main() -> int:
         f"remaining={result.get('remaining_missing', 0)}",
         f"tokens={result.get('total_tokens', 0)}",
     )
+    trim_info = result.get("trim") or {}
+    if trim_info:
+        print(
+            "trim:",
+            f"deleted={trim_info.get('deleted', 0)}",
+            f"kept={trim_info.get('kept', 15000)}",
+            f"total={trim_info.get('total', 0)}",
+            f"error={trim_info.get('error')}",
+        )
     return 0 if int(result.get("errors", 0) or 0) == 0 else 2
 
 
