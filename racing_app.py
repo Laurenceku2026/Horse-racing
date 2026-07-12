@@ -190,9 +190,8 @@ st.markdown("""
         }
     }
 
-    /* 登录 / 注册：标题居中、桌面表单居中 */
+    /* 登录 / 注册：统一卡片宽度，居中 */
     .auth-header-wrap {
-        width: 100%;
         text-align: center;
         margin: 0 0 0.75rem 0;
     }
@@ -204,17 +203,24 @@ st.markdown("""
     div[data-testid="stMarkdownContainer"]:has(.auth-header-wrap) {
         width: 100% !important;
     }
+    .auth-header-wrap,
+    body:has(.auth-header-wrap) [data-testid="stElementContainer"]:has(.auth-header-wrap),
+    body:has(.auth-header-wrap) [data-testid="stElementContainer"]:has([data-testid="stVerticalBlockBorderWrapper"]),
+    body:has(.auth-header-wrap) [data-testid="stElementContainer"]:has([data-testid="stVerticalBlockBorderWrapper"]) ~ [data-testid="stElementContainer"] {
+        max-width: min(440px, calc(100vw - 2rem));
+        width: 100%;
+        margin-left: auto !important;
+        margin-right: auto !important;
+    }
+    body:has(.auth-header-wrap) [data-testid="stMain"] [data-testid="stVerticalBlock"] {
+        align-items: center !important;
+    }
+    body:has(.auth-header-wrap) [data-testid="stElementContainer"]:has([data-testid="stVerticalBlockBorderWrapper"]) ~ [data-testid="stElementContainer"] .stButton > button {
+        width: 100%;
+    }
     @media screen and (min-width: 769px) {
-        div[data-testid="stForm"],
-        body:has(.auth-header-wrap) div[data-testid="stVerticalBlockBorderWrapper"] {
-            max-width: 440px;
-            margin-left: auto;
-            margin-right: auto;
-        }
         .auth-header-wrap {
             max-width: 440px;
-            margin-left: auto;
-            margin-right: auto;
         }
     }
     @media screen and (max-width: 768px) {
@@ -235,7 +241,6 @@ st.markdown("""
         }
         body:has(.auth-header-wrap) [data-testid="stVerticalBlock"] {
             width: 100% !important;
-            align-items: stretch !important;
         }
         .auth-header-wrap {
             padding: 0.25rem 0 0.75rem;
@@ -243,12 +248,6 @@ st.markdown("""
         .auth-title {
             font-size: 1.75rem !important;
             line-height: 1.35 !important;
-        }
-        body:has(.auth-header-wrap) div[data-testid="stForm"],
-        body:has(.auth-header-wrap) div[data-testid="stVerticalBlockBorderWrapper"] {
-            max-width: 100% !important;
-            width: 100% !important;
-            margin: 0 !important;
         }
     }
 </style>
@@ -3178,11 +3177,11 @@ def render_login_form():
                         else:
                             st.error(msg)
 
-        if st.button(t()["register"], use_container_width=True, key="login_go_register"):
-            st.session_state.show_register = True
-            st.rerun()
-        if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True, key="login_forgot"):
-            st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
+    if st.button(t()["register"], use_container_width=True, key="login_go_register", type="secondary"):
+        st.session_state.show_register = True
+        st.rerun()
+    if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True, key="login_forgot", type="secondary"):
+        st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
 
 def render_register_form():
     """显示注册表单"""
@@ -3215,9 +3214,9 @@ def render_register_form():
                         else:
                             st.error(msg)
 
-        if st.button(t()["back_to_login"], use_container_width=True):
-            st.session_state.show_register = False
-            st.rerun()
+    if st.button(t()["back_to_login"], use_container_width=True, type="secondary"):
+        st.session_state.show_register = False
+        st.rerun()
 
 def render_admin_login_form():
     """显示管理员登录表单"""
