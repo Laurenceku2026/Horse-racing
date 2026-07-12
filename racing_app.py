@@ -224,22 +224,25 @@ st.markdown("""
         }
     }
     @media screen and (max-width: 768px) {
-        /* 未登录页：隐藏侧边栏，主区域占满屏宽 */
-        body:has(.auth-header-wrap) [data-testid="stSidebar"],
-        body:has(.auth-header-wrap) [data-testid="stSidebarCollapsedControl"] {
+        /* 未登录页：隐藏侧边栏（不影响已登录页面的展开按钮） */
+        body.auth-mobile-login [data-testid="stSidebar"],
+        body.auth-mobile-login [data-testid="stSidebarCollapsedControl"],
+        body.auth-mobile-login [data-testid="collapsedControl"],
+        body.auth-mobile-login #equi-mobile-sidebar-btn,
+        body.auth-mobile-login #equi-sidebar-expand-hint {
             display: none !important;
         }
-        body:has(.auth-header-wrap) section.main {
+        body.auth-mobile-login section.main {
             width: 100% !important;
             max-width: 100% !important;
         }
-        body:has(.auth-header-wrap) section.main > div.block-container {
+        body.auth-mobile-login section.main > div.block-container {
             padding-top: 0.75rem !important;
             padding-left: max(1rem, env(safe-area-inset-left)) !important;
             padding-right: max(1rem, env(safe-area-inset-right)) !important;
             max-width: 100% !important;
         }
-        body:has(.auth-header-wrap) [data-testid="stVerticalBlock"] {
+        body.auth-mobile-login [data-testid="stVerticalBlock"] {
             width: 100% !important;
         }
         .auth-header-wrap {
@@ -607,6 +610,7 @@ TEXTS = {
         "exit_admin_mode": "退出管理員模式",
         "logout_help": "退出登入",
         "sidebar_expand_hint": "点击打开",
+        "sidebar_open_menu": "☰ 打开菜单",
         "tier_pro": "💎 專業版",
         "tier_free": "🔒 免費版",
         "day_portfolio_title": "賽日最優組合",
@@ -1135,6 +1139,7 @@ Let AI be your racing assistant.
         "exit_admin_mode": "Exit admin mode",
         "logout_help": "Logout",
         "sidebar_expand_hint": "Click to open",
+        "sidebar_open_menu": "☰ Open menu",
         "tier_pro": "💎 Pro",
         "tier_free": "🔒 Free",
         "day_portfolio_title": "Best Race-day Portfolio",
@@ -6405,16 +6410,50 @@ def render_sidebar():
         st.caption("v1.0 | TechLife")
         st.caption(t()["data_source_footer"])
 
-def inject_sidebar_expand_hint():
-    """侧边栏收起时，在展开箭头旁显示提示文字。"""
+def inject_auth_mobile_body_class():
+    """未登录手机页标记，用于隐藏侧边栏而不影响已登录页面。"""
+    st.markdown(
+        """
+<script>
+(function () {
+  document.body.classList.add("auth-mobile-login");
+  document.body.classList.remove("auth-mobile-ready");
+})();
+</script>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def inject_sidebar_mobile_support():
+    """手机端：默认展开侧边栏，并提供可靠的打开菜单按钮与提示。"""
     hint = t().get("sidebar_expand_hint", "点击打开")
+    menu_label = t().get("sidebar_open_menu", "☰ 打开菜单")
     st.markdown(
         f"""
 <style>
+    #equi-mobile-sidebar-btn {{
+        display: none;
+        position: fixed;
+        top: max(0.55rem, env(safe-area-inset-top));
+        left: max(0.55rem, env(safe-area-inset-left));
+        z-index: 999992;
+        align-items: center;
+        gap: 0.35rem;
+        font-size: 0.84rem;
+        font-weight: 600;
+        color: #31333f;
+        background: rgba(255, 255, 255, 0.98);
+        border: 1px solid #c9ced6;
+        border-radius: 0.65rem;
+        padding: 0.45rem 0.7rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+        cursor: pointer;
+    }}
     #equi-sidebar-expand-hint {{
         display: none;
         position: fixed;
-        z-index: 999990;
+        z-index: 999991;
         font-size: 0.82rem;
         font-weight: 600;
         color: #31333f;
@@ -6422,51 +6461,141 @@ def inject_sidebar_expand_hint():
         border: 1px solid #d5dae0;
         border-radius: 0.5rem;
         padding: 0.35rem 0.65rem;
-        pointer-events: none;
         white-space: nowrap;
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
         line-height: 1.2;
+        cursor: pointer;
     }}
     @media screen and (max-width: 768px) {{
+        body:not(.auth-mobile-login) #equi-mobile-sidebar-btn.is-visible {{
+            display: inline-flex;
+        }}
         #equi-sidebar-expand-hint {{
             font-size: 0.78rem;
             padding: 0.3rem 0.55rem;
         }}
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"] {{
+            z-index: 999993 !important;
+            pointer-events: auto !important;
+        }}
     }}
 </style>
-<span id="equi-sidebar-expand-hint">{hint}</span>
+<button type="button" id="equi-mobile-sidebar-btn" aria-label="{menu_label}">{menu_label}</button>
+<span id="equi-sidebar-expand-hint" role="button" tabindex="0">{hint}</span>
 <script>
 (function () {{
+    document.body.classList.remove("auth-mobile-login");
+    document.body.classList.add("auth-mobile-ready");
+
     var hint = document.getElementById("equi-sidebar-expand-hint");
-    if (!hint) return;
+    var menuBtn = document.getElementById("equi-mobile-sidebar-btn");
+    if (!hint || !menuBtn) return;
+
+    function isMobile() {{
+        return window.matchMedia("(max-width: 768px)").matches;
+    }}
+
+    function findExpandButton() {{
+        return document.querySelector('[data-testid="stSidebarCollapsedControl"]')
+            || document.querySelector('[data-testid="collapsedControl"]')
+            || document.querySelector('[data-testid="stSidebarCollapseButton"]');
+    }}
 
     function isVisible(el) {{
         if (!el) return false;
+        var style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") return false;
         var rect = el.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== "hidden";
+        return rect.width > 0 && rect.height > 0;
     }}
 
-    function syncSidebarHint() {{
-        var expandBtn = document.querySelector('[data-testid="stSidebarCollapsedControl"]')
-            || document.querySelector('[data-testid="collapsedControl"]');
-        if (!isVisible(expandBtn)) {{
-            hint.style.display = "none";
+    function isSidebarOpen() {{
+        var sidebar = document.querySelector('[data-testid="stSidebar"]');
+        if (!sidebar || !isVisible(sidebar)) return false;
+        var rect = sidebar.getBoundingClientRect();
+        return rect.width > 64;
+    }}
+
+    function openSidebar() {{
+        if (isSidebarOpen()) return;
+        var expandBtn = findExpandButton();
+        if (expandBtn) {{
+            expandBtn.click();
             return;
         }}
-        var rect = expandBtn.getBoundingClientRect();
-        hint.style.display = "block";
-        hint.style.left = (rect.right + 8) + "px";
-        hint.style.top = (rect.top + rect.height / 2 - hint.offsetHeight / 2) + "px";
+        var headerBtn = document.querySelector('[data-testid="stHeader"] button');
+        if (headerBtn) headerBtn.click();
     }}
 
-    syncSidebarHint();
-    new MutationObserver(syncSidebarHint).observe(document.body, {{
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ["style", "class", "aria-expanded", "aria-hidden"],
-    }});
-    window.addEventListener("resize", syncSidebarHint);
+    function syncSidebarUi() {{
+        if (!isMobile()) {{
+            hint.style.display = "none";
+            menuBtn.classList.remove("is-visible");
+            return;
+        }}
+        var expandBtn = findExpandButton();
+        var open = isSidebarOpen();
+        menuBtn.classList.toggle("is-visible", !open);
+
+        if (!open && isVisible(expandBtn)) {{
+            var rect = expandBtn.getBoundingClientRect();
+            hint.style.display = "block";
+            hint.style.left = (rect.right + 8) + "px";
+            hint.style.top = (rect.top + rect.height / 2 - hint.offsetHeight / 2) + "px";
+        }} else {{
+            hint.style.display = "none";
+        }}
+    }}
+
+    function scheduleSync() {{
+        if (window.__equiSidebarSyncScheduled) return;
+        window.__equiSidebarSyncScheduled = true;
+        window.requestAnimationFrame(function () {{
+            window.__equiSidebarSyncScheduled = false;
+            syncSidebarUi();
+        }});
+    }}
+
+    if (!menuBtn.dataset.equiBound) {{
+        menuBtn.dataset.equiBound = "1";
+        menuBtn.addEventListener("click", function (event) {{
+            event.preventDefault();
+            event.stopPropagation();
+            openSidebar();
+            setTimeout(scheduleSync, 120);
+        }});
+    }}
+    if (!hint.dataset.equiBound) {{
+        hint.dataset.equiBound = "1";
+        hint.addEventListener("click", function (event) {{
+            event.preventDefault();
+            event.stopPropagation();
+            openSidebar();
+            setTimeout(scheduleSync, 120);
+        }});
+    }}
+
+    if (!window.__equiSidebarObserverReady) {{
+        window.__equiSidebarObserverReady = true;
+        new MutationObserver(scheduleSync).observe(document.body, {{
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ["style", "class", "aria-expanded", "aria-hidden"],
+        }});
+        window.addEventListener("resize", scheduleSync);
+
+        if (isMobile() && !sessionStorage.getItem("equi_mobile_sidebar_opened")) {{
+            setTimeout(function () {{
+                openSidebar();
+                sessionStorage.setItem("equi_mobile_sidebar_opened", "1");
+                scheduleSync();
+            }}, 450);
+        }}
+    }}
+
+    scheduleSync();
 }})();
 </script>
 """,
@@ -15564,29 +15693,33 @@ def main():
     
     # 渲染侧边栏和顶部按钮
     render_sidebar()
-    inject_sidebar_expand_hint()
     render_top_buttons()
-    
+
     # 管理员登录
     if st.session_state.get("show_admin_login", False):
+        inject_auth_mobile_body_class()
         if st.session_state.get("try_admin_local_restore"):
             _inject_admin_restore_js()
             st.session_state.try_admin_local_restore = False
         render_admin_login_form()
         return
-    
+
     # 管理员模式
     if st.session_state.get("admin_mode", False):
+        inject_sidebar_mobile_support()
         render_admin_panel()
         return
-    
+
     # 未登录
     if not st.session_state.authenticated:
+        inject_auth_mobile_body_class()
         if st.session_state.get("show_register", False):
             render_register_form()
         else:
             render_login_form()
         return
+
+    inject_sidebar_mobile_support()
     
     # 已登录，直接显示主页（包含所有模块：数据概览 + 智能投注 + 回测）
     render_home()
