@@ -5767,6 +5767,129 @@ def render_admin_panel():
                 st.success("✅ ML 参数已重置" if lang == "zh" else "✅ ML Parameters reset")
                 clear_model_cache()
                 st.rerun()
+
+            st.markdown("---")
+            if lang == "zh":
+                st.markdown("**🔬 Optuna 自动调参（Top1 入前三）**")
+                st.caption(
+                    "以 walk-forward 回测「AI 预测第一名是否落在实际前三名」为优化目标，"
+                    "自动搜索 LightGBM 超参数。耗时较长，请耐心等待。"
+                )
+            else:
+                st.markdown("**🔬 Optuna Auto-Tuning (Top1 in Top 3)**")
+                st.caption(
+                    "Maximize walk-forward rate of AI #1 landing in actual top 3. "
+                    "Searches LightGBM hyperparameters; may take several minutes."
+                )
+            opt_col1, opt_col2, opt_col3 = st.columns(3)
+            with opt_col1:
+                opt_start = st.date_input(
+                    "调参起始日" if lang == "zh" else "Start Date",
+                    value=datetime(2024, 1, 1).date(),
+                    key="optuna_start_date",
+                )
+            with opt_col2:
+                opt_end = st.date_input(
+                    "调参结束日" if lang == "zh" else "End Date",
+                    value=datetime.now().date(),
+                    key="optuna_end_date",
+                )
+            with opt_col3:
+                opt_trials = st.number_input(
+                    "试验次数" if lang == "zh" else "Trials",
+                    min_value=5,
+                    max_value=200,
+                    value=30,
+                    step=5,
+                    key="optuna_n_trials",
+                )
+            opt_max_days = st.slider(
+                "最多回测赛事日（加速）" if lang == "zh" else "Max race days (speed)",
+                min_value=10,
+                max_value=120,
+                value=40,
+                step=5,
+                key="optuna_max_race_days",
+            )
+            if st.button(
+                "🚀 开始 Optuna 调参" if lang == "zh" else "🚀 Run Optuna Search",
+                key="run_optuna_search",
+                type="primary",
+            ):
+                try:
+                    from ml_hyperparam_tuning import run_optuna_lgb_search
+
+                    progress = st.progress(0.0, text="Optuna…" if lang == "zh" else "Optuna…")
+                    status = st.empty()
+
+                    def _optuna_progress(msg: str, frac: float) -> None:
+                        progress.progress(min(1.0, max(0.0, frac)), text=msg)
+                        status.caption(msg)
+
+                    with st.spinner("正在运行 Optuna…" if lang == "zh" else "Running Optuna…"):
+                        opt_result = run_optuna_lgb_search(
+                            start_date=opt_start.strftime("%Y-%m-%d"),
+                            end_date=opt_end.strftime("%Y-%m-%d"),
+                            n_trials=int(opt_trials),
+                            max_race_days=int(opt_max_days),
+                            progress_callback=_optuna_progress,
+                        )
+                    progress.empty()
+                    status.empty()
+                    if opt_result.get("success"):
+                        st.session_state["optuna_last_result"] = opt_result
+                        st.success(
+                            f"✅ 调参完成：Top1入前三 {opt_result['best_rate']:.1f}% "
+                            f"（{opt_result['best_hits']}/{opt_result['best_races']} 场）"
+                            if lang == "zh"
+                            else (
+                                f"✅ Done: Top1-in-top3 {opt_result['best_rate']:.1f}% "
+                                f"({opt_result['best_hits']}/{opt_result['best_races']} races)"
+                            )
+                        )
+                    else:
+                        st.error(opt_result.get("error", "Optuna 调参失败"))
+                except Exception as e:
+                    st.error(f"Optuna 调参失败: {e}" if lang == "zh" else f"Optuna failed: {e}")
+
+            if st.session_state.get("optuna_last_result"):
+                opt_res = st.session_state["optuna_last_result"]
+                if opt_res.get("success"):
+                    st.markdown(
+                        f"**{'上次结果' if lang == 'zh' else 'Last result'}** — "
+                        f"Top1{'入前三' if lang == 'zh' else ' in top 3'}: "
+                        f"**{opt_res.get('best_rate', 0):.1f}%** "
+                        f"（{opt_res.get('best_hits', 0)}/{opt_res.get('best_races', 0)} "
+                        f"{'场' if lang == 'zh' else 'races'}）"
+                    )
+                    with st.expander("查看最优参数" if lang == "zh" else "Best parameters", expanded=False):
+                        st.json(opt_res.get("best_params", {}))
+                    if st.button(
+                        "✅ 应用最优参数并清空缓存" if lang == "zh" else "✅ Apply best params & clear cache",
+                        key="apply_optuna_params",
+                    ):
+                        from scoring_engine import clear_model_cache as se_clear_cache
+
+                        best = opt_res.get("best_params") or {}
+                        if best:
+                            update_ml_config(best)
+                            clear_model_cache()
+                            se_clear_cache()
+                            _cached_smart_betting_ml_model.clear()
+                            for k in (
+                                "smart_betting_ml_session_key",
+                                "smart_betting_ml_model",
+                                "smart_betting_ml_type",
+                            ):
+                                st.session_state.pop(k, None)
+                            st.success(
+                                "✅ 已应用 Optuna 最优参数，模型缓存已清空"
+                                if lang == "zh"
+                                else "✅ Applied Optuna best params; caches cleared"
+                            )
+                            st.rerun()
+                        else:
+                            st.warning("无可用最优参数" if lang == "zh" else "No best parameters")
             
             # 显示当前参数摘要
             if lang == "zh":
@@ -9080,16 +9203,16 @@ def train_model_for_smart_betting(model_type: str, start_date: str = None, end_d
     )
     
     # 使用 cutoff_date = end_date（使用所有数据训练）
-    train_X, train_y = prepare_training_data_by_date(
+    train_X, train_y, train_w = prepare_training_data_by_date(
         end_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
     )
-    
+
     if train_X is None or len(train_X) < 50:
         st.error(f"训练数据不足: {len(train_X) if train_X is not None else 0} 条")
         return None
-    
+
     # 训练模型（使用与回测相同的函数）
-    model = get_or_train_model(train_X, train_y, model_type, cache_key)
+    model = get_or_train_model(train_X, train_y, model_type, cache_key, sample_weight=train_w)
     
     if model is not None:
         set_cached_model(cache_key, model)
@@ -12485,7 +12608,7 @@ def prepare_training_data_by_date(
     all_performances: List[Dict],
     horse_cache: Dict,
     incident_llm_map: Optional[Dict[str, float]] = None,
-) -> Tuple[pd.DataFrame, pd.Series]:
+) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     """
     准备截止到 cutoff_date 之前的训练数据
     使用18个因子（完整版，包含骑师、练马师、年龄、体重、事件、冲刺、新马标记）
@@ -12807,12 +12930,13 @@ def prepare_training_data_by_date(
             group_weights.append(group_weight)
     
     if len(X_list) < 50:
-        return None, None
-    
+        return None, None, None
+
     X_df = pd.DataFrame(X_list).fillna(0)
     y_series = pd.Series(y_list)
-    
-    return X_df, y_series
+    w_series = pd.Series(group_weights, dtype=float)
+
+    return X_df, y_series, w_series
 
 
 #--------------------
@@ -12983,7 +13107,14 @@ def predict_with_model(model, features: Dict, model_type: str, return_all_probs:
 
 _model_cache = {}
 #---------
-def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
+def get_or_train_model(
+    X_train,
+    y_train,
+    model_type: str,
+    cache_key: str,
+    sample_weight=None,
+    use_cache: bool = True,
+):
     """
     获取或训练模型（带缓存）
     参数：
@@ -12991,28 +13122,40 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
         y_train: 训练标签
         model_type: 'lightgbm', 'xgboost', 'ensemble'
         cache_key: 唯一缓存键（应包含模型类型）
+        sample_weight: 样本权重（好马组 1.5 / 中马组 1.0 / 差马组 0.8）
+        use_cache: 是否读写进程内模型缓存（搜参时设为 False）
     返回：
         训练好的模型
     """
     global _model_cache
-    
+
+    fit_kwargs = {}
+    if sample_weight is not None:
+        fit_kwargs["sample_weight"] = sample_weight
+
     # ⭐ 关键修复：缓存键必须包含模型类型（防止LightGBM和XGBoost共用）
     # 如果 cache_key 没有以模型类型开头，强制添加
     if not cache_key.startswith(model_type):
         cache_key = f"{model_type}_{cache_key}"
-    
+
     # ⭐ 如果是集成模型，使用独立的缓存键格式
     if model_type == 'ensemble':
         lgb_key = f"lightgbm_{cache_key.replace('ensemble_', '')}"
         xgb_key = f"xgboost_{cache_key.replace('ensemble_', '')}"
-        
-        lgb_model = get_or_train_model(X_train, y_train, 'lightgbm', lgb_key)
-        xgb_model = get_or_train_model(X_train, y_train, 'xgboost', xgb_key)
-        
+
+        lgb_model = get_or_train_model(
+            X_train, y_train, 'lightgbm', lgb_key,
+            sample_weight=sample_weight, use_cache=use_cache,
+        )
+        xgb_model = get_or_train_model(
+            X_train, y_train, 'xgboost', xgb_key,
+            sample_weight=sample_weight, use_cache=use_cache,
+        )
+
         return {'lightgbm': lgb_model, 'xgboost': xgb_model}
-    
+
     # 检查缓存
-    if cache_key in _model_cache:
+    if use_cache and cache_key in _model_cache:
         print(f"✅ 缓存命中: {cache_key}")
         return _model_cache[cache_key]
     
@@ -13055,8 +13198,8 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
                 colsample_bytree=config.get("lgb_colsample_bytree", 0.7)
             )
         
-        model.fit(X_train, y_train)
-    
+        model.fit(X_train, y_train, **fit_kwargs)
+
     # ==================== XGBoost 训练 ====================
     elif model_type == 'xgboost' and XGB_AVAILABLE:
         # 检查标签是否是三分类
@@ -13092,17 +13235,17 @@ def get_or_train_model(X_train, y_train, model_type: str, cache_key: str):
                 colsample_bytree=config.get("xgb_colsample_bytree", 0.7)
             )
         
-        model.fit(X_train, y_train)
-    
+        model.fit(X_train, y_train, **fit_kwargs)
+
     # ==================== 其他情况 ====================
     else:
         return None
-    
+
     # 保存到缓存
-    if model is not None:
+    if use_cache and model is not None:
         _model_cache[cache_key] = model
         print(f"✅ 模型已缓存: {cache_key}")
-    
+
     return model
 
 
@@ -13211,7 +13354,7 @@ def run_strategy_backtest(
         status_text.text(f"策略回測 {model_label}: {current_date} ({idx + 1}/{len(sorted_dates)})")
         progress_bar.progress((idx + 1) / len(sorted_dates))
 
-        train_X, train_y = prepare_training_data_by_date(
+        train_X, train_y, train_w = prepare_training_data_by_date(
             current_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
         )
         if train_X is None or len(train_X) < 50:
@@ -13222,7 +13365,9 @@ def run_strategy_backtest(
         if cached_model is not None:
             model = cached_model
         else:
-            model = get_or_train_model(train_X, train_y, model_type, cache_key)
+            model = get_or_train_model(
+                train_X, train_y, model_type, cache_key, sample_weight=train_w
+            )
             if model is not None:
                 set_cached_model(cache_key, model)
         if model is None:
@@ -13451,7 +13596,7 @@ def run_day_portfolio_backtest(
             train_key = race_date[:7]
 
         if model is None or train_key != last_train_key:
-            train_X, train_y = prepare_training_data_by_date(
+            train_X, train_y, train_w = prepare_training_data_by_date(
                 race_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
             )
             if train_X is None or len(train_X) < 50:
@@ -13461,7 +13606,9 @@ def run_day_portfolio_backtest(
             if cached is not None:
                 model = cached
             else:
-                model = get_or_train_model(train_X, train_y, model_type, cache_key)
+                model = get_or_train_model(
+                    train_X, train_y, model_type, cache_key, sample_weight=train_w
+                )
                 if model is not None:
                     set_cached_model(cache_key, model)
             last_train_key = train_key
@@ -13762,10 +13909,10 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             # 8.1 使用 current_date 之前的所有数据训练模型
             status_text.text(texts["ml_preparing_train"].format(date=current_date))
             #----------
-            train_X, train_y = prepare_training_data_by_date(
+            train_X, train_y, train_w = prepare_training_data_by_date(
                 current_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
             )
-            
+
             if train_X is None or len(train_X) < 50:
                 status_text.text(
                     texts["ml_insufficient_train"].format(
@@ -13807,7 +13954,9 @@ def run_ml_backtest(start_date: str, end_date: str, model_type: str, force_refre
             else:
                 # ⭐ 训练新模型
                 print(f"🔄 训练新模型: {cache_key}")
-                model = get_or_train_model(train_X, train_y, model_type, cache_key)
+                model = get_or_train_model(
+                    train_X, train_y, model_type, cache_key, sample_weight=train_w
+                )
                 # 保存到缓存
                 if model is not None:
                     set_cached_model(cache_key, model)
@@ -14978,7 +15127,7 @@ def run_top1_fixed_strategy_backtest(
         train_key = race_date[:7] if fast_mode else race_date
         model = model_cache.get(train_key)
         if model is None:
-            train_X, train_y = prepare_training_data_by_date(
+            train_X, train_y, train_w = prepare_training_data_by_date(
                 race_date, all_performances, horse_cache, incident_llm_map=incident_llm_map
             )
             if train_X is None or len(train_X) < 50:
@@ -14989,7 +15138,9 @@ def run_top1_fixed_strategy_backtest(
             if cached_model is not None:
                 model = cached_model
             else:
-                model = get_or_train_model(train_X, train_y, model_type, cache_key)
+                model = get_or_train_model(
+                    train_X, train_y, model_type, cache_key, sample_weight=train_w
+                )
                 if model is not None:
                     set_cached_model(cache_key, model)
             model_cache[train_key] = model
@@ -15200,7 +15351,7 @@ def run_rank_calibration_backtest(
                 train_performances = _performances_for_ml_training_window(
                     all_performances, race_date, training_window_days
                 )
-                train_X, train_y = prepare_training_data_by_date(
+                train_X, train_y, train_w = prepare_training_data_by_date(
                     race_date, train_performances, horse_cache, incident_llm_map=incident_llm_map
                 )
                 if train_X is None or len(train_X) < 50:
@@ -15211,7 +15362,9 @@ def run_rank_calibration_backtest(
                 if cached_model is not None:
                     model = cached_model
                 else:
-                    model = get_or_train_model(train_X, train_y, model_type, cache_key)
+                    model = get_or_train_model(
+                        train_X, train_y, model_type, cache_key, sample_weight=train_w
+                    )
                     if model is not None:
                         set_cached_model(cache_key, model)
                 model_cache[train_key] = model
