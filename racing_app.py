@@ -190,22 +190,63 @@ st.markdown("""
         }
     }
 
-    /* 登录 / 注册：桌面居中，手机占满 */
+    /* 登录 / 注册：标题居中、桌面表单居中 */
+    .auth-header-wrap {
+        width: 100%;
+        text-align: center;
+        margin: 0 0 0.75rem 0;
+    }
+    .auth-title {
+        width: 100%;
+        text-align: center !important;
+        margin: 0 auto !important;
+    }
+    div[data-testid="stMarkdownContainer"]:has(.auth-header-wrap) {
+        width: 100% !important;
+    }
     @media screen and (min-width: 769px) {
         div[data-testid="stForm"] {
             max-width: 440px;
             margin-left: auto;
             margin-right: auto;
         }
-        .auth-title {
+        .auth-header-wrap {
             max-width: 440px;
             margin-left: auto;
             margin-right: auto;
         }
     }
     @media screen and (max-width: 768px) {
+        /* 未登录页：隐藏侧边栏，主区域占满屏宽 */
+        body:has(.auth-header-wrap) [data-testid="stSidebar"],
+        body:has(.auth-header-wrap) [data-testid="stSidebarCollapsedControl"] {
+            display: none !important;
+        }
+        body:has(.auth-header-wrap) section.main {
+            width: 100% !important;
+            max-width: 100% !important;
+        }
+        body:has(.auth-header-wrap) section.main > div.block-container {
+            padding-top: 0.75rem !important;
+            padding-left: max(1rem, env(safe-area-inset-left)) !important;
+            padding-right: max(1rem, env(safe-area-inset-right)) !important;
+            max-width: 100% !important;
+        }
+        body:has(.auth-header-wrap) [data-testid="stVerticalBlock"] {
+            width: 100% !important;
+            align-items: stretch !important;
+        }
+        .auth-header-wrap {
+            padding: 0.25rem 0 0.75rem;
+        }
         .auth-title {
-            max-width: 100%;
+            font-size: 1.75rem !important;
+            line-height: 1.35 !important;
+        }
+        body:has(.auth-header-wrap) div[data-testid="stForm"] {
+            max-width: 100% !important;
+            width: 100% !important;
+            margin: 0 !important;
         }
     }
 </style>
@@ -3100,7 +3141,7 @@ def admin_set_subscription(user_id: str, tier: str, months: int = 1) -> Tuple[bo
 def render_login_form():
     """显示登录表单"""
     st.markdown(
-        f"<h1 class='auth-title' style='text-align: center;'>{t()['app_title']}</h1>",
+        f"<div class='auth-header-wrap'><h1 class='auth-title'>{t()['app_title']}</h1></div>",
         unsafe_allow_html=True,
     )
 
@@ -3134,19 +3175,16 @@ def render_login_form():
                     else:
                         st.error(msg)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button(t()["register"], use_container_width=True):
-            st.session_state.show_register = True
-            st.rerun()
-    with col2:
-        if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True):
-            st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
+    if st.button(t()["register"], use_container_width=True, key="login_go_register"):
+        st.session_state.show_register = True
+        st.rerun()
+    if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True, key="login_forgot"):
+        st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
 
 def render_register_form():
     """显示注册表单"""
     st.markdown(
-        f"<h2 class='auth-title' style='text-align: center;'>{t()['register']}</h2>",
+        f"<div class='auth-header-wrap'><h2 class='auth-title'>{t()['register']}</h2></div>",
         unsafe_allow_html=True,
     )
 
@@ -3180,7 +3218,7 @@ def render_register_form():
 def render_admin_login_form():
     """显示管理员登录表单"""
     st.markdown(
-        f"<h2 class='auth-title' style='text-align: center;'>{t()['admin_login_title']}</h2>",
+        f"<div class='auth-header-wrap'><h2 class='auth-title'>{t()['admin_login_title']}</h2></div>",
         unsafe_allow_html=True,
     )
 

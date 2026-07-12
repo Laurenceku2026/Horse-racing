@@ -29,6 +29,7 @@ def inject_pwa_head() -> None:
     ["link", {{ rel: "manifest", href: "{PWA_MANIFEST}" }}],
     ["link", {{ rel: "icon", type: "image/png", sizes: "192x192", href: "{PWA_ICON_192}" }}],
     ["link", {{ rel: "apple-touch-icon", sizes: "180x180", href: "{PWA_APPLE_ICON}" }}],
+    ["meta", {{ name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" }}],
     ["meta", {{ name: "theme-color", content: "{PWA_THEME_COLOR}" }}],
     ["meta", {{ name: "mobile-web-app-capable", content: "yes" }}],
     ["meta", {{ name: "apple-mobile-web-app-capable", content: "yes" }}],
