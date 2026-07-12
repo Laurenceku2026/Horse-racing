@@ -7485,48 +7485,50 @@ def _race_has_post_time(race: Dict) -> bool:
 
 
 def _merge_api_schedule_fields(db_races: List[Dict], api_races: List[Dict]) -> List[Dict]:
-    """把 API 赛程里的开跑时间/赛道信息补进 DB 赛程（DB 表本身不存 post_time）。"""
-    if not db_races or not api_races:
+    """以 API 完整赛程为准，并用 DB 行补充 metadata（避免 DB 只同步了部分场次）。"""
+    if not api_races:
         return db_races
 
-    api_map = {_race_schedule_key(r): r for r in api_races if r.get("race_no", 0) > 0}
+    db_map = {_race_schedule_key(r): r for r in db_races}
     merged: List[Dict] = []
-    for race in db_races:
-        item = dict(race)
-        api_row = api_map.get(_race_schedule_key(item))
-        if not api_row:
-            merged.append(item)
+    for api_race in api_races:
+        if api_race.get("race_no", 0) <= 0:
             continue
-
-        if not _race_has_post_time(item):
-            item["post_time"] = (
-                api_row.get("post_time")
-                or api_row.get("postTime")
-                or api_row.get("scheduledStart")
-                or api_row.get("startTime")
-                or ""
-            )
-        for field in ("surface", "going", "distance", "race_class", "raceTrack", "raceCourse", "race_course_code"):
-            if not item.get(field) and api_row.get(field):
-                item[field] = api_row[field]
+        item = dict(api_race)
+        db_row = db_map.get(_race_schedule_key(item))
+        if db_row:
+            if not _race_has_post_time(item):
+                item["post_time"] = (
+                    db_row.get("post_time")
+                    or db_row.get("postTime")
+                    or db_row.get("scheduledStart")
+                    or db_row.get("startTime")
+                    or item.get("post_time")
+                    or item.get("postTime")
+                    or ""
+                )
+            for field in ("surface", "going", "distance", "race_class", "raceTrack", "raceCourse", "race_course_code"):
+                if (not item.get(field)) and db_row.get(field):
+                    item[field] = db_row[field]
         merged.append(item)
     return merged
 
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_cached_upcoming_races() -> List[Dict]:
-    """优先 Supabase 赛程（秒级）；无数据或点「刷新赛程」时走 HKJC API。"""
+    """API 提供完整场次列表；Supabase 补充场地/班次等 metadata。"""
+    api_races = get_upcoming_races_from_api(detailed=False)
+    if not api_races:
+        api_races = get_upcoming_races_from_api(detailed=True)
+
     db_races = get_upcoming_races_from_db()
+    if api_races:
+        schedule = _merge_api_schedule_fields(db_races, api_races) if db_races else api_races
+        return _enrich_upcoming_races_from_db(schedule)
+
     if db_races:
-        enriched = _enrich_upcoming_races_from_db(db_races)
-        if not all(_race_has_post_time(r) for r in enriched if r.get("race_no", 0) > 0):
-            api_races = get_upcoming_races_from_api(detailed=False)
-            if not api_races:
-                api_races = get_upcoming_races_from_api(detailed=True)
-            if api_races:
-                enriched = _merge_api_schedule_fields(enriched, api_races)
-        return enriched
-    return get_upcoming_races()
+        return _enrich_upcoming_races_from_db(db_races)
+    return []
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
