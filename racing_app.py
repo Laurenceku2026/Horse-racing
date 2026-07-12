@@ -7468,12 +7468,64 @@ def render_home():
 # ==================== 辅助函数：获取赛日所有赛事 ====================
 # ==================== 缓存版本的数据获取函数 ====================
 
+def _race_schedule_key(race: Dict) -> str:
+    return f"{race.get('race_date')}_{race.get('venue')}_{race.get('race_no')}"
+
+
+def _race_has_post_time(race: Dict) -> bool:
+    return bool(
+        _format_post_time(
+            race.get("post_time")
+            or race.get("postTime")
+            or race.get("scheduledStart")
+            or race.get("startTime")
+            or race.get("race_time")
+        )
+    )
+
+
+def _merge_api_schedule_fields(db_races: List[Dict], api_races: List[Dict]) -> List[Dict]:
+    """把 API 赛程里的开跑时间/赛道信息补进 DB 赛程（DB 表本身不存 post_time）。"""
+    if not db_races or not api_races:
+        return db_races
+
+    api_map = {_race_schedule_key(r): r for r in api_races if r.get("race_no", 0) > 0}
+    merged: List[Dict] = []
+    for race in db_races:
+        item = dict(race)
+        api_row = api_map.get(_race_schedule_key(item))
+        if not api_row:
+            merged.append(item)
+            continue
+
+        if not _race_has_post_time(item):
+            item["post_time"] = (
+                api_row.get("post_time")
+                or api_row.get("postTime")
+                or api_row.get("scheduledStart")
+                or api_row.get("startTime")
+                or ""
+            )
+        for field in ("surface", "going", "distance", "race_class", "raceTrack", "raceCourse", "race_course_code"):
+            if not item.get(field) and api_row.get(field):
+                item[field] = api_row[field]
+        merged.append(item)
+    return merged
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def get_cached_upcoming_races() -> List[Dict]:
     """优先 Supabase 赛程（秒级）；无数据或点「刷新赛程」时走 HKJC API。"""
     db_races = get_upcoming_races_from_db()
     if db_races:
-        return _enrich_upcoming_races_from_db(db_races)
+        enriched = _enrich_upcoming_races_from_db(db_races)
+        if not all(_race_has_post_time(r) for r in enriched if r.get("race_no", 0) > 0):
+            api_races = get_upcoming_races_from_api(detailed=False)
+            if not api_races:
+                api_races = get_upcoming_races_from_api(detailed=True)
+            if api_races:
+                enriched = _merge_api_schedule_fields(enriched, api_races)
+        return enriched
     return get_upcoming_races()
 
 
