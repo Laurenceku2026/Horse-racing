@@ -606,6 +606,7 @@ TEXTS = {
         "back_to_user": "👤 返回",
         "exit_admin_mode": "退出管理員模式",
         "logout_help": "退出登入",
+        "sidebar_expand_hint": "点击打开",
         "tier_pro": "💎 專業版",
         "tier_free": "🔒 免費版",
         "day_portfolio_title": "賽日最優組合",
@@ -1133,6 +1134,7 @@ Let AI be your racing assistant.
         "back_to_user": "👤 Back",
         "exit_admin_mode": "Exit admin mode",
         "logout_help": "Logout",
+        "sidebar_expand_hint": "Click to open",
         "tier_pro": "💎 Pro",
         "tier_free": "🔒 Free",
         "day_portfolio_title": "Best Race-day Portfolio",
@@ -6402,6 +6404,74 @@ def render_sidebar():
         st.markdown("---")
         st.caption("v1.0 | TechLife")
         st.caption(t()["data_source_footer"])
+
+def inject_sidebar_expand_hint():
+    """侧边栏收起时，在展开箭头旁显示提示文字。"""
+    hint = t().get("sidebar_expand_hint", "点击打开")
+    st.markdown(
+        f"""
+<style>
+    #equi-sidebar-expand-hint {{
+        display: none;
+        position: fixed;
+        z-index: 999990;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #31333f;
+        background: rgba(255, 255, 255, 0.96);
+        border: 1px solid #d5dae0;
+        border-radius: 0.5rem;
+        padding: 0.35rem 0.65rem;
+        pointer-events: none;
+        white-space: nowrap;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        line-height: 1.2;
+    }}
+    @media screen and (max-width: 768px) {{
+        #equi-sidebar-expand-hint {{
+            font-size: 0.78rem;
+            padding: 0.3rem 0.55rem;
+        }}
+    }}
+</style>
+<span id="equi-sidebar-expand-hint">{hint}</span>
+<script>
+(function () {{
+    var hint = document.getElementById("equi-sidebar-expand-hint");
+    if (!hint) return;
+
+    function isVisible(el) {{
+        if (!el) return false;
+        var rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && window.getComputedStyle(el).visibility !== "hidden";
+    }}
+
+    function syncSidebarHint() {{
+        var expandBtn = document.querySelector('[data-testid="stSidebarCollapsedControl"]')
+            || document.querySelector('[data-testid="collapsedControl"]');
+        if (!isVisible(expandBtn)) {{
+            hint.style.display = "none";
+            return;
+        }}
+        var rect = expandBtn.getBoundingClientRect();
+        hint.style.display = "block";
+        hint.style.left = (rect.right + 8) + "px";
+        hint.style.top = (rect.top + rect.height / 2 - hint.offsetHeight / 2) + "px";
+    }}
+
+    syncSidebarHint();
+    new MutationObserver(syncSidebarHint).observe(document.body, {{
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "aria-expanded", "aria-hidden"],
+    }});
+    window.addEventListener("resize", syncSidebarHint);
+}})();
+</script>
+""",
+        unsafe_allow_html=True,
+    )
 
 # ==================== 右上角按钮 ====================
 def render_top_buttons():
@@ -15494,6 +15564,7 @@ def main():
     
     # 渲染侧边栏和顶部按钮
     render_sidebar()
+    inject_sidebar_expand_hint()
     render_top_buttons()
     
     # 管理员登录
