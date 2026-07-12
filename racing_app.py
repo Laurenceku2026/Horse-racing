@@ -5400,10 +5400,14 @@ def render_admin_panel():
         odds_w = st.session_state.admin_scoring_config["odds_weights"].copy()
         status_w = st.session_state.admin_scoring_config["status_weights"].copy()
         
-        # 辅助函数：检查一级因子总和
+        # 辅助函数：检查一级因子总和（小数形式，正常应为 1.0）
         def check_level1_sum():
-            total = level1.get("basic", 0) + level1.get("race", 0) + level1.get("odds", 0) + level1.get("status", 0)
-            return total
+            return (
+                level1.get("basic", 0)
+                + level1.get("race", 0)
+                + level1.get("odds", 0)
+                + level1.get("status", 0)
+            )
         #-----------
         # ==================== 一级因子设置 ====================
         if lang == "zh":
@@ -5774,18 +5778,20 @@ def render_admin_panel():
                 st.caption(
                     "以 walk-forward 回测「AI 预测第一名是否落在实际前三名」为优化目标，"
                     "自动搜索 LightGBM 超参数。耗时较长，请耐心等待。"
+                    "完成后点击「应用最优参数并清空缓存」即可，无需点击下方的「保存配置」。"
                 )
             else:
                 st.markdown("**🔬 Optuna Auto-Tuning (Top1 in Top 3)**")
                 st.caption(
                     "Maximize walk-forward rate of AI #1 landing in actual top 3. "
-                    "Searches LightGBM hyperparameters; may take several minutes."
+                    "Searches LightGBM hyperparameters; may take several minutes. "
+                    "After tuning, click 'Apply best params & clear cache' — no need to click 'Save Config' below."
                 )
             opt_col1, opt_col2, opt_col3 = st.columns(3)
             with opt_col1:
                 opt_start = st.date_input(
                     "调参起始日" if lang == "zh" else "Start Date",
-                    value=datetime(2024, 1, 1).date(),
+                    value=(datetime.now() - timedelta(days=14)).date(),
                     key="optuna_start_date",
                 )
             with opt_col2:
@@ -5902,7 +5908,7 @@ def render_admin_panel():
         with col1:
             if st.button("💾 保存配置" if lang == "zh" else "💾 Save Config", type="primary", use_container_width=True):
                 # 检查一级因子总和
-                if check_level1_sum() != 100:
+                if abs(check_level1_sum() - 1.0) > 0.01:
                     st.error("一级因子总和必须为100%，请调整后重试" if lang == "zh" else "Level 1 weights must sum to 100%")
                 elif abs(sum(basic_w.values()) - 1) > 0.01:
                     st.error("基础往绩二级因子总和必须为100%，请调整后重试" if lang == "zh" else "Basic weights must sum to 100%")
@@ -5939,7 +5945,11 @@ def render_admin_panel():
                 }
                 st.rerun()
         
-        st.caption("💡 提示：修改权重后需要点击「保存配置」才会生效，所有用户将使用新配置" if lang == "zh" else "💡 Hint: Click 'Save Config' after modification, all users will use the new configuration")
+        st.caption(
+            "💡 提示：「保存配置」仅用于保存上方评分权重；ML 参数请用「保存 ML 参数」或 Optuna 的「应用最优参数」。"
+            if lang == "zh"
+            else "💡 Hint: 'Save Config' is for scoring weights only; use 'Save ML Parameters' or Optuna 'Apply best params' for ML settings."
+        )
 
         st.markdown("---")
         with st.expander("⚡ 预计算评分（加速智能投注）", expanded=False):
