@@ -7169,7 +7169,10 @@ def render_home():
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_cached_upcoming_races() -> List[Dict]:
-    """从 HKJC API 获取未来赛程（10 分钟缓存）；API 失败时回退 Supabase。"""
+    """优先 Supabase 赛程（秒级）；无数据或点「刷新赛程」时走 HKJC API。"""
+    db_races = get_upcoming_races_from_db()
+    if db_races:
+        return _enrich_upcoming_races_from_db(db_races)
     return get_upcoming_races()
 
 
@@ -8486,7 +8489,7 @@ def get_model_predictions(race_date: str, venue: str, race_no: int,
     
     if perf_cache is None:
         perf_cache = se_get_horses_performances_batch(tuple(set(horse_ids)))
-    horse_birth_years = load_horse_birth_years()
+    horse_birth_years = get_cached_horse_birth_years()
     jockey_win_rates = get_cached_jockey_win_rates()
     trainer_base_scores = get_cached_trainer_base_scores_for_ml()
     
@@ -8745,6 +8748,27 @@ def _get_smart_betting_training_window(prediction_cutoff_date: Optional[str] = N
     return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
 
 
+def _runner_has_valid_odds(runner: Dict) -> bool:
+    raw = runner.get("odds_win")
+    try:
+        return raw is not None and float(raw) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _runners_need_live_sync(runners: List[Dict]) -> bool:
+    """DB 无出马或全部无独赢赔率时才阻塞同步 API。"""
+    if not runners:
+        return True
+    return not any(_runner_has_valid_odds(r) for r in runners)
+
+
+@st.cache_resource(show_spinner=False)
+def _cached_smart_betting_ml_model(model_type: str, start_date: str, cutoff_date: str):
+    """跨会话缓存已训练 ML 模型（Streamlit Cloud 进程内复用，避免每次重训）。"""
+    return train_model_for_smart_betting(model_type, start_date, cutoff_date)
+
+
 def get_smart_betting_ml_model(model_choice: str, prediction_cutoff_date: Optional[str] = None):
     """会话内缓存 ML 模型；历史模式下训练数据不包含预测赛日及之后赛事。"""
     model_type = _resolve_ml_model_type(model_choice)
@@ -8759,7 +8783,7 @@ def get_smart_betting_ml_model(model_choice: str, prediction_cutoff_date: Option
         return model_type, st.session_state["smart_betting_ml_model"]
 
     start_date, cutoff_date = _get_smart_betting_training_window(prediction_cutoff_date)
-    model = train_model_for_smart_betting(model_type, start_date, cutoff_date)
+    model = _cached_smart_betting_ml_model(model_type, start_date, cutoff_date)
     if model is not None:
         st.session_state["smart_betting_ml_session_key"] = session_key
         st.session_state["smart_betting_ml_type"] = model_type
@@ -10372,8 +10396,12 @@ def render_smart_betting(show_title: bool = True):
         selected_race.get('race_no')
     )
 
-    # 未来赛事：每场首次进入时经 API 同步最新出马与赔率（同一会话只同步一次）
-    if date_mode == DATE_MODE_FUTURE and st.secrets.get("HKJC_API_URL"):
+    # 未来赛事：仅当 DB 无出马或无赔率时才同步 API（避免每次进页等 10s+）
+    if (
+        date_mode == DATE_MODE_FUTURE
+        and st.secrets.get("HKJC_API_URL")
+        and _runners_need_live_sync(runners)
+    ):
         auto_sync_key = (
             f"auto_sync_{selected_race.get('race_date')}_"
             f"{selected_race.get('venue')}_{selected_race.get('race_no')}"
@@ -10397,6 +10425,13 @@ def render_smart_betting(show_title: bool = True):
             selected_race.get('race_date'),
             selected_race.get('venue'),
             selected_race.get('race_no')
+        )
+    elif date_mode == DATE_MODE_FUTURE and runners and not refresh_race_btn:
+        st.caption(
+            tx(
+                "💡 出马与赔率来自数据库缓存；如需最新数据请点击「刷新单场数据」",
+                "💡 Runners/odds from DB cache; tap “Refresh race data” for latest API sync.",
+            )
         )
     #------
     if not runners:
@@ -10425,8 +10460,14 @@ def render_smart_betting(show_title: bool = True):
         if not require_trial(f"score:{runners_cache_key}"):
             return
         # ==================== 计算胜率 ====================
-        analysis_progress = st.progress(0, text=t()["sb_loading_runners"])
-        analysis_progress.progress(0.15, text=t()["sb_scoring_runners"])
+        _ml_loading = model_choice != "评分系统"
+        _progress_label = (
+            t()["calculating_ml"].format(model=model_choice)
+            if _ml_loading
+            else t()["sb_scoring_runners"]
+        )
+        analysis_progress = st.progress(0, text=_progress_label)
+        analysis_progress.progress(0.08, text=_progress_label)
         if model_choice == "评分系统":
             if not SCORING_ENGINE_OK:
                 analysis_progress.empty()
@@ -10475,14 +10516,18 @@ def render_smart_betting(show_title: bool = True):
         else:
             # ==================== ML 模型预测（使用与回测相同的训练数据） ====================
             model_type = _resolve_ml_model_type(model_choice)
-            analysis_progress.progress(0.35, text=t()["calculating_ml"].format(model=model_choice))
+            analysis_progress.progress(0.2, text=t()["calculating_ml"].format(model=model_choice))
             _, model = get_smart_betting_ml_model(model_choice, prediction_cutoff_date)
+            analysis_progress.progress(0.55, text=t()["calculating_ml"].format(model=model_choice))
 
             if model is not None:
                 try:
+                    horse_ids = tuple({r.get("horse_id") for r in runners if r.get("horse_id")})
+                    ml_perf_cache = se_get_horses_performances_batch(horse_ids)
                     incident_llm_map = _build_incident_llm_map(
                         [r.get("incident", "") for r in runners if r.get("incident")]
                     )
+                    analysis_progress.progress(0.7, text=t()["calculating_ml"].format(model=model_choice))
                     ml_probs = get_model_predictions(
                         selected_race.get('race_date'),
                         selected_race.get('venue'),
@@ -10490,6 +10535,7 @@ def render_smart_betting(show_title: bool = True):
                         runners,
                         model_type,
                         model,
+                        perf_cache=ml_perf_cache,
                         incident_llm_map=incident_llm_map,
                     )
                 except Exception as e:
