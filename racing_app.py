@@ -205,7 +205,8 @@ st.markdown("""
         width: 100% !important;
     }
     @media screen and (min-width: 769px) {
-        div[data-testid="stForm"] {
+        div[data-testid="stForm"],
+        body:has(.auth-header-wrap) div[data-testid="stVerticalBlockBorderWrapper"] {
             max-width: 440px;
             margin-left: auto;
             margin-right: auto;
@@ -243,7 +244,8 @@ st.markdown("""
             font-size: 1.75rem !important;
             line-height: 1.35 !important;
         }
-        body:has(.auth-header-wrap) div[data-testid="stForm"] {
+        body:has(.auth-header-wrap) div[data-testid="stForm"],
+        body:has(.auth-header-wrap) div[data-testid="stVerticalBlockBorderWrapper"] {
             max-width: 100% !important;
             width: 100% !important;
             margin: 0 !important;
@@ -3145,41 +3147,42 @@ def render_login_form():
         unsafe_allow_html=True,
     )
 
-    with st.form("login_form", border=True):
-        email = st.text_input(t()["email"], key="login_email")
-        password = st.text_input(t()["password"], type="password", key="login_password")
-        remember_me = st.checkbox(t()["remember_me"], value=True, key="login_remember_me")
-        submitted = st.form_submit_button(t()["login_btn"], type="primary", use_container_width=True)
+    with st.container(border=True):
+        with st.form("login_form", border=False):
+            email = st.text_input(t()["email"], key="login_email")
+            password = st.text_input(t()["password"], type="password", key="login_password")
+            remember_me = st.checkbox(t()["remember_me"], value=True, key="login_remember_me")
+            submitted = st.form_submit_button(t()["login_btn"], type="primary", use_container_width=True)
 
-        if submitted:
-            if not email or not password:
-                st.warning(t()["fill_email_password"])
-            else:
-                with st.spinner(t()["logging_in"]):
-                    success, msg, user_id, user_email, access_token, refresh_token = sign_in(email, password)
-                    if success:
-                        st.session_state.authenticated = True
-                        st.session_state.user_id = user_id
-                        st.session_state.user_email = user_email
-                        st.session_state.access_token = access_token
-                        st.session_state.refresh_token = refresh_token
-                        st.session_state.token_expiry = time.time() + 3600
-                        st.session_state.remember_me_active = bool(remember_me)
-                        st.session_state.show_paywall = False
-                        st.session_state.home_section_nav = t()["nav_smart_betting"]
-                        if remember_me:
-                            persist_remember_me_auth(refresh_token, user_id, user_email)
+            if submitted:
+                if not email or not password:
+                    st.warning(t()["fill_email_password"])
+                else:
+                    with st.spinner(t()["logging_in"]):
+                        success, msg, user_id, user_email, access_token, refresh_token = sign_in(email, password)
+                        if success:
+                            st.session_state.authenticated = True
+                            st.session_state.user_id = user_id
+                            st.session_state.user_email = user_email
+                            st.session_state.access_token = access_token
+                            st.session_state.refresh_token = refresh_token
+                            st.session_state.token_expiry = time.time() + 3600
+                            st.session_state.remember_me_active = bool(remember_me)
+                            st.session_state.show_paywall = False
+                            st.session_state.home_section_nav = t()["nav_smart_betting"]
+                            if remember_me:
+                                persist_remember_me_auth(refresh_token, user_id, user_email)
+                            else:
+                                clear_persisted_remember_me_auth()
+                            st.rerun()
                         else:
-                            clear_persisted_remember_me_auth()
-                        st.rerun()
-                    else:
-                        st.error(msg)
+                            st.error(msg)
 
-    if st.button(t()["register"], use_container_width=True, key="login_go_register"):
-        st.session_state.show_register = True
-        st.rerun()
-    if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True, key="login_forgot"):
-        st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
+        if st.button(t()["register"], use_container_width=True, key="login_go_register"):
+            st.session_state.show_register = True
+            st.rerun()
+        if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True, key="login_forgot"):
+            st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
 
 def render_register_form():
     """显示注册表单"""
@@ -3188,32 +3191,33 @@ def render_register_form():
         unsafe_allow_html=True,
     )
 
-    with st.form("register_form", border=True):
-        email = st.text_input(t()["email"], key="reg_email")
-        password = st.text_input(t()["password"], type="password", key="reg_password")
-        confirm = st.text_input(t()["confirm_password"], type="password", key="reg_confirm")
-        submitted = st.form_submit_button(t()["register_btn"], type="primary", use_container_width=True)
+    with st.container(border=True):
+        with st.form("register_form", border=False):
+            email = st.text_input(t()["email"], key="reg_email")
+            password = st.text_input(t()["password"], type="password", key="reg_password")
+            confirm = st.text_input(t()["confirm_password"], type="password", key="reg_confirm")
+            submitted = st.form_submit_button(t()["register_btn"], type="primary", use_container_width=True)
 
-        if submitted:
-            if not email or not password:
-                st.warning(t()["fill_email_password"])
-            elif password != confirm:
-                st.warning(t()["password_mismatch"])
-            elif len(password) < 6:
-                st.warning(t()["password_min_length"])
-            else:
-                with st.spinner(t()["registering"]):
-                    success, msg, user_id = sign_up(email, password)
-                    if success:
-                        st.success(msg)
-                        st.session_state.show_register = False
-                        st.rerun()
-                    else:
-                        st.error(msg)
+            if submitted:
+                if not email or not password:
+                    st.warning(t()["fill_email_password"])
+                elif password != confirm:
+                    st.warning(t()["password_mismatch"])
+                elif len(password) < 6:
+                    st.warning(t()["password_min_length"])
+                else:
+                    with st.spinner(t()["registering"]):
+                        success, msg, user_id = sign_up(email, password)
+                        if success:
+                            st.success(msg)
+                            st.session_state.show_register = False
+                            st.rerun()
+                        else:
+                            st.error(msg)
 
-    if st.button(t()["back_to_login"], use_container_width=True):
-        st.session_state.show_register = False
-        st.rerun()
+        if st.button(t()["back_to_login"], use_container_width=True):
+            st.session_state.show_register = False
+            st.rerun()
 
 def render_admin_login_form():
     """显示管理员登录表单"""
