@@ -150,6 +150,64 @@ st.markdown("""
     div[data-testid="stRadio"]:not(:first-of-type) label[data-checked="true"] p {
         color: #4f46e5 !important;
     }
+
+    /* ========== 手机 / 窄屏：放宽主区域，减少两侧留白 ========== */
+    @media screen and (max-width: 768px) {
+        .stAppViewContainer .main .block-container,
+        section.main > div.block-container,
+        [data-testid="stMain"] > div {
+            max-width: 100% !important;
+            padding-left: max(0.65rem, env(safe-area-inset-left)) !important;
+            padding-right: max(0.65rem, env(safe-area-inset-right)) !important;
+        }
+        .main-header h1,
+        .auth-title {
+            font-size: 1.65rem !important;
+            line-height: 1.35 !important;
+        }
+        div[data-testid="stForm"] {
+            width: 100% !important;
+        }
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stNumberInput"] input {
+            font-size: 16px !important;
+            min-height: 2.75rem !important;
+        }
+        .stButton > button,
+        div[data-testid="stFormSubmitButton"] button {
+            min-height: 2.75rem !important;
+            font-size: 1rem !important;
+        }
+        div[data-testid="stCheckbox"] label p {
+            font-size: 0.95rem !important;
+        }
+        div[data-testid="stRadio"] > div[role="radiogroup"] label {
+            min-width: 6.5rem !important;
+            padding: 0.65rem 0.85rem !important;
+        }
+        div[data-testid="stRadio"] > div[role="radiogroup"] label p {
+            font-size: 1.05rem !important;
+        }
+    }
+
+    /* 登录 / 注册：桌面居中，手机占满 */
+    @media screen and (min-width: 769px) {
+        div[data-testid="stForm"] {
+            max-width: 440px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .auth-title {
+            max-width: 440px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    }
+    @media screen and (max-width: 768px) {
+        .auth-title {
+            max-width: 100%;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -3041,109 +3099,112 @@ def admin_set_subscription(user_id: str, tier: str, months: int = 1) -> Tuple[bo
 # ==================== 登录/注册UI ====================
 def render_login_form():
     """显示登录表单"""
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown(f"<h1 style='text-align: center;'>{t()['app_title']}</h1>", unsafe_allow_html=True)
-        
-        with st.form("login_form", border=True):
-            email = st.text_input(t()["email"], key="login_email")
-            password = st.text_input(t()["password"], type="password", key="login_password")
-            remember_me = st.checkbox(t()["remember_me"], value=True, key="login_remember_me")
-            submitted = st.form_submit_button(t()["login_btn"], type="primary", use_container_width=True)
-            
-            if submitted:
-                if not email or not password:
-                    st.warning(t()["fill_email_password"])
-                else:
-                    with st.spinner(t()["logging_in"]):
-                        success, msg, user_id, user_email, access_token, refresh_token = sign_in(email, password)
-                        if success:
-                            st.session_state.authenticated = True
-                            st.session_state.user_id = user_id
-                            st.session_state.user_email = user_email
-                            st.session_state.access_token = access_token
-                            st.session_state.refresh_token = refresh_token
-                            st.session_state.token_expiry = time.time() + 3600
-                            st.session_state.remember_me_active = bool(remember_me)
-                            st.session_state.show_paywall = False
-                            st.session_state.home_section_nav = t()["nav_smart_betting"]
-                            if remember_me:
-                                persist_remember_me_auth(refresh_token, user_id, user_email)
-                            else:
-                                clear_persisted_remember_me_auth()
-                            st.rerun()
+    st.markdown(
+        f"<h1 class='auth-title' style='text-align: center;'>{t()['app_title']}</h1>",
+        unsafe_allow_html=True,
+    )
+
+    with st.form("login_form", border=True):
+        email = st.text_input(t()["email"], key="login_email")
+        password = st.text_input(t()["password"], type="password", key="login_password")
+        remember_me = st.checkbox(t()["remember_me"], value=True, key="login_remember_me")
+        submitted = st.form_submit_button(t()["login_btn"], type="primary", use_container_width=True)
+
+        if submitted:
+            if not email or not password:
+                st.warning(t()["fill_email_password"])
+            else:
+                with st.spinner(t()["logging_in"]):
+                    success, msg, user_id, user_email, access_token, refresh_token = sign_in(email, password)
+                    if success:
+                        st.session_state.authenticated = True
+                        st.session_state.user_id = user_id
+                        st.session_state.user_email = user_email
+                        st.session_state.access_token = access_token
+                        st.session_state.refresh_token = refresh_token
+                        st.session_state.token_expiry = time.time() + 3600
+                        st.session_state.remember_me_active = bool(remember_me)
+                        st.session_state.show_paywall = False
+                        st.session_state.home_section_nav = t()["nav_smart_betting"]
+                        if remember_me:
+                            persist_remember_me_auth(refresh_token, user_id, user_email)
                         else:
-                            st.error(msg)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button(t()["register"], use_container_width=True):
-                st.session_state.show_register = True
-                st.rerun()
-        with col2:
-            if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True):
-                st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
+                            clear_persisted_remember_me_auth()
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button(t()["register"], use_container_width=True):
+            st.session_state.show_register = True
+            st.rerun()
+    with col2:
+        if st.button(t().get("forgot_password", "Forgot Password?"), use_container_width=True):
+            st.info(f"{t()['contact_admin_reset_password']}: {ADMIN_EMAIL}")
 
 def render_register_form():
     """显示注册表单"""
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown(f"<h2 style='text-align: center;'>{t()['register']}</h2>", unsafe_allow_html=True)
-        
-        with st.form("register_form", border=True):
-            email = st.text_input(t()["email"], key="reg_email")
-            password = st.text_input(t()["password"], type="password", key="reg_password")
-            confirm = st.text_input(t()["confirm_password"], type="password", key="reg_confirm")
-            submitted = st.form_submit_button(t()["register_btn"], type="primary", use_container_width=True)
-            
-            if submitted:
-                if not email or not password:
-                    st.warning(t()["fill_email_password"])
-                elif password != confirm:
-                    st.warning(t()["password_mismatch"])
-                elif len(password) < 6:
-                    st.warning(t()["password_min_length"])
-                else:
-                    with st.spinner(t()["registering"]):
-                        success, msg, user_id = sign_up(email, password)
-                        if success:
-                            st.success(msg)
-                            st.session_state.show_register = False
-                            st.rerun()
-                        else:
-                            st.error(msg)
-        
-        if st.button(t()["back_to_login"], use_container_width=True):
-            st.session_state.show_register = False
-            st.rerun()
+    st.markdown(
+        f"<h2 class='auth-title' style='text-align: center;'>{t()['register']}</h2>",
+        unsafe_allow_html=True,
+    )
+
+    with st.form("register_form", border=True):
+        email = st.text_input(t()["email"], key="reg_email")
+        password = st.text_input(t()["password"], type="password", key="reg_password")
+        confirm = st.text_input(t()["confirm_password"], type="password", key="reg_confirm")
+        submitted = st.form_submit_button(t()["register_btn"], type="primary", use_container_width=True)
+
+        if submitted:
+            if not email or not password:
+                st.warning(t()["fill_email_password"])
+            elif password != confirm:
+                st.warning(t()["password_mismatch"])
+            elif len(password) < 6:
+                st.warning(t()["password_min_length"])
+            else:
+                with st.spinner(t()["registering"]):
+                    success, msg, user_id = sign_up(email, password)
+                    if success:
+                        st.success(msg)
+                        st.session_state.show_register = False
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+    if st.button(t()["back_to_login"], use_container_width=True):
+        st.session_state.show_register = False
+        st.rerun()
 
 def render_admin_login_form():
     """显示管理员登录表单"""
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown(f"<h2 style='text-align: center;'>{t()['admin_login_title']}</h2>", unsafe_allow_html=True)
-        
-        with st.form("admin_login_form", border=True):
-            username = st.text_input(t()["admin_username"], key="admin_username")
-            password = st.text_input(t()["password"], type="password", key="admin_password")
-            submitted = st.form_submit_button(t()["admin_login_btn"], type="primary", use_container_width=True)
-            
-            if submitted:
-                if check_admin_login(username, password):
-                    st.session_state.admin_previous_user_id = st.session_state.get("user_id")
-                    st.session_state.admin_previous_user_email = st.session_state.get("user_email")
-                    st.session_state.admin_previous_access_token = st.session_state.get("access_token")
-                    st.session_state.admin_previous_refresh_token = st.session_state.get("refresh_token")
+    st.markdown(
+        f"<h2 class='auth-title' style='text-align: center;'>{t()['admin_login_title']}</h2>",
+        unsafe_allow_html=True,
+    )
 
-                    persist_admin_session()
-                    activate_admin_mode(preserve_user=False)
-                    st.rerun()
-                else:
-                    st.error(t()["admin_login_failed"])
-        
-        if st.button(t()["back_to_user_login"], use_container_width=True):
-            st.session_state.show_admin_login = False
-            st.rerun()
+    with st.form("admin_login_form", border=True):
+        username = st.text_input(t()["admin_username"], key="admin_username")
+        password = st.text_input(t()["password"], type="password", key="admin_password")
+        submitted = st.form_submit_button(t()["admin_login_btn"], type="primary", use_container_width=True)
+
+        if submitted:
+            if check_admin_login(username, password):
+                st.session_state.admin_previous_user_id = st.session_state.get("user_id")
+                st.session_state.admin_previous_user_email = st.session_state.get("user_email")
+                st.session_state.admin_previous_access_token = st.session_state.get("access_token")
+                st.session_state.admin_previous_refresh_token = st.session_state.get("refresh_token")
+
+                persist_admin_session()
+                activate_admin_mode(preserve_user=False)
+                st.rerun()
+            else:
+                st.error(t()["admin_login_failed"])
+
+    if st.button(t()["back_to_user_login"], use_container_width=True):
+        st.session_state.show_admin_login = False
+        st.rerun()
 
 #---------------
 def get_table_data(table_name: str, limit: int = 500) -> List[Dict]:
