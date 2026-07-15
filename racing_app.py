@@ -2568,6 +2568,51 @@ def update_user_profile(user_id: str, data: Dict) -> bool:
         print(f"更新用户资料失败: {e}")
         return False
 
+
+def clear_user_profile_cache(user_id: Optional[str] = None) -> None:
+    """清除用户资料会话缓存；user_id 为空时清除全部 profile 缓存。"""
+    if user_id:
+        st.session_state.pop(_profile_cache_key(user_id), None)
+        return
+    for key in list(st.session_state.keys()):
+        if isinstance(key, str) and key.startswith("user_profile_cache_"):
+            st.session_state.pop(key, None)
+
+
+def admin_update_user_profile(user_id: str, data: Dict) -> bool:
+    """
+    管理员更新任意用户资料（service_role，绕过 RLS）。
+
+    普通用户 JWT 受 RLS 限制只能改自己的行：PATCH 其他用户时 PostgREST
+    仍可能返回 204，但实际更新 0 行，导致「显示成功、表格仍是旧值」。
+    """
+    if not user_id:
+        return False
+    try:
+        headers = get_supabase_headers(use_secret=True)
+        headers["Prefer"] = "return=representation"
+        url = f"{SUPABASE_URL}/rest/v1/user_settings_racing?user_id=eq.{user_id}"
+        response = requests.patch(url, headers=headers, json=data)
+        print(f"admin_update_user_profile - 状态码: {response.status_code}")
+        if response.status_code not in (200, 204):
+            print(f"admin_update_user_profile 失败: {response.text}")
+            return False
+        # 有 Prefer: return=representation 时，应用返回更新行；空数组 = 未匹配到行
+        if response.status_code == 200:
+            try:
+                rows = response.json()
+            except Exception:
+                rows = None
+            if isinstance(rows, list) and len(rows) == 0:
+                print(f"admin_update_user_profile: user_id={user_id} 未更新到任何行")
+                return False
+        clear_user_profile_cache(user_id)
+        return True
+    except Exception as e:
+        print(f"管理员更新用户资料失败: {e}")
+        return False
+
+
 def get_remaining_trials(user_id: str) -> int:
     """获取剩余免费次数"""
     profile = get_user_profile(user_id)
@@ -3119,17 +3164,17 @@ def get_all_users() -> List[Dict]:
         return []
 
 def admin_reset_user_trials(user_id: str, new_trials: int) -> Tuple[bool, str]:
-    """重置用户免费次数"""
+    """重置用户免费次数（管理员 service_role）"""
     try:
-        success = update_user_profile(user_id, {"free_trials_remaining": new_trials})
+        success = admin_update_user_profile(user_id, {"free_trials_remaining": new_trials})
         if success:
             return True, f"已重置免費次數為 {new_trials}"
-        return False, "重置失敗"
+        return False, "重置失敗（可能找不到该用户记录）"
     except Exception as e:
         return False, f"重置失敗: {str(e)}"
 
 def admin_set_subscription(user_id: str, tier: str, months: int = 1) -> Tuple[bool, str]:
-    """设置用户订阅等级"""
+    """设置用户订阅等级（管理员 service_role）"""
     try:
         data = {"subscription_tier": tier}
         if tier == "pro":
@@ -3138,10 +3183,10 @@ def admin_set_subscription(user_id: str, tier: str, months: int = 1) -> Tuple[bo
         else:
             data["subscription_expires_at"] = None
         
-        success = update_user_profile(user_id, data)
+        success = admin_update_user_profile(user_id, data)
         if success:
             return True, f"用戶訂閱已設置為 {tier}"
-        return False, "設置失敗"
+        return False, "設置失敗（可能找不到该用户记录）"
     except Exception as e:
         return False, f"設置失敗: {str(e)}"
 
@@ -6110,17 +6155,17 @@ def render_user_management():
             return False, f"删除失败: {str(e)}"
     
     def admin_reset_user_trials_racing(user_id: str, new_trials: int = FREE_TRIAL_LIMIT) -> Tuple[bool, str]:
-        """重置用户的免费次数"""
+        """重置用户的免费次数（service_role，可改任意用户）"""
         try:
-            success = update_user_profile(user_id, {"free_trials_remaining": new_trials})
+            success = admin_update_user_profile(user_id, {"free_trials_remaining": new_trials})
             if success:
                 return True, f"已重置免费次数为 {new_trials}"
-            return False, "重置失败"
+            return False, "重置失败（可能找不到该用户记录）"
         except Exception as e:
             return False, f"重置失败: {str(e)}"
     
     def admin_set_subscription_racing(user_id: str, tier: str, months: int = 1) -> Tuple[bool, str]:
-        """设置用户订阅等级"""
+        """设置用户订阅等级（service_role，可改任意用户）"""
         try:
             data = {"subscription_tier": tier}
             if tier == "pro":
@@ -6129,10 +6174,10 @@ def render_user_management():
             else:
                 data["subscription_expires_at"] = None
             
-            success = update_user_profile(user_id, data)
+            success = admin_update_user_profile(user_id, data)
             if success:
                 return True, f"用户订阅已设置为 {tier}"
-            return False, "设置失败"
+            return False, "设置失败（可能找不到该用户记录）"
         except Exception as e:
             return False, f"设置失败: {str(e)}"
     
@@ -6171,7 +6216,7 @@ def render_user_management():
         
         users_with_details.append({
             "id": user_id,
-            "email": user.get("email", ""),
+            "email": user.get("email") or auth_info.get("email") or "",
             "subscription_tier": user.get("subscription_tier", "free"),
             "free_trials_remaining": user.get("free_trials_remaining", FREE_TRIAL_LIMIT),
             "subscription_expires_at": user.get("subscription_expires_at", "")[:10] if user.get("subscription_expires_at") else "-",
