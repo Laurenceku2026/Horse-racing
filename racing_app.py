@@ -1825,15 +1825,15 @@ APP_BASE_URL = (
 )
 SMTP_HOST = st.secrets.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(st.secrets.get("SMTP_PORT", "587") or "587")
-SMTP_USER = st.secrets.get("SMTP_USER", "Techlife2027@gmail.com")
-# Gmail 应用专用密码常显示为带空格的 4 组；SMTP 使用时去掉空格
+SMTP_USER = st.secrets.get("SMTP_USER", "")
+# Gmail 应用专用密码常显示为带空格的 4 组；SMTP 使用时去掉空格。密码只来自 Secrets，不写死在代码里。
 SMTP_PASSWORD = (
     str(st.secrets.get("SMTP_PASSWORD", "") or "")
     .strip()
     .replace(" ", "")
     .replace("\u00a0", "")
 )
-SMTP_FROM = st.secrets.get("SMTP_FROM", SMTP_USER or "Techlife2027@gmail.com")
+SMTP_FROM = st.secrets.get("SMTP_FROM", "") or SMTP_USER
 SMTP_USE_TLS = str(st.secrets.get("SMTP_USE_TLS", "1") or "1") not in (
     "0",
     "false",

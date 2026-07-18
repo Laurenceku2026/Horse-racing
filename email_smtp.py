@@ -110,7 +110,7 @@ def env_smtp_settings(getenv=os.getenv) -> dict:
         .replace(" ", "")
         .replace("\u00a0", ""),
         "mail_from": (
-            getenv("SMTP_FROM") or getenv("SMTP_USER") or "Techlife2027@gmail.com"
+            getenv("SMTP_FROM") or getenv("SMTP_USER") or ""
         ).strip(),
         "use_tls": (getenv("SMTP_USE_TLS") or "1").strip() not in ("0", "false", "False"),
     }
