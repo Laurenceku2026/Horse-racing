@@ -1,28 +1,46 @@
 name: Auto Collect Odds
 
 on:
-  # 定时任务：每15分钟运行一次（更频繁采集）
-  # 注意：GitHub Actions 使用 UTC 时间，需要减去8小时
-  # 所以 0-16 对应北京时间 8-24
+  # UTC 0-16 ≈ 香港时间 8:00–24:00，每 15 分钟
   schedule:
     - cron: '*/15 0-16 * * *'
-  
-  # 允许手动触发
   workflow_dispatch:
 
 jobs:
   collect-odds:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Call auto collect API
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Detect HKJC season
+        id: season
+        env:
+          HKJC_API_URL: https://hkjc-api-server.onrender.com
         run: |
-          echo "开始采集赔率..."
-          curl -X POST https://hkjc-api-server.onrender.com/api/collect/auto
+          STATUS=$(python scripts/hkjc_season_gate.py | tail -n 1)
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "Season gate: $STATUS"
+
+      - name: Skip collect (off-season / no fixtures)
+        if: steps.season.outputs.status != 'IN_SEASON'
+        run: |
+          echo "休赛期或无活跃赛日，跳过赔率采集（不视为失败）。"
+          echo "官方参考：2025/26 煞科约 2026-07-15；2026/27 开锣 2026-09-06。"
+
+      - name: Call auto collect API
+        if: steps.season.outputs.status == 'IN_SEASON'
+        run: |
+          echo "赛季中：开始采集赔率..."
+          curl -fsS -X POST https://hkjc-api-server.onrender.com/api/collect/auto
           echo "采集完成"
-      
+
       - name: Call final odds update (before race)
+        if: steps.season.outputs.status == 'IN_SEASON'
         run: |
           echo "更新最终赔率..."
-          curl -X POST https://hkjc-api-server.onrender.com/api/odds/final
+          curl -fsS -X POST https://hkjc-api-server.onrender.com/api/odds/final
           echo "更新完成"
